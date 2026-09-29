@@ -1,0 +1,215 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "aa904da5-8f3a-4c62-877b-67acd34910e1",
+   "attributes": {
+    "drupal_internal__nid": 21071,
+    "title": "Nordostschweizer Schwingfest St. Gallen 2025 29.06.2025 (5178) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/nordostschweizer-schwingfest-st-gallen-2025",
+     "pid": 21039,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-06-29",
+    "field_event_esv_id": 5178,
+    "field_event_location": "St.Gallen",
+    "field_event_participant_count": 158,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Nordostschweizer Schwingfest St. Gallen 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "3f3f0609-0536-43e4-b484-742901a7ac54",
+      "meta": {
+       "drupal_internal__target_id": 13
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "5846e6ce-3cda-4803-8977-c2d266785a49",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 93737
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "20ede188-3c06-405a-bd95-7c7dd22b8f11",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 93739
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "a29d6f00-bf03-4837-ac77-b5727cfc75e4",
+   "attributes": {
+    "drupal_internal__nid": 21066,
+    "title": "Berner Kantonalschwingfest Langnau im Emmental 2025 13.07.2025 (3708) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/berner-kantonalschwingfest-langnau-im-emmental-2025",
+     "pid": 21034,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-07-13",
+    "field_event_esv_id": 3708,
+    "field_event_location": "Langnau i.E",
+    "field_event_participant_count": 150,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Berner Kantonalschwingfest Langnau im Emmental 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "3f3f0609-0536-43e4-b484-742901a7ac54",
+      "meta": {
+       "drupal_internal__target_id": 13
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "5516e499-227a-4683-9014-7f2c40938091",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 94123
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "e342a792-792a-45bf-9a5f-e51ced164f77",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 94125
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "3f3f0609-0536-43e4-b484-742901a7ac54",
+   "attributes": {
+    "name": "Teilverbandsfest",
+    "drupal_internal__tid": 13
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+   "attributes": {
+    "drupal_internal__tid": 28,
+    "name": "Nordostschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+   "attributes": {
+    "drupal_internal__tid": 26,
+    "name": "Bern"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "20ede188-3c06-405a-bd95-7c7dd22b8f11",
+   "attributes": {
+    "filename": "21071-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21071-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21071-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "e342a792-792a-45bf-9a5f-e51ced164f77",
+   "attributes": {
+    "filename": "21066-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21066-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21066-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "5846e6ce-3cda-4803-8977-c2d266785a49",
+   "attributes": {
+    "filename": "21071-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21071-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21071-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "5516e499-227a-4683-9014-7f2c40938091",
+   "attributes": {
+    "filename": "21066-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21066-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21066-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}

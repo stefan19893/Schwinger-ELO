@@ -1,0 +1,273 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "24b35e1c-e2d0-4daa-b42f-aac696011072",
+   "attributes": {
+    "drupal_internal__nid": 22599,
+    "title": "Abgeordnetenversammlung ESV Unterägeri 2023 18.03.2023 (5566) (Allgmeiner Anlass)",
+    "field_event_date": "2023-03-18",
+    "field_event_esv_id": 5566,
+    "field_event_location": "Unterägeri",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": "Allgmeiner Anlass",
+    "field_title_custom": "Abgeordnetenversammlung ESV Unterägeri 2023",
+    "path": {
+     "alias": "/event/abgeordnetenversammlung-esv-unteraegeri-2023",
+     "pid": 22564,
+     "langcode": "de"
+    }
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": []
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "ad478d3a-8b2f-4ee8-baad-febb78964fc9",
+   "attributes": {
+    "drupal_internal__nid": 22371,
+    "title": "Unspunnen-Schwinget Interlaken 2023 27.08.2023 (5025) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/unspunnen-schwinget-interlaken-2023",
+     "pid": 22336,
+     "langcode": "de"
+    },
+    "field_event_date": "2023-08-27",
+    "field_event_esv_id": 5025,
+    "field_event_location": "Interlaken",
+    "field_event_participant_count": 120,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Unspunnen-Schwinget Interlaken 2023"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": [
+      {
+       "type": "file--file",
+       "id": "b707b8c3-0a6d-4c39-981d-c07a7437c5ec",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste Steinstossen",
+        "drupal_internal__target_id": 81519
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "74b3f130-cf6e-4c16-9adf-1e569bb4ced6",
+       "meta": {
+        "display": true,
+        "description": "Einteilung 1. Gang komplett",
+        "drupal_internal__target_id": 81479
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "f386141e-c51b-430f-a2fb-9c7b7d47c176",
+       "meta": {
+        "display": true,
+        "description": "Spitzenpaarungen",
+        "drupal_internal__target_id": 81467
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "3ad42818-8990-405a-b922-c7f1da9127b2",
+       "meta": {
+        "display": true,
+        "description": "Schwingerliste SCHLUSSGANG",
+        "drupal_internal__target_id": 81396
+       }
+      }
+     ]
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "43a0977c-6ebe-41d0-9743-45cde37d005d",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 81515
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "ca9f26fa-0e48-49f8-91cd-dc9438416b28",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 81517
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "9a404a00-2f4e-4387-8ade-54fb3fc82c1b",
+   "attributes": {
+    "drupal_internal__nid": 35139,
+    "title": "Schwinger-Fussballturnier Küttigen 2023 07.10.2023 () ()",
+    "path": {
+     "alias": "/event/schwinger-fussballturnier-kuettigen-2023",
+     "pid": 32845,
+     "langcode": "de"
+    },
+    "field_event_date": "2023-10-07",
+    "field_event_esv_id": null,
+    "field_event_location": "Küttigen",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null,
+    "field_title_custom": "Schwinger-Fussballturnier Küttigen 2023"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+   "attributes": {
+    "name": "Eidgenössische Anlässe",
+    "drupal_internal__tid": 11
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "b707b8c3-0a6d-4c39-981d-c07a7437c5ec",
+   "attributes": {
+    "filename": "Schlussrangliste Steinstossen_Unspunnen2023.pdf",
+    "uri": {
+     "value": "public://schlussrangliste-pdfs/Schlussrangliste Steinstossen_Unspunnen2023.pdf",
+     "url": "/sites/default/files/schlussrangliste-pdfs/Schlussrangliste%20Steinstossen_Unspunnen2023.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "74b3f130-cf6e-4c16-9adf-1e569bb4ced6",
+   "attributes": {
+    "filename": "US2023_Einteilungsliste.pdf",
+    "uri": {
+     "value": "public://schlussrangliste-pdfs/US2023_Einteilungsliste.pdf",
+     "url": "/sites/default/files/schlussrangliste-pdfs/US2023_Einteilungsliste.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "f386141e-c51b-430f-a2fb-9c7b7d47c176",
+   "attributes": {
+    "filename": "einteilung_spitzenpaarungen.pdf",
+    "uri": {
+     "value": "public://schlussrangliste-pdfs/einteilung_spitzenpaarungen.pdf",
+     "url": "/sites/default/files/schlussrangliste-pdfs/einteilung_spitzenpaarungen.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "3ad42818-8990-405a-b922-c7f1da9127b2",
+   "attributes": {
+    "filename": "Schwingerliste-SCHLUSSGANG.pdf",
+    "uri": {
+     "value": "public://schlussrangliste-pdfs/Schwingerliste-SCHLUSSGANG.pdf",
+     "url": "/sites/default/files/schlussrangliste-pdfs/Schwingerliste-SCHLUSSGANG.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "ca9f26fa-0e48-49f8-91cd-dc9438416b28",
+   "attributes": {
+    "filename": "22371-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22371-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22371-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "43a0977c-6ebe-41d0-9743-45cde37d005d",
+   "attributes": {
+    "filename": "22371-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22371-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22371-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}

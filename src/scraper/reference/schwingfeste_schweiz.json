@@ -1,0 +1,97 @@
+{
+  "schwingfeste_schweiz": {
+    "eidgenoessische_feste": {
+      "kategorie_charakter": "Feste mit eidgenössischem Charakter",
+      "kranztyp": "Eidgenössischer Kranz",
+      "turnus": "Mehrjährig / Einladung",
+      "turniere": [
+        {
+          "name": "Eidgenössisches Schwing- und Älplerfest (ESAF)",
+          "rhythmus": "Alle 3 Jahre",
+          "organisation": "ESV (rotierend über Teilverbände)",
+          "status": "Höchster Titelanlass (Schwingerkönig)"
+        },
+        {
+          "name": "Kilchberger Schwinget",
+          "rhythmus": "Alle 6 Jahre",
+          "ort": "Kilchberg ZH",
+          "status": "Einladungsturnier der 60 besten Schwinger"
+        },
+        {
+          "name": "Unspunnen-Schwinget",
+          "rhythmus": "Alle 6 Jahre",
+          "ort": "Interlaken BE",
+          "status": "Einladungsturnier der 120 besten Schwinger"
+        },
+        {
+          "name": "Jubiläumsschwingfest ESV",
+          "rhythmus": "Zu runden Verbandsjubiläen",
+          "organisation": "ESV",
+          "status": "Sonderanlass mit eidgenössischem Charakter"
+        }
+      ]
+    },
+    "bergkranzfeste": {
+      "kategorie_charakter": "Offizielle Bergkranzfeste",
+      "kranztyp": "Bergkranz",
+      "turnus": "Jährlich",
+      "anzahl": 6,
+      "turniere": [
+        {"fest": "Stoos-Schwinget", "kanton": "Schwyz (SZ)", "teilverband": "ISV", "typ": "Bergfest"},
+        {"fest": "Schwarzsee-Schwinget", "kanton": "Freiburg (FR)", "teilverband": "SWSV", "typ": "Bergfest"},
+        {"fest": "Rigi-Schwinget", "kanton": "Schwyz (SZ) / Luzern (LU)", "teilverband": "ISV", "typ": "Bergfest"},
+        {"fest": "Weissenstein-Schwinget", "kanton": "Solothurn (SO)", "teilverband": "NWSV", "typ": "Bergfest"},
+        {"fest": "Brünig-Schwinget", "kanton": "Obwalden (OW) / Bern (BE)", "teilverband": "ISV / BKSV", "typ": "Bergfest"},
+        {"fest": "Schwägalp-Schwinget", "kanton": "Appenzell Ausserrhoden (AR)", "teilverband": "NOSV", "typ": "Bergfest"}
+      ]
+    },
+    "teilverbandsfeste": {
+      "kategorie_charakter": "Teilverbands-Kranzfeste",
+      "kranztyp": "Teilverbandskranz",
+      "turnus": "Jährlich",
+      "anzahl": 5,
+      "turniere": [
+        {"fest": "Innerschweizerisches Schwing- und Älplerfest (ISAF)", "teilverband_code": "ISV", "teilverband_name": "Innerschweizer Schwingerverband", "region": ["UR", "SZ", "LU", "ZG", "OW", "NW"]},
+        {"fest": "Bernisch-Kantonales Schwingfest (BKSF)", "teilverband_code": "BKSV", "teilverband_name": "Bernisch-Kantonaler Schwingerverband", "region": ["BE"]},
+        {"fest": "Nordostschweizer Schwingfest (NOS)", "teilverband_code": "NOSV", "teilverband_name": "Nordostschweizer Schwingerverband", "region": ["ZH", "TG", "SG", "AP", "GL", "GR", "SH"]},
+        {"fest": "Nordwestschweizer Schwingfest (NWS)", "teilverband_code": "NWSV", "teilverband_name": "Nordwestschweizerischer Schwingerverband", "region": ["AG", "BL", "BS", "SO"]},
+        {"fest": "Südwestschweizer Schwingfest (SWS)", "teilverband_code": "SWSV", "teilverband_name": "Association romande de lutte suisse", "region": ["VD", "VS", "FR", "GE", "NE", "JU"]}
+      ]
+    },
+    "kantonal_und_gauverbandsfeste": {
+      "kategorie_charakter": "Kantonal- und Gauverbands-Kranzfeste",
+      "kranztyp": "Kantonal- / Gauverbandskranz",
+      "turnus": "Jährlich",
+      "unterteilung_nach_teilverband": {
+        "ISV": ["Urner Kantonales Schwingfest", "Schwyzer Kantonales Schwingfest", "Luzerner Kantonales Schwingfest", "Zuger Kantonales Schwingfest", "Ob- und Nidwaldner Kantonales Schwingfest"],
+        "BKSV": ["Emmentalisches Schwingfest", "Oberländisches Schwingfest", "Seeländisches Schwingfest", "Mittelländisches Schwingfest", "Oberaargauisches Schwingfest"],
+        "NOSV": ["Zürcher Kantonalschwingfest", "St. Galler Kantonalschwingfest", "Thurgauer Kantonalschwingfest", "Glarner-Bündner Kantonalschwingfest", "Appenzeller Kantonalschwingfest", "Schaffhauser Kantonalschwingfest"],
+        "NWSV": ["Aargauer Kantonalschwingfest", "Solothurner Kantonalschwingfest", "Baselländisches Schwingfest", "Baselstädtisches Schwingfest"],
+        "SWSV": ["Freiburger Kantonalschwingfest", "Waadtländer Kantonalschwingfest", "Walliser Kantonalschwingfest", "Neuenburger Kantonalschwingfest", "Genfer Kantonalschwingfest"]
+      }
+    },
+    "nichtkranzfeste": {
+      "kategorie_charakter": "Regional- und Bergschwingfeste ohne Kranzabgabe",
+      "kranztyp": "Kein Kranz (Einheitspreise / Rangauszeichnung)",
+      "turnus": "Laufend während der Saison",
+      "subtypen": {
+        "bergschwingfeste_ohne_kranz": [
+          {"fest": "Surenen-Schwinget", "kanton": "UR"},
+          {"fest": "Raten-Schwinget", "kanton": "ZG"},
+          {"fest": "Allweg-Schwinget", "kanton": "NW"},
+          {"fest": "Lueg-Schwinget", "kanton": "BE"},
+          {"fest": "Marbachegg-Schwinget", "kanton": "LU"},
+          {"fest": "Flumserberg-Schwinget", "kanton": "SG"},
+          {"fest": "Engstlenalp-Schwinget", "kanton": "BE"},
+          {"fest": "Lac des Joncs", "kanton": "FR"}
+        ],
+        "regionalschwingfeste": [
+          {"fest": "Hallenschwinget Sarnen", "kanton": "OW"},
+          {"fest": "Jahresschwinget Thun", "kanton": "BE"},
+          {"fest": "Gibel-Schwinget Bonstetten", "kanton": "ZH"},
+          {"fest": "Toggenburger Verbandsschwingfest", "kanton": "SG"}
+        ]
+      }
+    }
+  }
+}

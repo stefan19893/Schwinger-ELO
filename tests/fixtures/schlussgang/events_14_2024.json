@@ -1,0 +1,753 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "9673d803-37b7-4582-89e8-cc43a5b6d463",
+   "attributes": {
+    "drupal_internal__nid": 22303,
+    "title": "Thurgauer Kantonalschwingfest Ermatingen 2024 05.05.2024 (6287) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/thurgauer-kantonalschwingfest-ermatingen-2024",
+     "pid": 22268,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-05-05",
+    "field_event_esv_id": 6287,
+    "field_event_location": "Ermatingen",
+    "field_event_participant_count": 153,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Thurgauer Kantonalschwingfest Ermatingen 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "548dbb01-1dec-4b8d-bc09-d4a78e6e11b2",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 86327
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "dae6469b-c0aa-428c-b5b8-dcb3d8043484",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 86329
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "8b23e949-23ad-4bae-b4af-52eae7f0eedb",
+   "attributes": {
+    "drupal_internal__nid": 36814,
+    "title": "Baselstädtisches Schwingfest Basel 2024 09.05.2024 (6433) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/baselstaedtisches-schwingfest-basel-2024",
+     "pid": 33069,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-05-09",
+    "field_event_esv_id": 6433,
+    "field_event_location": "Basel",
+    "field_event_participant_count": 115,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Baselstädtisches Schwingfest Basel 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "9eb56d72-deb6-4935-b34f-173e173c48dd",
+      "meta": {
+       "drupal_internal__target_id": 29
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "691193cc-f7ea-4ba8-b91a-09b822a53a38",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 86967
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "69b4887e-4411-4a48-9776-d7c3c1ed3615",
+      "meta": {
+       "display": null,
+       "description": "Statistik",
+       "drupal_internal__target_id": 86970
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "8a471109-3fc8-4b9f-b8fc-ff3598dcc566",
+   "attributes": {
+    "drupal_internal__nid": 22298,
+    "title": "Mittelländisches Schwingfest Riggisberg 2024 12.05.2024 (5561) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/mittellaendisches-schwingfest-riggisberg-2024",
+     "pid": 22263,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-05-12",
+    "field_event_esv_id": 5561,
+    "field_event_location": "Riggisberg",
+    "field_event_participant_count": 190,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Mittelländisches Schwingfest Riggisberg 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "5e7a30da-c5a4-4f74-8536-bf803e373d07",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 86532
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "f46d4391-b10e-4903-bc29-64a851be33e5",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 86534
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "4e63dc62-5116-42e6-97f9-f3a6f1ac41ec",
+   "attributes": {
+    "drupal_internal__nid": 22294,
+    "title": "Ob- und Nidwaldner Kantonalschwingfest Lungern 2024 18.05.2024 (6180) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/ob-und-nidwaldner-kantonalschwingfest-lungern-2024",
+     "pid": 22259,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-05-18",
+    "field_event_esv_id": 6180,
+    "field_event_location": "Lungern",
+    "field_event_participant_count": 198,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Ob- und Nidwaldner Kantonalschwingfest Lungern 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+      "meta": {
+       "drupal_internal__target_id": 27
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "73e94d91-ce53-4558-8277-57b27d7be220",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 86720
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "f92a542d-6756-4e11-a5e5-5da6782963af",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 86722
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "fa3f27d9-a1dc-48c4-bdaf-0810ccaa8089",
+   "attributes": {
+    "drupal_internal__nid": 22291,
+    "title": "Glarner-Bündner Schwingertag Glarus 2024 20.05.2024 (5199) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/glarner-buendner-schwingertag-glarus-2024",
+     "pid": 22256,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-05-20",
+    "field_event_esv_id": 5199,
+    "field_event_location": "Glarus",
+    "field_event_participant_count": 133,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Glarner-Bündner Schwingertag Glarus 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "0e49a15d-ce45-49bb-83d2-24964a77d843",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 86851
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "836a79f0-bf92-4003-8c29-dc17a41e1d5e",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 86853
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "4c02bf6d-8044-4a1e-bc2c-a2eb074e3fc7",
+   "attributes": {
+    "drupal_internal__nid": 22257,
+    "title": "Bern-Jurassisches Schwingfest Raimeux 2024 30.06.2024 (6027) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/bern-jurassisches-schwingfest-raimeux-2024",
+     "pid": 22222,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-06-30",
+    "field_event_esv_id": 6027,
+    "field_event_location": "Raimeux",
+    "field_event_participant_count": 141,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Bern-Jurassisches Schwingfest Raimeux 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "280b6c70-bbf8-4866-98da-e2766b1cdfee",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 87940
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "b83da13b-1312-41bd-9b54-db4cabb1f3b0",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 87942
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "8826000b-58d1-4c7c-888e-50999da1b9c7",
+   "attributes": {
+    "drupal_internal__nid": 22236,
+    "title": "Oberaargauisches Schwingfest Burgdorf 2024 01.08.2024 (5002) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/oberaargauisches-schwingfest-burgdorf-2024",
+     "pid": 22201,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-08-01",
+    "field_title_custom": "Oberaargauisches Schwingfest Burgdorf 2024",
+    "field_event_esv_id": 5002,
+    "field_event_location": "Burgdorf",
+    "field_event_participant_count": 180,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "4a586a97-c4b1-43af-a5e0-5092fc383b3f",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 88633
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "7f294518-7ca2-4fc6-b69a-4ed423df88fe",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 88635
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "acd7116e-a270-47ff-b47a-8ba5d6ede824",
+   "attributes": {
+    "drupal_internal__nid": 34412,
+    "title": "Emmentalisches Schwingfest Burgdorf 2024 03.08.2024 (5003) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/emmentalisches-schwingfest-burgdorf-2024",
+     "pid": 32768,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-08-03",
+    "field_event_esv_id": 5003,
+    "field_event_location": "Burgdorf",
+    "field_event_participant_count": 195,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Emmentalisches Schwingfest Burgdorf 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+      "meta": {
+       "drupal_internal__target_id": 14
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "43b47804-a479-447a-8329-6563c7c8603f",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 88705
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "e4bb6dc5-860e-4d2f-a470-a38f553bc8fe",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 88707
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "f54f9000-73bc-4ac9-92b0-e347daf224af",
+   "attributes": {
+    "name": "Kantonal-/Gaufest",
+    "drupal_internal__tid": 14
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+   "attributes": {
+    "drupal_internal__tid": 28,
+    "name": "Nordostschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "9eb56d72-deb6-4935-b34f-173e173c48dd",
+   "attributes": {
+    "drupal_internal__tid": 29,
+    "name": "Nordwestschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+   "attributes": {
+    "drupal_internal__tid": 27,
+    "name": "Innerschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+   "attributes": {
+    "drupal_internal__tid": 26,
+    "name": "Bern"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "dae6469b-c0aa-428c-b5b8-dcb3d8043484",
+   "attributes": {
+    "filename": "22303-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22303-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22303-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "69b4887e-4411-4a48-9776-d7c3c1ed3615",
+   "attributes": {
+    "filename": "36814-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/36814-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/36814-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "f46d4391-b10e-4903-bc29-64a851be33e5",
+   "attributes": {
+    "filename": "22298-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22298-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22298-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "f92a542d-6756-4e11-a5e5-5da6782963af",
+   "attributes": {
+    "filename": "22294-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22294-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22294-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "836a79f0-bf92-4003-8c29-dc17a41e1d5e",
+   "attributes": {
+    "filename": "22291-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22291-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22291-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "b83da13b-1312-41bd-9b54-db4cabb1f3b0",
+   "attributes": {
+    "filename": "22257-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22257-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22257-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "7f294518-7ca2-4fc6-b69a-4ed423df88fe",
+   "attributes": {
+    "filename": "22236-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22236-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22236-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "e4bb6dc5-860e-4d2f-a470-a38f553bc8fe",
+   "attributes": {
+    "filename": "34412-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/34412-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/34412-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "548dbb01-1dec-4b8d-bc09-d4a78e6e11b2",
+   "attributes": {
+    "filename": "22303-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22303-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22303-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "691193cc-f7ea-4ba8-b91a-09b822a53a38",
+   "attributes": {
+    "filename": "36814-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/36814-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/36814-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "5e7a30da-c5a4-4f74-8536-bf803e373d07",
+   "attributes": {
+    "filename": "22298-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22298-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22298-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "73e94d91-ce53-4558-8277-57b27d7be220",
+   "attributes": {
+    "filename": "22294-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22294-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22294-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "0e49a15d-ce45-49bb-83d2-24964a77d843",
+   "attributes": {
+    "filename": "22291-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22291-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22291-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "280b6c70-bbf8-4866-98da-e2766b1cdfee",
+   "attributes": {
+    "filename": "22257-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22257-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22257-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "4a586a97-c4b1-43af-a5e0-5092fc383b3f",
+   "attributes": {
+    "filename": "22236-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/22236-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/22236-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "43b47804-a479-447a-8329-6563c7c8603f",
+   "attributes": {
+    "filename": "34412-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/34412-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/34412-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}

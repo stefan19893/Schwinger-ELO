@@ -1,0 +1,215 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "01235dc7-a683-47a3-acf4-b148b33b0c6c",
+   "attributes": {
+    "drupal_internal__nid": 21084,
+    "title": "Rottal-Schwinget Ruswil 2025 07.06.2025 (6005) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/rottal-schwinget-ruswil-2025",
+     "pid": 21052,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-06-07",
+    "field_event_esv_id": 6005,
+    "field_event_location": "Ruswil",
+    "field_event_participant_count": 70,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Rottal-Schwinget Ruswil 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+      "meta": {
+       "drupal_internal__target_id": 27
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "93bb5a48-f7be-4972-b6a9-e2a4dd8ed170",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 92825
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "ea31e175-7bca-4a73-8fee-6a3bf5e17321",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 92827
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "2bb96d01-021e-46dc-8c86-69c557dd18e9",
+   "attributes": {
+    "drupal_internal__nid": 38144,
+    "title": "Herisauer Obedschwinget 2025 07.06.2025 (6643) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/herisauer-obedschwinget-2025",
+     "pid": 34152,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-06-07",
+    "field_event_esv_id": 6643,
+    "field_event_location": "Herisau",
+    "field_event_participant_count": 86,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Herisauer Obedschwinget 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "cf02241a-ef43-455f-99a4-6755875b3b77",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 92857
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "a9b9c6cb-588b-40e6-a720-cc5b20f5afe6",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 92859
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "9db61825-e444-4538-b86b-e7900bd36604",
+   "attributes": {
+    "name": "Regionalfeste",
+    "drupal_internal__tid": 15
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+   "attributes": {
+    "drupal_internal__tid": 27,
+    "name": "Innerschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+   "attributes": {
+    "drupal_internal__tid": 28,
+    "name": "Nordostschweiz"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "ea31e175-7bca-4a73-8fee-6a3bf5e17321",
+   "attributes": {
+    "filename": "21084-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21084-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21084-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "a9b9c6cb-588b-40e6-a720-cc5b20f5afe6",
+   "attributes": {
+    "filename": "38144-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/38144-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/38144-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "93bb5a48-f7be-4972-b6a9-e2a4dd8ed170",
+   "attributes": {
+    "filename": "21084-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21084-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21084-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "cf02241a-ef43-455f-99a4-6755875b3b77",
+   "attributes": {
+    "filename": "38144-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/38144-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/38144-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}
