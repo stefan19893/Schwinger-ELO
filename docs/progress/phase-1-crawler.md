@@ -1,5 +1,4 @@
 # Phase 1 — Festival crawler (Milestone 1)
-**Status:** blocked — awaiting user decision on data source / permission (see task 1 handoff note)
 **Agent:** data-engineer
 
 ## Goal

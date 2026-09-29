@@ -1,14 +1,14 @@
 # Project State
 
 **Last updated:** 2026-09-29
-**Current phase:** 1 — Festival crawler (BLOCKED, branch `phase-1-crawler`)
-**Next action:** User decision needed: esv.ch terms forbid scraping (see Blockers). Once a source is cleared (ESV/schlussgang permission, or manual data), finish Phase 1 task 1 (record primary-source decision), then task 2 (fixtures).
+**Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
+**Next action:** Phase 1, task 1 — document schlussgang URL/API patterns and locate per-bout data.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
-| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in progress (blocked) |
+| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in progress |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | not started |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
@@ -37,13 +37,14 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — `pyarrow>=18` without upper bound — frequent major releases, we only use the stable Parquet read/write API (phase-0 review).
 - 2026-09-29 — `get-pip.py` fallback prints its sha256 and can be pinned via `GET_PIP_SHA256`; no default pin because the file changes with every pip release. Preferred fix remains `sudo apt install python3.14-venv` (phase-0 review).
 - 2026-09-29 — User-Agent contact: `+https://github.com/stefan19893/Schwinger-ELO` (public repo) — resolves open question.
+- 2026-09-29 — Primary and only source = schlussgang.ch (website + `backend-api.schlussgang.ch/jsonapi`) — user decision (relayed by coordinator); robots.txt `Allow: /`, no terms page prohibiting crawling.
+- 2026-09-29 — esv.ch is NOT crawled at all (its Nutzungsbedingungen forbid scraping); only the ESV Anlass id from schlussgang (`field_event_esv_id`) is stored as a reference field.
 
 ## Open questions
-- Which source is primary? robots.txt of both allow it, but esv.ch terms forbid scraping (see Blockers). esv.ch would be the natural primary source (official, `/ranglisten/?jahr=` + `?anlass=` with bout-level data); schlussgang JSON:API has the category taxonomy + `field_event_esv_id` but its results come from ESV. → user decision.
-- If the ESV grants permission: does it cover publishing derived ratings (athlete names + ELO) on GitHub Pages?
+- Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
 - ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.
 - How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
 
 
 ## Blockers
-- 2026-09-29 — **esv.ch Nutzungsbedingungen (Stand 6.7.2026) forbid automated retrieval (scraping/crawling/bots), use in third-party applications and systematic storage for own databases without written ESV permission.** schlussgang.ch has no crawling ban (robots `Allow: /`, impressum only restricts reprinting texts) but its results are ESV data (events carry ESV ids). No crawl performed. User must decide: request permission from ESV (Geschäftsstelle, Rumendingenstrasse 1, 3423 Ersigen) and/or SCHLUSSGANG Medien AG, or supply data manually. Details: `phase-1-crawler.md` task 1 handoff note.
+- none (2026-09-29: esv.ch-terms blocker resolved by user decision to use schlussgang.ch only)
