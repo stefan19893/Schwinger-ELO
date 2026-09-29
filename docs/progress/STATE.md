@@ -1,14 +1,14 @@
 # Project State
 
 **Last updated:** 2026-09-29
-**Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
-**Next action:** Phase 1, task 1 — investigate sources (robots.txt/terms, festival index + Notenblatt URL patterns).
+**Current phase:** 1 — Festival crawler (BLOCKED, branch `phase-1-crawler`)
+**Next action:** User decision needed: esv.ch terms forbid scraping (see Blockers). Once a source is cleared (ESV/schlussgang permission, or manual data), finish Phase 1 task 1 (record primary-source decision), then task 2 (fixtures).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
-| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in progress |
+| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in progress (blocked) |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | not started |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
@@ -39,10 +39,11 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — User-Agent contact: `+https://github.com/stefan19893/Schwinger-ELO` (public repo) — resolves open question.
 
 ## Open questions
-- Which source is primary (schlussgang.ch vs esv.ch), and do their robots.txt / terms allow crawling? → answer in Phase 1.
+- Which source is primary? robots.txt of both allow it, but esv.ch terms forbid scraping (see Blockers). esv.ch would be the natural primary source (official, `/ranglisten/?jahr=` + `?anlass=` with bout-level data); schlussgang JSON:API has the category taxonomy + `field_event_esv_id` but its results come from ESV. → user decision.
+- If the ESV grants permission: does it cover publishing derived ratings (athlete names + ELO) on GitHub Pages?
 - ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.
 - How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
 
 
 ## Blockers
-- none
+- 2026-09-29 — **esv.ch Nutzungsbedingungen (Stand 6.7.2026) forbid automated retrieval (scraping/crawling/bots), use in third-party applications and systematic storage for own databases without written ESV permission.** schlussgang.ch has no crawling ban (robots `Allow: /`, impressum only restricts reprinting texts) but its results are ESV data (events carry ESV ids). No crawl performed. User must decide: request permission from ESV (Geschäftsstelle, Rumendingenstrasse 1, 3423 Ersigen) and/or SCHLUSSGANG Medien AG, or supply data manually. Details: `phase-1-crawler.md` task 1 handoff note.
