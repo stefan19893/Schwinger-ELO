@@ -1,0 +1,286 @@
+"""Statistic-sheet parser tests against saved schlussgang sheets (offline).
+
+Fixtures: ``tests/fixtures/statistic/<fest_id>.txt`` (PDF text extracted with
+PDFium), two real PDFs and ``festivals.json`` (the matching festival rows).
+"""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from src.scraper import bouts_parser as bp
+from src.scraper.statistic_pdfs import pdf_to_text
+
+FIX = Path(__file__).parent / "fixtures" / "statistic"
+META: dict[str, dict[str, Any]] = json.loads((FIX / "festivals.json").read_text(encoding="utf-8"))
+SHARED_SHEET = {"23796": "23674"}  # Oberarth 2022's sheet is stored once (shared URL)
+
+
+def text(fid: int | str) -> str:
+    return (FIX / f"{SHARED_SHEET.get(str(fid), fid)}.txt").read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=None)
+def parsed(fid: int) -> bp.FestivalParse:
+    m = META[str(fid)]
+    return bp.parse_festival(text(fid), fid, m["date"], m["name"],
+                             max_gang=8 if m["category"] == "ESAF" else 6)
+
+
+def reasons(res: bp.FestivalParse) -> Counter[str]:
+    return Counter(r.reason for r in res.rejects)
+
+
+def athlete(res: bp.FestivalParse, name: str) -> dict[str, Any]:
+    hits = [a for a in res.athletes if a["name"] == name]
+    assert len(hits) == 1, (name, [a["name"] for a in res.athletes if name.split()[0] in a["name"]])
+    return hits[0]
+
+
+def bouts_between(res: bp.FestivalParse, n1: str, n2: str) -> list[dict[str, Any]]:
+    ids = {athlete(res, n1)["athlete_raw_id"]: n1, athlete(res, n2)["athlete_raw_id"]: n2}
+    return sorted((b for b in res.bouts if {b["athlete_a_id"], b["athlete_b_id"]} == set(ids)),
+                  key=lambda b: b["gang_nr"])
+
+
+def result_for(bout: dict[str, Any], res: bp.FestivalParse, name: str) -> tuple[str, float]:
+    """('W'|'L'|'D', grade) from the perspective of ``name``."""
+    me = athlete(res, name)["athlete_raw_id"]
+    is_a = bout["athlete_a_id"] == me
+    grade = bout["grade_a"] if is_a else bout["grade_b"]
+    if bout["outcome"] == "DRAW":
+        return "D", grade
+    won = (bout["outcome"] == "WIN_A") == is_a
+    return ("W" if won else "L"), grade
+
+
+# ------------------------------------------------------------------ whole sheets
+@pytest.mark.parametrize("fid", [int(k) for k in META])
+def test_every_entry_is_accounted_for(fid: int) -> None:
+    """Nothing is dropped silently: entries = 2*bouts + entry rejects + 2*bout rejects."""
+    res = parsed(fid)
+    entry = sum(1 for r in res.rejects if r.stage == "entry")
+    bout = sum(1 for r in res.rejects if r.stage == "bout")
+    assert res.entries_total == 2 * len(res.bouts) + entry + 2 * bout
+
+
+@pytest.mark.parametrize(("fid", "layout", "status", "athletes", "bouts"), [
+    (46055, "standard", "ok", 99, 274),        # normal recent 6-Gang festival
+    (24110, "standard", "partial", 276, 908),  # ESAF 2019 (1 forfeit)
+    (21055, "standard", "partial", 274, 918),  # ESAF 2025
+    (26296, "multicol", "ok", 57, 171),        # 2012 multi-column, youth-mixed
+    (26412, "multicol", "partial", 101, 280),  # 2011 multi-column Bergkranz
+    (26414, "blocks", "partial", 83, 212),     # 2011 block layout
+    (26413, "rang", "partial", 134, 372),      # 2011 Rang: layout
+    (26108, "rang", "partial", 64, 177),       # 2013 Rang: variant
+    (24013, "standard", "ok", 62, 179),        # Jungaktive, S/T suffixes
+    (45965, "standard", "partial", 67, 196),   # Hallenschwinget
+    (23796, "standard", "ok", 70, 210),        # true owner of the shared sheet
+])
+def test_sheet_totals(fid: int, layout: str, status: str, athletes: int, bouts: int) -> None:
+    res = parsed(fid)
+    assert (res.layout, res.status, len(res.athletes), len(res.bouts)) == \
+        (layout, status, athletes, bouts)
+
+
+def test_klewenalp_clean_sheet() -> None:
+    res = parsed(46055)
+    assert res.rejects == [] and res.header_check == "ok"
+    # every athlete's grades add up to his printed points
+    assert all(a["grade_sum"] == a["points"] for a in res.athletes)
+    # Gang 1: Scherrer - Bruhin gestellt ('-' on both sides, 8.75)
+    g1 = bouts_between(res, "Scherrer Fabian", "Bruhin Fredi")
+    assert [(b["gang_nr"], b["outcome"], b["grade_a"], b["grade_b"]) for b in g1] == \
+        [(1, "DRAW", 8.75, 8.75)]
+    # Schlussgang: Waser prints 'o Scherrer 8.75' = a plain loss
+    sg = bouts_between(res, "Scherrer Fabian", "Waser Christoph")
+    assert [(b["gang_nr"],) + result_for(b, res, "Scherrer Fabian") for b in sg] == [(6, "W", 10.0)]
+    assert result_for(sg[0], res, "Waser Christoph") == ("L", 8.75)
+
+
+def test_name_suffixes_are_kept_raw() -> None:
+    res = parsed(46055)
+    e1, e2 = athlete(res, "Herger Elias 1"), athlete(res, "Herger Elias 2")
+    assert e1["athlete_raw_id"] != e2["athlete_raw_id"]
+    assert bouts_between(res, "Züger Benjamin", "Herger Elias 2")  # resolved to the right one
+
+
+def test_esaf_eight_gaenge_and_rematch() -> None:
+    res = parsed(24110)
+    gaenge = Counter(b["gang_nr"] for b in res.bouts)
+    assert max(gaenge) == 8 and gaenge[8] > 0
+    sw = bouts_between(res, "Stucki Christian", "Wicki Joel")
+    assert [(b["gang_nr"],) + result_for(b, res, "Stucki Christian") for b in sw] == \
+        [(5, "D", 9.0), (8, "W", 10.0)]
+    assert athlete(res, "Odermatt Adrian (2001)")["birth_year"] == "2001"
+    assert athlete(res, "Streiff Dominik")["withdrawn"] is True
+    assert reasons(res) == Counter({"forfeit_injury": 1})
+
+
+def test_esaf_two_day_header() -> None:
+    assert bp.verify_header(["Glarnerland+, Mollis, 30.-31.08.2025"], "2025-08-30", "x")[0] == "ok"
+    assert parsed(21055).header_check == "ok"
+
+
+def test_draw_heavy_sheet() -> None:
+    res = parsed(37052)
+    draws = sum(b["outcome"] == "DRAW" for b in res.bouts) / len(res.bouts)
+    assert draws > 0.4
+
+
+def test_youth_mixed_keeps_only_actives() -> None:
+    res = parsed(25799)  # Schattdorf 2014: Aktive, then Kat. B-E
+    names = {a["name"] for a in res.athletes}
+    assert "Kempf Elias" in names
+    assert "Zurfluh Michael" not in names  # Kat. B winner
+    res2 = parsed(26296)  # Le Mouret 2012: youth sections first, "Actif" last
+    assert res.youth_blocks > 0 and res2.youth_blocks == 96
+    assert "Duplan Steve (SWS)" not in {a["name"] for a in res2.athletes}  # 1997 category
+
+
+def test_youth_extra_bouts_are_rejected_with_reason() -> None:
+    assert reasons(parsed(25799))["extra_bout_without_grade"] == 1
+
+
+def test_injury_forfeits_are_not_bouts() -> None:
+    assert reasons(parsed(26412))["forfeit_injury"] == 2   # "> unfall"
+    assert reasons(parsed(26413))["forfeit_injury"] == 2   # 'u' symbol
+    assert reasons(parsed(45965))["forfeit_injury"] == 2   # 0.00 grade
+
+
+def test_block_layout_schlussgang_marker() -> None:
+    res = parsed(26414)
+    assert any(b["schlussgang"] for b in res.bouts)
+
+
+def test_shared_pdf_is_only_imported_for_its_festival() -> None:
+    wrong = parsed(23674)  # Schwarzenberg 2022 points to Oberarth's sheet
+    assert wrong.status == "header_mismatch" and wrong.bouts == []
+    assert reasons(wrong) == Counter({"header_mismatch": 1})
+    assert parsed(23796).status == "ok"
+
+
+def test_same_name_resolved_by_mirror_entry() -> None:
+    res = parsed(24013)  # two "Gisler Silvan" (S and T); opponents print just the name
+    gs = [a for a in res.athletes if a["name"] == "Gisler Silvan"]
+    assert sorted(a["sennen_turner"] for a in gs) == ["S", "T"]
+    assert reasons(res) == Counter({"duplicate_name_in_sheet": 1})  # informational only
+
+
+def test_notenblatt_layout_assigns_blocks_correctly() -> None:
+    res = parsed(25931)  # points(k), entries(k), then "rank name(k) points(k+1)"
+    assert res.layout == "notenblatt"
+    full = [a for a in res.athletes if a["n_entries"] == 6]
+    assert len(full) > 50 and all(a["grade_sum"] == a["points"] for a in full)
+    assert athlete(res, "Mahrer Jürg")["rank"] == "1" and athlete(res, "Mahrer Jürg")["points"] == 59.5
+
+
+def test_garbled_sheet_fails_with_reason() -> None:
+    res = parsed(24038)
+    assert res.status == "failed" and res.bouts == []
+    assert reasons(res) == Counter({"no_athletes_found": 1})
+
+
+def test_pdf_extraction_matches_text_fixture() -> None:
+    for fid in (46055, 45965):
+        t = pdf_to_text((FIX / f"{fid}.pdf").read_bytes())
+        assert bp.normalize_text(t) == bp.normalize_text(text(fid))
+
+
+def test_parse_from_real_pdf() -> None:
+    m = META["45965"]
+    res = bp.parse_festival(pdf_to_text((FIX / "45965.pdf").read_bytes()), 45965,
+                            m["date"], m["name"])
+    assert len(res.bouts) == 196
+
+
+def test_frames_have_spec_columns() -> None:
+    bouts, athletes, rejects = bp.to_frames([parsed(46055), parsed(24110)])
+    assert {"bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
+            "grade_a", "grade_b"} <= set(bouts.columns)
+    assert bouts["bout_id"].is_unique and len(bouts) == 274 + 908
+    assert set(bouts["outcome"]) <= set(bp.OUTCOMES)
+    assert bouts["grade_a"].between(8.25, 10).all() and bouts["grade_b"].between(8.25, 10).all()
+    assert athletes["athlete_raw_id"].is_unique
+    assert set(bouts["athlete_a_id"]) | set(bouts["athlete_b_id"]) <= set(athletes["athlete_raw_id"])
+    assert list(rejects.columns) == ["fest_id", "stage", "reason", "detail", "line"]
+
+
+# ------------------------------------------------------------------ units
+@pytest.mark.parametrize(("raw", "clean"), [
+    ("Stucki Christian ***", "Stucki Christian"),
+    ("Remo**", "Remo"),
+    ("Gisler Silvan, S", "Gisler Silvan"),
+    ("Steiner Chris, S (03)", "Steiner Chris (03)"),
+    ("Clopath Beat (Bonaduz) EK", "Clopath Beat (Bonaduz)"),
+    ("von Ah Benji T**", "von Ah Benji"),
+    ("Glarner Matthias OB", "Glarner Matthias"),
+    ("Herger Elias 2", "Herger Elias 2"),
+    ("Odermatt Adrian (2001) *", "Odermatt Adrian (2001)"),
+])
+def test_clean_name(raw: str, clean: str) -> None:
+    assert bp.clean_name(raw) == clean
+
+
+def test_name_keys_and_details() -> None:
+    assert bp.name_keys("Odermatt Adrian (2001)") == ("odermatt adrian (2001)", "odermatt adrian")
+    assert bp.name_details("Steiner Chris (03)")["birth_year"] == "2003"
+    assert bp.name_details("Anderegg Simon (BE)")["association"] == "BE"
+    assert bp.name_details("Forrer Arnold, Stein")["place"] == "Stein"
+
+
+@pytest.mark.parametrize(("line", "year", "expected"), [
+    ("Aktive", 2014, "active"), ("Actif", 2012, "active"),
+    ("Kat. B; Jg. 99/00", 2014, "youth"), ("Kategorie 2000/01", 2015, "youth"),
+    ("Jungschwinger 03-04", 2018, "youth"), ("JS 00/01", 2015, "youth"),
+    ("1997", 2012, "youth"), ("1999-2000", 2012, "youth"),
+    ("2023", 2023, None),  # wrapped title "…Interlaken" / "2023"
+    ("+ Bösch Daniel 10.00", 2016, None),
+])
+def test_section_of(line: str, year: int, expected: str | None) -> None:
+    assert bp.section_of(line, year) == expected
+
+
+@pytest.mark.parametrize(("header", "date", "expected"), [
+    (["Oberarth, 10.04.2022"], "2022-06-16", "mismatch"),
+    (["Oberarth, 10.04.2022"], "2022-04-10", "ok"),
+    (["Schattdorf, 13. April 2014"], "2014-04-13", "ok"),
+    (["Villars-le-Terroir, le 7 juillet 2013"], "2013-07-07", "ok"),
+    (["Statistische Tabelle Klewenalp-Schwinget"], "2025-08-02", "ok"),  # name token
+    (["Statistische Tabelle"], "2025-08-02", "unverified"),
+])
+def test_verify_header(header: list[str], date: str, expected: str) -> None:
+    assert bp.verify_header(header, date, "Klewenalp-Schwinget 2025")[0] == expected
+
+
+@pytest.mark.parametrize(("sa", "sb", "ga", "gb", "outcome", "flags"), [
+    ("+", "o", 10.0, 8.5, "WIN_A", []),
+    ("o", "+", 8.75, 9.75, "WIN_B", []),
+    ("-", "-", 9.0, 9.0, "DRAW", []),
+    ("+", "-", 10.0, 8.5, "WIN_A", ["symbol_conflict_resolved_by_grades"]),
+    ("+", "+", 9.0, 9.0, None, []),
+])
+def test_outcome(sa: str, sb: str, ga: float, gb: float, outcome: str | None,
+                 flags: list[str]) -> None:
+    assert bp._outcome(sa, sb, ga, gb) == (outcome, flags)
+
+
+def test_gang_from_complete_list() -> None:
+    """A shorter list (missed Gang) under-estimates the Gang; the complete list wins."""
+    sheet = bp.parse_sheet("\n".join([
+        "1 Alpha Anton 58.00", "+ Beta Bruno 10.00", "+ Gamma Gustav 10.00", "+ Delta Dan 10.00",
+        "2 Beta Bruno 26.75", "o Alpha Anton 8.50", "+ Delta Dan 9.25",   # missed Gang 3 is last
+        "3 Gamma Gustav 17.75", "o Alpha Anton 8.50", "+ Delta Dan 9.25",  # arrived for Gang 2
+        "4 Delta Dan 26.25", "o Gamma Gustav 8.75", "o Beta Bruno 8.75", "o Alpha Anton 8.75",
+    ]))
+    res = bp.build_festival(sheet, 1)
+    g = {(b["athlete_a_id"], b["athlete_b_id"]): b["gang_nr"] for b in res.bouts}
+    assert g[("1-000", "1-002")] == 2  # Alpha's complete list says Gang 2 (Gamma's says 1)
+    assert "gang_inferred:2/1" in [b for b in res.bouts if b["gang_nr"] == 2
+                                   and b["athlete_b_id"] == "1-002"][0]["flags"]

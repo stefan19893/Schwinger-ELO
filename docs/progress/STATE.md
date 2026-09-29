@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 2 — implement the statistic-sheet parser (standard, Rang, block, multi-column layouts) + tests against tests/fixtures/statistic/.
+**Next action:** Phase 2, task 3 — validation rules (grade range, symmetric bouts, gang count/collisions) + tests.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -62,6 +62,10 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — PDF library = **pypdfium2** (PDFium; BSD/Apache) instead of pypdf — pypdf fails on malformed sheets (2013 Binningen), PDFium reads all 1879 in 11 s with identical text on normal sheets.
 - 2026-09-29 — `crawl` downloads the statistic PDFs of active, non-cancelled festivals after the listings (`--no-pdfs` to skip); own cap `pdf_max_requests = 2500`; past-season PDFs cached forever, current-season PDFs re-checked after 24 h until fetched ≥ 14 days after the festival (`pdf_max_age_hours`, `pdf_final_grace_days`); stops after 10 consecutive download errors. `parse` works offline on the cache (spec §5).
 - 2026-09-29 — **Correction:** statistic-sheet symbols are `+` win, `-` gestellt (draw), `o`/`0` loss. The Phase 1 note "Schlussgang loser printed as `o`" was a misreading — `o` is the normal loss symbol.
+- 2026-09-29 — Bouts are built by pairing both athletes' entries; unpaired/unresolvable entries are rejects (not one-sided bouts) — both grades are needed for the MoV multiplier and one-sided entries are mostly source errors.
+- 2026-09-29 — Injury-decided bouts (`u`, `> unfall`, 0.00 grade) are rejected as `forfeit_injury`, not rated — not a sporting result.
+- 2026-09-29 — Gang number = position in the complete list (or the larger position); flagged `gang_inferred`/`gang_uncertain` when list positions disagree (~1 % of bouts) — only used to order bouts within a festival.
+- 2026-09-29 — Same-name athletes in one sheet are disambiguated by the mirror entry; raw names (suffixes "1"/"2", birth years, S/T markers) are kept for Phase 3.
 
 ## Open questions
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
