@@ -1,0 +1,297 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "974ac5d5-1f25-459e-a448-d2a86b92e285",
+   "attributes": {
+    "drupal_internal__nid": 43884,
+    "title": "Berchtold-Schwinget Zürich 2025 02.01.2025 (6721) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/berchtold-schwinget-zuerich-2025",
+     "pid": 34680,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-01-02",
+    "field_title_custom": "Berchtold-Schwinget Zürich 2025",
+    "field_event_esv_id": 6721,
+    "field_event_location": "Zürich Saalsporthalle",
+    "field_event_participant_count": 100,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "d1c33dbd-1850-4861-baa0-aea8416bbc09",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 90180
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "320520cf-20c3-434f-aad6-3bf2eda01549",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 90182
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "b0a4cec2-cafe-4186-8e4c-b4cede881a75",
+   "attributes": {
+    "drupal_internal__nid": 48706,
+    "title": "Frühjahrsschwinget Notre Dame de Bon Conseil (Quebec, Kanada) 25.05.2025 () ()",
+    "path": {
+     "alias": "/event/fruehjahrsschwinget-notre-dame-de-bon-conseil-quebec-kanada",
+     "pid": 36417,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-05-25",
+    "field_event_esv_id": null,
+    "field_event_location": "Notre Dame de Bon Conseil (Quebec, Kanada)",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null,
+    "field_title_custom": "Frühjahrsschwinget Notre Dame de Bon Conseil (Quebec, Kanada)"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "3ba905d3-17de-4100-af03-959fc525a3fa",
+      "meta": {
+       "drupal_internal__target_id": 25
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": [
+      {
+       "type": "file--file",
+       "id": "dcb8fa3c-8bde-4123-a469-8398c992e2d9",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste",
+        "drupal_internal__target_id": 92342
+       }
+      }
+     ]
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "86ba9666-fc8a-49e2-9ec2-fabe1ede9cea",
+   "attributes": {
+    "drupal_internal__nid": 21094,
+    "title": "Schybi-Schwinget Escholzmatt 2025 29.05.2025 (6001) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/schybi-schwinget-escholzmatt-2025",
+     "pid": 21062,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-05-29",
+    "field_event_esv_id": 6001,
+    "field_event_location": "Escholzmatt",
+    "field_event_participant_count": 56,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Schybi-Schwinget Escholzmatt 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+      "meta": {
+       "drupal_internal__target_id": 27
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "8cb2c571-737b-40d0-8baf-1f38db2c4e33",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 92422
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "b3cf25c3-523c-44b2-83bf-f9bc1f2ff737",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 92424
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "9db61825-e444-4538-b86b-e7900bd36604",
+   "attributes": {
+    "name": "Regionalfeste",
+    "drupal_internal__tid": 15
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+   "attributes": {
+    "drupal_internal__tid": 28,
+    "name": "Nordostschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+   "attributes": {
+    "drupal_internal__tid": 27,
+    "name": "Innerschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "3ba905d3-17de-4100-af03-959fc525a3fa",
+   "attributes": {
+    "drupal_internal__tid": 25,
+    "name": "Ausland"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "dcb8fa3c-8bde-4123-a469-8398c992e2d9",
+   "attributes": {
+    "filename": "RL Notre Dame de Bon Conseil25.pdf",
+    "uri": {
+     "value": "public://schlussrangliste-pdfs/RL Notre Dame de Bon Conseil25.pdf",
+     "url": "/sites/default/files/schlussrangliste-pdfs/RL%20Notre%20Dame%20de%20Bon%20Conseil25.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "320520cf-20c3-434f-aad6-3bf2eda01549",
+   "attributes": {
+    "filename": "43884-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/43884-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/43884-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "b3cf25c3-523c-44b2-83bf-f9bc1f2ff737",
+   "attributes": {
+    "filename": "21094-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21094-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21094-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "d1c33dbd-1850-4861-baa0-aea8416bbc09",
+   "attributes": {
+    "filename": "43884-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/43884-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/43884-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "8cb2c571-737b-40d0-8baf-1f38db2c4e33",
+   "attributes": {
+    "filename": "21094-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/21094-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/21094-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {
+  "next": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/event?filter%5Bfield_category.tid%5D=15&filter%5Bdate%5D%5Bcondition%5D%5Bpath%5D=field_event_date&filter%5Bdate%5D%5Bcondition%5D%5Boperator%5D=BETWEEN&filter%5Bdate%5D%5Bcondition%5D%5Bvalue%5D%5B0%5D=2025-01-01&filter%5Bdate%5D%5Bcondition%5D%5Bvalue%5D%5B1%5D=2025-12-31&include=field_category%2Cfield_event_association%2Cfield_event_pdf%2Cfield_final_statistic_pdf%2Cfield_final_ranking_pdf&fields%5Bnode--event%5D=title%2Cpath%2Cdrupal_internal__nid%2Cfield_title_custom%2Cfield_event_esv_id%2Cfield_event_date%2Cfield_event_type%2Cfield_event_state%2Cfield_event_location%2Cfield_event_participant_count%2Cfield_category%2Cfield_event_association%2Cfield_event_pdf%2Cfield_final_statistic_pdf%2Cfield_final_ranking_pdf&fields%5Bfile--file%5D=filename%2Curi&fields%5Btaxonomy_term--event_tags%5D=name%2Cdrupal_internal__tid&fields%5Btaxonomy_term--association%5D=name%2Cdrupal_internal__tid&sort%5B0%5D%5Bdirection%5D=ASC&sort%5B0%5D%5Blangcode%5D&sort%5B0%5D%5Bpath%5D=field_event_date&sort%5B1%5D%5Bdirection%5D=ASC&sort%5B1%5D%5Blangcode%5D&sort%5B1%5D%5Bpath%5D=drupal_internal__nid&page%5Boffset%5D=50&page%5Blimit%5D=50"
+  }
+ }
+}

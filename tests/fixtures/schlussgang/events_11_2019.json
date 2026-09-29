@@ -1,0 +1,235 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "d2c916f4-0516-4236-8682-eb19578e32d3",
+   "attributes": {
+    "drupal_internal__nid": 24360,
+    "title": "Abgeordnetenversammlung ESV Meiringen",
+    "field_event_date": "2019-03-09",
+    "field_event_esv_id": null,
+    "field_event_location": "Meiringen",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null,
+    "field_title_custom": "Abgeordnetenversammlung ESV Meiringen 2019",
+    "path": {
+     "alias": "/event/abgeordnetenversammlung-esv-meiringen-2019",
+     "pid": 24240,
+     "langcode": "de"
+    }
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": []
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "3590cf92-f097-4e31-a544-15d8744871dd",
+   "attributes": {
+    "drupal_internal__nid": 24110,
+    "path": {
+     "alias": "/event/eidgenoessisches-schwing-und-aelplerfest-zug-2019",
+     "pid": 23993,
+     "langcode": "de"
+    },
+    "field_event_date": "2019-08-24",
+    "field_title_custom": "Eidgenössisches Schwing- und Älplerfest Zug 2019",
+    "title": "Eidgenössisches Schwing- und Älplerfest Zug 2019 24.08.2019 () ()",
+    "field_event_esv_id": null,
+    "field_event_location": "Zug",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": [
+      {
+       "type": "file--file",
+       "id": "05337797-abec-4ebe-b545-023931b00c6c",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste",
+        "drupal_internal__target_id": 6529
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "a7f54b08-a943-4217-bb71-9fa6fa27f568",
+       "meta": {
+        "display": true,
+        "description": "Statistik",
+        "drupal_internal__target_id": 6530
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "7504be19-0906-41aa-aa2a-a9b8b4c90913",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste Steinstossen 83,5-kg-Stein",
+        "drupal_internal__target_id": 6531
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "130f7bb4-12b2-4d73-8ff6-8b1f9fd2ce5f",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste Steinstossen (ohne Final 83,5-kg-Stein)",
+        "drupal_internal__target_id": 6532
+       }
+      }
+     ]
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "e28f4259-2439-4bce-9f41-75a5e80bae4c",
+   "attributes": {
+    "drupal_internal__nid": 24077,
+    "title": "Schwinger-Fussballturnier Interlaken",
+    "path": {
+     "alias": "/event/schwinger-fussballturnier-interlaken-2019",
+     "pid": 23960,
+     "langcode": "de"
+    },
+    "field_event_date": "2019-10-12",
+    "field_event_esv_id": null,
+    "field_event_location": "Interlaken",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null,
+    "field_title_custom": "Schwinger-Fussballturnier Interlaken 2019"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+   "attributes": {
+    "name": "Eidgenössische Anlässe",
+    "drupal_internal__tid": 11
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "05337797-abec-4ebe-b545-023931b00c6c",
+   "attributes": {
+    "filename": "schlussrangliste_367.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/schlussrangliste_367.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/schlussrangliste_367.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "a7f54b08-a943-4217-bb71-9fa6fa27f568",
+   "attributes": {
+    "filename": "schlussstatistik.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/schlussstatistik.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/schlussstatistik.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "7504be19-0906-41aa-aa2a-a9b8b4c90913",
+   "attributes": {
+    "filename": "rl_steinstossen-us-stein.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/rl_steinstossen-us-stein.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/rl_steinstossen-us-stein.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "130f7bb4-12b2-4d73-8ff6-8b1f9fd2ce5f",
+   "attributes": {
+    "filename": "steinstossen-rl.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/steinstossen-rl.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/steinstossen-rl.pdf.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}
