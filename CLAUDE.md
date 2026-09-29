@@ -13,10 +13,10 @@ Full specification: `docs/SPEC.md` (source of truth for schema, ELO formulas, K-
 - CI/hosting: GitHub Actions + GitHub Pages
 
 ## Commands
-- Everything locally, one command: `./scripts/deploy_local.sh` (flags: `--sample`, `--skip-crawl`, `--refresh`, `--test`, `--no-serve`, `--port N`) → http://localhost:8000
+- Everything locally, one command: `./scripts/deploy_local.sh` (flags: `--sample`, `--skip-crawl`, `--refresh`, `--test`, `--no-serve`, `--port N`; `-h` for help; `PYTHON=/path/python3.x` picks the interpreter) → http://localhost:8000
 - Fast offline demo: `./scripts/deploy_local.sh --sample`
-- Single stages: `python -m src.cli {crawl|parse|clean|elo|build|all|serve}`
-- Tests: `pytest`
+- Single stages: `python -m src.cli {crawl|parse|clean|elo|build|all|serve}`; global options `--sample --data-dir DIR --skip-crawl --refresh -v`; `crawl`/`all` take `--from-year/--to-year`; `serve` takes `--port/--host` (default 127.0.0.1)
+- Tests: `.venv/bin/python -m pytest` (or `pytest` inside the activated venv)
 
 ## Conventions
 - Never put pipeline logic in the shell script or workflow YAML — add it to the CLI so local and CI stay identical.

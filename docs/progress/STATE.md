@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 7 — user to confirm/apply the proposed Commands-section update in `CLAUDE.md` (see phase-0 handoff note); then run `phase-reviewer` for Phase 0.
+**Next action:** Phase 0 — run `phase-reviewer` against exit criteria, then ask user before Phase 1.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -39,4 +39,4 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - User-Agent has no contact URL yet (`src/config.py`) — what is the public repo URL / contact to include? → settle before the first real crawl in Phase 1.
 
 ## Blockers
-- Phase 0 task 7: editing `CLAUDE.md` needs the user's direct confirmation (agent-relayed requests can't authorize it). Current section is accurate, only incomplete.
+- none
