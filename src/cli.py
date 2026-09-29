@@ -20,9 +20,14 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from tqdm import tqdm
+
 from src.config import Config, load_config
 
 if TYPE_CHECKING:
+    import sqlite3
+
+    from src.scraper.client import HttpClient
     from src.scraper.fests_crawler import CrawlReport
 
 log = logging.getLogger("schwingen")
@@ -57,10 +62,11 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
             except FetchError as exc:
                 log.error("crawl: %s - finished years are saved, re-run to resume", exc)
                 return 1
+            _log_crawl_report(report)
+            pdf_rc = _crawl_pdfs(cfg, client, conn) if cfg.crawl_pdfs else 0
             stats = client.stats
     finally:
         conn.close()
-    _log_crawl_report(report)
     log.info("crawl: %d network requests (%d retries), %d cache hits",
              stats.network_requests, stats.retries, stats.cache_hits)
     if report.cache_misses:
@@ -68,6 +74,46 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
                   "--offline to fetch them", len(report.cache_misses),
                   ", ".join(report.cache_misses[:10])
                   + (" ..." if len(report.cache_misses) > 10 else ""))
+        return 1
+    return pdf_rc
+
+
+def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> int:
+    """Download (or confirm cached) the statistic PDF of every active festival."""
+    import datetime as dt
+
+    from src.db import load_festivals
+    from src.scraper.statistic_pdfs import PdfLimitExceeded, download_statistic_pdfs
+
+    seen: set[str] = set()
+    todo = []
+    for f in sorted(load_festivals(conn).values(), key=lambda f: (f.date, f.fest_id)):
+        if f.kind == "active" and not f.cancelled and f.statistic_pdf_url \
+                and f.statistic_pdf_url not in seen:
+            seen.add(f.statistic_pdf_url)
+            todo.append(f)
+    log.info("crawl: statistic PDFs for %d active festivals (cap %d network requests)",
+             len(todo), cfg.pdf_max_requests)
+    before = client.stats.network_requests
+    try:
+        rep = download_statistic_pdfs(
+            client, tqdm(todo, desc="pdfs", unit="pdf", disable=not sys.stderr.isatty()),
+            today=dt.date.today(), max_requests=cfg.pdf_max_requests,
+            max_age_hours=cfg.pdf_max_age_hours, grace_days=cfg.pdf_final_grace_days)
+    except PdfLimitExceeded as exc:
+        log.error("crawl: %s after %d requests - downloaded PDFs are cached, re-run to "
+                  "continue", exc, client.stats.network_requests - before)
+        return 1
+    except RuntimeError as exc:
+        log.error("crawl: %s", exc)
+        return 1
+    log.info("crawl: PDFs: %d downloaded, %d cached, %d failed%s, %d not cached (offline)",
+             rep.fetched, rep.cached, len(rep.failed),
+             f" (HTTP {rep.status_counts})" if rep.status_counts else "", len(rep.missing))
+    for fid, err in rep.failed:
+        log.warning("crawl: PDF of festival %d failed: %s", fid, err)
+    if rep.missing:
+        log.error("crawl: --offline: %d statistic PDFs not in cache", len(rep.missing))
         return 1
     return 0
 
@@ -221,10 +267,12 @@ def build_parser() -> argparse.ArgumentParser:
         return sp
 
     for name in ("crawl", "all"):
-        sp = add(name, "discover and fetch festivals" if name == "crawl"
+        sp = add(name, "discover festivals and download statistic PDFs" if name == "crawl"
                  else "crawl -> parse -> clean -> elo -> build")
         sp.add_argument("--from-year", type=int, default=None)
         sp.add_argument("--to-year", type=int, default=None)
+        sp.add_argument("--no-pdfs", action="store_true", default=False,
+                        help="only crawl festival listings, skip statistic PDF downloads")
     add("parse", "parse cached Notenblaetter into SQLite")
     add("clean", "identity resolution -> data/processed/*.parquet")
     add("elo", "compute ratings -> data/processed/ratings.parquet")
@@ -246,6 +294,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "sample": True if args.sample else None,
         "refresh": True if args.refresh else None,
         "offline": True if args.offline else None,
+        "crawl_pdfs": False if getattr(args, "no_pdfs", False) else None,
     }
     return load_config(overrides)
 

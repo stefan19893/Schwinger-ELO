@@ -13,7 +13,7 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 - Fixture-based tests incl. an ESAF sheet and a draw-heavy sheet.
 
 ## Tasks
-- [ ] 1. Save Notenblatt fixtures (normal festival, ESAF, edge cases)
+- [~] 1. Save Notenblatt fixtures (normal festival, ESAF, edge cases)
 - [ ] 2. Implement parser for one festival sheet + tests
 - [ ] 3. Validation rules (grade range, symmetric bouts, gang count) + tests
 - [ ] 4. Batch-parse all crawled festivals into SQLite `bouts` / `athletes_raw`
@@ -30,3 +30,4 @@ Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.m
 - **Parsing quirks:** the Schlussgang loser is printed as `o` with a loss grade (e.g. ESAF 2019 Wicki Gang 8 `o Stucki 8.75` vs Stucki `+ Wicki 10.00`) — derive outcomes from both sides/grades; duplicate names carry suffixes ("Herger Elias 1" / "Herger Elias 2") — keep them for identity resolution in Phase 3.
 
 ## Handoff notes
+- 2026-09-29 — **Task 1 in progress (WIP note).** Added `src/scraper/statistic_pdfs.py` (cache policy, PDFium text extraction, `download_statistic_pdfs` with own cap + "10 consecutive errors → stop" guard) and a PDF stage in `crawl` (`--no-pdfs` to skip; `pdf_max_requests`=2500, `pdf_max_age_hours`=24, `pdf_final_grace_days`=14 in Config). Library: **pypdfium2** instead of pypdf — pypdf raised `PdfReadError` on the malformed 2013 Binningen sheet, PDFium reads it; identical text on normal sheets; faster. **Correction of a Phase 1 note:** the symbols are `+` win, `-` gestellt (draw), `o` loss — so "Schlussgang loser printed as o" is not a quirk, it is the normal loss symbol (verified: Scherrer/Bruhin `-` 8.75 both sides, totals add up). Layouts seen so far: modern ESV (2019+), 2013/14 with "Aktive"/"Actif" sections and split rank lines, 2011 "Schlussrangliste" style (`1.`, `* *`, `S58.75`), a 3-column layout (Le Mouret 2012, youth-mixed), Binningen 2013 "Notenblätterdetails" (points before name). Next: download all PDFs (`crawl` in chunks), survey layouts, pick fixtures.

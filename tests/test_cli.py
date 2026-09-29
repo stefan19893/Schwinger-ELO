@@ -192,7 +192,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 def _crawl_cfg(tmp_path: Path, **kw: object) -> Config:
     base: dict[str, object] = {"data_dir": tmp_path / "data", "from_year": 2011,
-                               "to_year": 2011}
+                               "to_year": 2011, "crawl_pdfs": False}
     return load_config({**base, **kw}, env={})
 
 
