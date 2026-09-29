@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 2  # v2: festivals.eidg_type
+SCHEMA_VERSION = 3  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
@@ -27,6 +27,10 @@ _kind_list = ", ".join(f"'{k}'" for k in KINDS)
 _eidg_list = ", ".join(f"'{e}'" for e in EIDG_TYPES)
 _EIDG_COLUMN = (f"eidg_type TEXT CHECK (eidg_type IS NULL OR "
                 f"(eidg_type IN ({_eidg_list}) AND category = 'ESAF'))")
+# comma-separated borderline markers: team, jungaktive, ausland, hallenschwinget
+_FLAGS_COLUMN = "event_flags TEXT NOT NULL DEFAULT ''"
+_ELIGIBLE_COLUMN = "elo_eligible INTEGER NOT NULL DEFAULT 1 CHECK (elo_eligible IN (0, 1))"
+EVENT_FLAGS = ("team", "jungaktive", "ausland", "hallenschwinget")
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS festivals (
@@ -49,10 +53,81 @@ CREATE TABLE IF NOT EXISTS festivals (
     ranking_pdf_url     TEXT,
     first_seen          TEXT    NOT NULL,
     last_seen           TEXT    NOT NULL,
+    {_FLAGS_COLUMN},
+    {_ELIGIBLE_COLUMN},
     CHECK (kind <> 'active' OR category IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_festivals_date ON festivals(date);
 CREATE INDEX IF NOT EXISTS idx_festivals_category ON festivals(category);
+
+-- Phase 2: one row per parsed festival (also for failures / missing PDFs)
+CREATE TABLE IF NOT EXISTS festival_parse (
+    fest_id         INTEGER PRIMARY KEY REFERENCES festivals(fest_id),
+    pdf_url         TEXT,
+    pdf_sha256      TEXT,
+    parser_version  INTEGER NOT NULL,
+    layout          TEXT,
+    status          TEXT    NOT NULL,   -- ok|partial|failed|header_mismatch|no_pdf|pdf_not_cached|pdf_error
+    header_check    TEXT,
+    n_athletes      INTEGER NOT NULL DEFAULT 0,
+    n_entries       INTEGER NOT NULL DEFAULT 0,
+    n_bouts         INTEGER NOT NULL DEFAULT 0,
+    n_rejects       INTEGER NOT NULL DEFAULT 0,
+    youth_blocks    INTEGER NOT NULL DEFAULT 0,
+    parsed_at       TEXT    NOT NULL
+);
+
+-- raw athletes as printed on one sheet (identity resolution in Phase 3)
+CREATE TABLE IF NOT EXISTS athletes_raw (
+    athlete_raw_id  TEXT PRIMARY KEY,   -- "<fest_id>-<idx>"
+    fest_id         INTEGER NOT NULL REFERENCES festivals(fest_id),
+    idx             INTEGER NOT NULL,
+    rank            TEXT,
+    name_raw        TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    name_key        TEXT    NOT NULL,
+    name_base_key   TEXT    NOT NULL,
+    status          TEXT,               -- Kranz status: '*'..'***' or E/K/EK/TK
+    mark            TEXT,               -- '*' award / '°' withdrawn
+    sennen_turner   TEXT,
+    withdrawn       INTEGER NOT NULL DEFAULT 0,
+    points          REAL,
+    points_mismatch INTEGER NOT NULL DEFAULT 0,
+    n_entries       INTEGER NOT NULL DEFAULT 0,
+    grade_sum       REAL,
+    birth_year      TEXT,
+    association     TEXT,
+    place           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_athletes_raw_fest ON athletes_raw(fest_id);
+CREATE INDEX IF NOT EXISTS idx_athletes_raw_key ON athletes_raw(name_base_key);
+
+-- spec Bout (athlete ids are athletes_raw ids until Phase 3 resolves identities)
+CREATE TABLE IF NOT EXISTS bouts (
+    bout_id         TEXT PRIMARY KEY,
+    fest_id         INTEGER NOT NULL REFERENCES festivals(fest_id),
+    gang_nr         INTEGER NOT NULL CHECK (gang_nr BETWEEN 1 AND 8),
+    athlete_a_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+    athlete_b_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+    outcome         TEXT    NOT NULL CHECK (outcome IN ('WIN_A', 'WIN_B', 'DRAW')),
+    grade_a         REAL    NOT NULL CHECK (grade_a BETWEEN 8.25 AND 10.0),
+    grade_b         REAL    NOT NULL CHECK (grade_b BETWEEN 8.25 AND 10.0),
+    schlussgang     INTEGER NOT NULL DEFAULT 0,
+    flags           TEXT    NOT NULL DEFAULT '',
+    CHECK (athlete_a_id <> athlete_b_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bouts_fest ON bouts(fest_id);
+
+-- everything that did not become a bout, with a reason (never dropped silently)
+CREATE TABLE IF NOT EXISTS parse_rejects (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fest_id         INTEGER NOT NULL,
+    stage           TEXT    NOT NULL,   -- festival|athlete|entry|bout|line
+    reason          TEXT    NOT NULL,
+    detail          TEXT,
+    line            INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_parse_rejects_fest ON parse_rejects(fest_id);
 """
 
 
@@ -75,6 +150,8 @@ class Festival:
     url: str = ""
     statistic_pdf_url: str | None = None
     ranking_pdf_url: str | None = None
+    event_flags: str = ""          # comma-separated EVENT_FLAGS
+    elo_eligible: bool = True      # counts toward ELO (see Config.elo_exclude_flags)
 
     def __post_init__(self) -> None:
         if self.category is not None and self.category not in CATEGORIES:
@@ -85,6 +162,9 @@ class Festival:
             raise ValueError(f"active festival {self.fest_id} needs a category")
         if self.eidg_type is not None and self.eidg_type not in EIDG_TYPES:
             raise ValueError(f"invalid eidg_type {self.eidg_type!r}")
+        unknown = set(filter(None, self.event_flags.split(","))) - set(EVENT_FLAGS)
+        if unknown:
+            raise ValueError(f"unknown event flags {sorted(unknown)}")
         if (self.category == "ESAF") != (self.eidg_type is not None):
             raise ValueError(f"festival {self.fest_id}: eidg_type must be set iff "
                              f"category is ESAF (got {self.category!r}/{self.eidg_type!r})")
@@ -131,11 +211,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # v1 stored only the real ESAF as 'ESAF'; the other eidg. festivals are
         # re-derived by the next crawl (`crawl --offline` re-parses the cache).
         conn.execute("UPDATE festivals SET eidg_type = 'ESAF' WHERE category = 'ESAF'")
+    if "event_flags" not in cols:  # v2 -> v3 (values re-derived by the next crawl)
+        conn.execute(f"ALTER TABLE festivals ADD COLUMN {_FLAGS_COLUMN}")
+        conn.execute(f"ALTER TABLE festivals ADD COLUMN {_ELIGIBLE_COLUMN}")
 
 
 def _row_to_festival(row: sqlite3.Row) -> Festival:
     values = {c: row[c] for c in FESTIVAL_COLUMNS}
     values["cancelled"] = bool(values["cancelled"])
+    values["elo_eligible"] = bool(values["elo_eligible"])
     return Festival(**values)
 
 

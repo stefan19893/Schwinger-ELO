@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 4 — SQLite bouts/athletes_raw/parse_rejects/festival_parse tables (+ festivals.event_flags/elo_eligible, schema v3) and batch-parse all cached PDFs.
+**Next action:** Phase 2, task 5 — `parse --sample` + tests/fixtures/sample/ dataset (crawl+parse fully offline via deploy_local.sh --sample), CLI parse tests.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -67,6 +67,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Gang number = position in the complete list (or the larger position); flagged `gang_inferred`/`gang_uncertain` when list positions disagree (~1 % of bouts) — only used to order bouts within a festival.
 - 2026-09-29 — Same-name athletes in one sheet are disambiguated by the mirror entry; raw names (suffixes "1"/"2", birth years, S/T markers) are kept for Phase 3.
 - 2026-09-29 — `parse_min_pair_rate = 0.5`: sheets where < 50 % of entries pair into bouts are treated as structurally unreliable and import no bouts (25 festivals / ~800 bouts in the dry run) — better to lose a few bouts than import misassigned ones. Max Gänge: 8 for the ESAF itself (`eidg_type='ESAF'`), else 6.
+- 2026-09-30 — Schema v3: `festivals.event_flags` + `elo_eligible`, tables `festival_parse`, `athletes_raw`, `bouts`, `parse_rejects` (bout athlete ids are per-sheet `athletes_raw` ids until Phase 3 identity resolution). `parse` is incremental on PDF sha256 + `PARSER_VERSION`.
+- 2026-09-30 — **AWAITING USER CONFIRMATION — borderline events:** all are parsed and stored; proposed ELO defaults via `elo_exclude_flags = "team,ausland"`: team competitions (Mannschaftsmeisterschaft) and Ausland festivals (Kanada/USA clubs, 52, mostly without statistic PDF) excluded; Jungaktive/U20 (11, 2021) and Hallenschwinget (142) included — U20/Jungaktive are regular active Schwinger in an age-limited field, indoor festivals are normal Rangschwinget. Changeable without code (`SCHWINGEN_ELO_EXCLUDE_FLAGS`).
 
 ## Open questions
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.

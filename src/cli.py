@@ -53,6 +53,7 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
                     current_max_age=cfg.listing_max_age_hours * 3600,
                     final_grace_days=cfg.listing_final_grace_days,
                     max_requests=cfg.crawl_max_requests,
+                    exclude_flags=_exclude_flags(cfg),
                     progress=sys.stderr.isatty(),
                 )
             except fc.CrawlLimitExceeded as exc:
@@ -118,12 +119,16 @@ def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> in
     return 0
 
 
+def _exclude_flags(cfg: Config) -> tuple[str, ...]:
+    return tuple(x.strip() for x in cfg.elo_exclude_flags.split(",") if x.strip())
+
+
 def _crawl_sample(cfg: Config) -> int:
     """--sample: load committed listing JSON from the sample dataset, no network."""
     import json
 
     from src.db import connect, upsert_festivals
-    from src.scraper.fests_crawler import load_listing_files
+    from src.scraper.fests_crawler import apply_eligibility, load_listing_files
 
     files = sorted((cfg.sample_dir / "schlussgang").glob("events_*.json"))
     log.info("crawl: --sample mode, %d listing file(s) from %s (no network)",
@@ -131,6 +136,8 @@ def _crawl_sample(cfg: Config) -> int:
     parsed = load_listing_files(json.loads(f.read_text(encoding="utf-8")) for f in files)
     for sk in parsed.skipped:
         log.warning("crawl: skipped event %s %r: %s", sk.fest_id, sk.name, sk.reason)
+    exclude = _exclude_flags(cfg)
+    parsed.festivals = [apply_eligibility(f, exclude) for f in parsed.festivals]
     conn = connect(cfg.db_path)
     try:
         up = upsert_festivals(conn, parsed.festivals)
@@ -175,8 +182,47 @@ def _log_crawl_report(report: CrawlReport) -> None:
              f" (e.g. {', '.join(n for n, _ in unknown.most_common(5))})" if unknown else "")
 
 
-def cmd_parse(cfg: Config) -> int:
-    log.warning("parse: not implemented yet (Phase 2) - db=%s", cfg.db_path)
+def cmd_parse(cfg: Config, force: bool = False) -> int:
+    """Parse cached statistic PDFs into SQLite bouts / athletes_raw (offline)."""
+    from src.db import connect
+    from src.scraper.client import client_from_config
+    from src.scraper.parse_runner import PARSER_VERSION, parse_all
+
+    if cfg.sample:
+        return _parse_sample(cfg)
+    log.info("parse: db=%s, cache=%s (offline), parser v%d%s", cfg.db_path, cfg.raw_dir,
+             PARSER_VERSION, ", force" if force else "")
+    conn = connect(cfg.db_path)
+    try:
+        with client_from_config(cfg, offline=True) as client:
+            rep = parse_all(conn, client, min_pair_rate=cfg.parse_min_pair_rate, force=force,
+                            progress=sys.stderr.isatty(),
+                            pdf_max_age_hours=cfg.pdf_max_age_hours,
+                            pdf_grace_days=cfg.pdf_final_grace_days)
+        _log_parse_summary(conn, rep.parsed, rep.unchanged)
+    finally:
+        conn.close()
+    return 0
+
+
+def _log_parse_summary(conn: sqlite3.Connection, parsed: int, unchanged: int) -> None:
+    q = conn.execute
+    log.info("parse: %d festivals (re)parsed, %d unchanged", parsed, unchanged)
+    status = dict(q("SELECT status, COUNT(*) FROM festival_parse GROUP BY status").fetchall())
+    log.info("parse: festival status: %s", ", ".join(f"{k}={v}" for k, v in sorted(status.items())))
+    n_bouts, draws = q("SELECT COUNT(*), SUM(outcome = 'DRAW') FROM bouts").fetchone()
+    n_entries = q("SELECT COALESCE(SUM(n_entries), 0) FROM festival_parse").fetchone()[0]
+    log.info("parse: %d bouts (%.1f%% draws), %d raw athletes, %.1f%% of %d entries paired",
+             n_bouts, 100 * (draws or 0) / max(n_bouts, 1),
+             q("SELECT COUNT(*) FROM athletes_raw").fetchone()[0],
+             100 * 2 * n_bouts / max(n_entries, 1), n_entries)
+    top = q("SELECT reason, COUNT(*) n FROM parse_rejects GROUP BY reason ORDER BY n DESC "
+            "LIMIT 8").fetchall()
+    log.info("parse: top rejects: %s", ", ".join(f"{r}={n}" for r, n in top))
+
+
+def _parse_sample(cfg: Config) -> int:
+    log.warning("parse: --sample dataset not available yet")
     return 0
 
 
@@ -273,7 +319,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--to-year", type=int, default=None)
         sp.add_argument("--no-pdfs", action="store_true", default=False,
                         help="only crawl festival listings, skip statistic PDF downloads")
-    add("parse", "parse cached Notenblaetter into SQLite")
+    sp = add("parse", "parse cached statistic PDFs into SQLite (offline)")
+    sp.add_argument("--force", action="store_true", default=False,
+                    help="re-parse festivals even if PDF and parser version are unchanged")
     add("clean", "identity resolution -> data/processed/*.parquet")
     add("elo", "compute ratings -> data/processed/ratings.parquet")
     add("build", "write the static site to dist/")
@@ -343,6 +391,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "all":
             return cmd_all(cfg, skip_crawl=args.skip_crawl)
+        if args.command == "parse":
+            return cmd_parse(cfg, force=args.force)
         return COMMANDS[args.command](cfg)
     except ValueError as exc:
         log.error("%s: %s", args.command, exc)

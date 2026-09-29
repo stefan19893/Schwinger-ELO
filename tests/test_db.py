@@ -111,7 +111,7 @@ def test_migrates_v1_database(tmp_path: Path) -> None:
     """)
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     fests = load_festivals(conn)
     assert fests[1].eidg_type == "ESAF" and fests[2].eidg_type is None
     # re-derived row (as `crawl --offline` does) updates cleanly
@@ -126,3 +126,43 @@ def test_db_rejects_eidg_type_on_non_esaf(tmp_path: Path) -> None:
         conn.execute("INSERT INTO festivals (fest_id, name, date, category, eidg_type, kind, "
                      "url, first_seen, last_seen) VALUES "
                      "(1,'x','2020-01-01','Bergkranz','Kilchberg','active','u','n','n')")
+
+
+def test_migrates_v2_database_to_v3(tmp_path: Path) -> None:
+    """v2 (eidg_type, no flags, no parse tables) gains flags + parse tables."""
+    path = tmp_path / "v2.db"
+    conn = connect(path)
+    upsert_festivals(conn, [F])
+    conn.execute("ALTER TABLE festivals DROP COLUMN elo_eligible")
+    conn.execute("ALTER TABLE festivals DROP COLUMN event_flags")
+    for t in ("bouts", "athletes_raw", "parse_rejects", "festival_parse"):
+        conn.execute(f"DROP TABLE {t}")
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+    conn = connect(path)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"bouts", "athletes_raw", "parse_rejects", "festival_parse"} <= tables
+    f = load_festivals(conn)[F.fest_id]
+    assert f.event_flags == "" and f.elo_eligible is True
+
+
+def test_event_flags_validated() -> None:
+    assert replace(F, event_flags="ausland,hallenschwinget").event_flags
+    with pytest.raises(ValueError):
+        replace(F, event_flags="indoor")
+
+
+def test_bouts_table_constraints(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, [F])
+    conn.execute("INSERT INTO athletes_raw (athlete_raw_id, fest_id, idx, name_raw, name, "
+                 "name_key, name_base_key) VALUES ('a', 26400, 0, 'A', 'A', 'a', 'a'), "
+                 "('b', 26400, 1, 'B', 'B', 'b', 'b')")
+    ok = ("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, outcome, "
+          "grade_a, grade_b) VALUES (?, 26400, ?, 'a', 'b', ?, ?, ?)")
+    conn.execute(ok, ("x1", 1, "DRAW", 9.0, 9.0))
+    for bad in (("x2", 9, "DRAW", 9.0, 9.0), ("x3", 1, "LOSS", 9.0, 9.0),
+                ("x4", 1, "WIN_A", 10.5, 8.5), ("x5", 1, "WIN_A", 10.0, 8.0)):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(ok, bad)

@@ -287,3 +287,9 @@ def test_crawl_offline_uses_cache_and_reports_misses(tmp_path: Path,
     wider = _crawl_cfg(tmp_path, offline=True, to_year=2012)
     assert cli.cmd_crawl(wider, transport=httpx.MockTransport(api)) == 1  # 2012 not cached
     assert len(api.requests) == n  # offline never fetched
+
+
+def test_elo_exclude_flags_validated() -> None:
+    assert load_config(env={"SCHWINGEN_ELO_EXCLUDE_FLAGS": "team"}).elo_exclude_flags == "team"
+    with pytest.raises(ValueError, match="unknown flags"):
+        load_config(env={"SCHWINGEN_ELO_EXCLUDE_FLAGS": "team,indoor"})

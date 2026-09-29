@@ -73,6 +73,9 @@ class Config:
     pdf_max_requests: int = 2500
     pdf_max_age_hours: float = 24.0
     pdf_final_grace_days: int = 14
+    # Borderline festivals (festivals.event_flags) excluded from ELO; proposed
+    # default awaiting user confirmation (Phase 2): team events and Ausland.
+    elo_exclude_flags: str = "team,ausland"
     # Parse (Phase 2): sheets where fewer than this share of entries pair into
     # bouts are treated as structurally unreliable (no bouts imported).
     parse_min_pair_rate: float = 0.5
@@ -178,6 +181,12 @@ def load_config(
     if cfg.pdf_max_requests < 0 or cfg.pdf_max_age_hours <= 0 or cfg.pdf_final_grace_days < 0:
         raise ValueError("pdf_max_requests/pdf_final_grace_days must be >= 0, "
                          "pdf_max_age_hours > 0")
+    from src.db import EVENT_FLAGS
+    unknown = set(filter(None, (x.strip() for x in cfg.elo_exclude_flags.split(",")))) \
+        - set(EVENT_FLAGS)
+    if unknown:
+        raise ValueError(f"elo_exclude_flags: unknown flags {sorted(unknown)} "
+                         f"(allowed: {', '.join(EVENT_FLAGS)})")
     if not 0 <= cfg.parse_min_pair_rate <= 1:
         raise ValueError("parse_min_pair_rate must be within 0..1")
     if cfg.retry_after_max <= 0:
