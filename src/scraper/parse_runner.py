@@ -17,6 +17,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -156,3 +157,31 @@ def _store_failure(conn: sqlite3.Connection, fest: Festival, rep: ParseRunReport
     rep.parsed += 1
     rep.status[status] += 1
     rep.rejects[reason] += 1
+
+
+def parse_from_dir(conn: sqlite3.Connection, directory: Path, *, min_pair_rate: float = 0.5,
+                   force: bool = False) -> ParseRunReport:
+    """Offline variant for ``--sample``: sheets as ``<fest_id>.pdf`` or ``<fest_id>.txt``."""
+    rep = ParseRunReport()
+    for fest in sorted(festivals_to_parse(conn), key=lambda f: (f.date, f.fest_id)):
+        pdf, txt = directory / f"{fest.fest_id}.pdf", directory / f"{fest.fest_id}.txt"
+        path = pdf if pdf.is_file() else txt if txt.is_file() else None
+        if path is None:
+            _store_failure(conn, fest, rep, "pdf_not_cached", None, "pdf_not_cached",
+                           f"no sheet in {directory}")
+            continue
+        content = path.read_bytes()
+        sha = hashlib.sha256(content).hexdigest()
+        old_sha, old_version = _existing(conn, fest.fest_id)
+        if not force and old_sha == sha and old_version == PARSER_VERSION:
+            rep.unchanged += 1
+            continue
+        text = pdf_to_text(content) if path.suffix == ".pdf" else content.decode("utf-8")
+        res = parse_text(fest, text, min_pair_rate=min_pair_rate)
+        store_result(conn, fest, res, status=res.status, sha=sha)
+        rep.parsed += 1
+        rep.status[res.status] += 1
+        rep.bouts += len(res.bouts)
+        rep.athletes += len(res.athletes)
+        rep.rejects.update(r.reason for r in res.rejects)
+    return rep

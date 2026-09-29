@@ -201,7 +201,10 @@ def test_crawl_sample_is_offline_and_fills_db(tmp_path: Path) -> None:
 
     assert cli.main(["crawl", "--sample", "--data-dir", str(tmp_path / "d")]) == 0
     fests = load_festivals(connect(tmp_path / "d" / "schwingen.db"))
-    assert len(fests) == 6 and fests[26400].name == "Brünig-Schwinget 2011"
+    assert sorted(fests) == [24110, 26400, 37052, 45965, 46055]
+    assert fests[26400].name == "Brünig-Schwinget 2011"
+    assert fests[24110].category == "ESAF" and fests[24110].eidg_type == "ESAF"
+    assert fests[45965].event_flags == "hallenschwinget" and fests[45965].elo_eligible
     assert not (tmp_path / "d" / "raw").exists()  # nothing fetched or cached
 
 
@@ -293,3 +296,53 @@ def test_elo_exclude_flags_validated() -> None:
     assert load_config(env={"SCHWINGEN_ELO_EXCLUDE_FLAGS": "team"}).elo_exclude_flags == "team"
     with pytest.raises(ValueError, match="unknown flags"):
         load_config(env={"SCHWINGEN_ELO_EXCLUDE_FLAGS": "team,indoor"})
+
+
+
+# ------------------------------------------------------------------ parse (Phase 2)
+def test_parse_sample_offline(tmp_path: Path) -> None:
+    import sqlite3
+
+    d = str(tmp_path / "d")
+    assert cli.main(["crawl", "--sample", "--data-dir", d]) == 0
+    assert cli.main(["parse", "--sample", "--data-dir", d]) == 0
+    conn = sqlite3.connect(tmp_path / "d" / "schwingen.db")
+    q = lambda s: conn.execute(s).fetchall()  # noqa: E731
+    assert dict(q("SELECT fest_id, status FROM festival_parse")) == {
+        24110: "partial", 26400: "ok", 37052: "partial", 45965: "partial", 46055: "ok"}
+    n_bouts, max_gang = q("SELECT COUNT(*), MAX(gang_nr) FROM bouts")[0]
+    assert n_bouts > 1500 and max_gang == 8  # includes the ESAF (8 Gänge)
+    assert q("SELECT COUNT(*) FROM bouts WHERE fest_id = 46055") == [(274,)]
+    assert not (tmp_path / "d" / "raw").exists()
+    # incremental: nothing re-parsed, --force re-parses everything
+    assert cli.main(["parse", "--sample", "--data-dir", d]) == 0
+    assert cli.main(["parse", "--sample", "--force", "--data-dir", d]) == 0
+    assert q("SELECT COUNT(*) FROM bouts WHERE fest_id = 46055") == [(274,)]
+
+
+def test_all_sample_runs_crawl_and_parse(tmp_path: Path) -> None:
+    import sqlite3
+
+    assert cli.main(["all", "--sample", "--data-dir", str(tmp_path / "d")]) == 0
+    conn = sqlite3.connect(tmp_path / "d" / "schwingen.db")
+    assert conn.execute("SELECT COUNT(*) FROM bouts").fetchone()[0] > 1500
+
+
+def test_parse_real_mode_is_offline(tmp_path: Path) -> None:
+    """Without a cache every festival is reported as pdf_not_cached; no network."""
+    import sqlite3
+
+    from src.db import connect, upsert_festivals
+    from tests.test_parse_runner import fest
+
+    conn = connect(tmp_path / "d" / "schwingen.db")
+    upsert_festivals(conn, [fest(46055)])
+    conn.close()
+    assert cli.main(["parse", "--data-dir", str(tmp_path / "d")]) == 0
+    conn2 = sqlite3.connect(tmp_path / "d" / "schwingen.db")
+    assert conn2.execute("SELECT status FROM festival_parse").fetchall() == [("pdf_not_cached",)]
+
+
+def test_parse_force_flag() -> None:
+    assert cli.build_parser().parse_args(["parse", "--force"]).force is True
+    assert cli.build_parser().parse_args(["crawl", "--no-pdfs"]).no_pdfs is True

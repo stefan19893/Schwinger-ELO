@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 5 — `parse --sample` + tests/fixtures/sample/ dataset (crawl+parse fully offline via deploy_local.sh --sample), CLI parse tests.
+**Next action:** Phase 2, task 6 — data-quality report (bouts per year, draw rate, parse failures) in handoff notes.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |

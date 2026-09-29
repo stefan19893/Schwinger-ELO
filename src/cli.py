@@ -189,7 +189,7 @@ def cmd_parse(cfg: Config, force: bool = False) -> int:
     from src.scraper.parse_runner import PARSER_VERSION, parse_all
 
     if cfg.sample:
-        return _parse_sample(cfg)
+        return _parse_sample(cfg, force=force)
     log.info("parse: db=%s, cache=%s (offline), parser v%d%s", cfg.db_path, cfg.raw_dir,
              PARSER_VERSION, ", force" if force else "")
     conn = connect(cfg.db_path)
@@ -221,8 +221,19 @@ def _log_parse_summary(conn: sqlite3.Connection, parsed: int, unchanged: int) ->
     log.info("parse: top rejects: %s", ", ".join(f"{r}={n}" for r, n in top))
 
 
-def _parse_sample(cfg: Config) -> int:
-    log.warning("parse: --sample dataset not available yet")
+def _parse_sample(cfg: Config, force: bool = False) -> int:
+    """--sample: parse the committed sheets in tests/fixtures/sample/statistic/ (no network)."""
+    from src.db import connect
+    from src.scraper.parse_runner import parse_from_dir
+
+    directory = cfg.sample_dir / "statistic"
+    log.info("parse: --sample mode, sheets from %s (no network), db=%s", directory, cfg.db_path)
+    conn = connect(cfg.db_path)
+    try:
+        rep = parse_from_dir(conn, directory, min_pair_rate=cfg.parse_min_pair_rate, force=force)
+        _log_parse_summary(conn, rep.parsed, rep.unchanged)
+    finally:
+        conn.close()
     return 0
 
 
