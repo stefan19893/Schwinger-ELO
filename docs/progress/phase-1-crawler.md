@@ -1,4 +1,5 @@
 # Phase 1 — Festival crawler (Milestone 1)
+**Status:** in review (all tasks done 2026-09-29; phase-reviewer not yet run)
 **Agent:** data-engineer
 
 ## Goal
@@ -18,7 +19,7 @@ Discover every festival 2011–present and persist it in SQLite.
 - [x] 4. Define SQLite schema (`festivals`) + persistence helper
 - [x] 5. Implement `fests_crawler.py` (incremental: skip known festivals) + tests
 - [x] 6. Wire `cli crawl` + test
-- [~] 7. Run full crawl 2011–present; record counts per year/category in handoff notes
+- [x] 7. Run full crawl 2011–present; record counts per year/category in handoff notes
 
 ## Handoff notes
 
@@ -47,3 +48,29 @@ Discover every festival 2011–present and persist it in SQLite.
 - 2026-09-29 — **Task 5 done.** `src/scraper/fests_crawler.py`: `listing_params(tid, year)`, `iter_pages()` (follows `links.next`, loop guard, max 40 pages/query, optional request cap → `CrawlLimitExceeded`), pure `parse_listing(doc) -> ParseResult(festivals, skipped)`, `classify_kind()`, `map_category()`, `crawl_festivals(client, conn, from_year, to_year, today=, current_max_age=24h, categories=, max_requests=) -> CrawlReport` (per year/category `counts()`, skipped list, `future` count, `UpsertStats`). Rules (see Decisions): kind from `field_event_type` when set, else name regexes; tid 11 → ESAF only for "Eidgenössisches Schwing…", other active tid-11 (Kilchberg, Unspunnen, Jubiläumsschwingfest) → Bergkranz; tid 14 → Gauverband iff name matches a Bernese Gau (mittelländisch/oberländisch/seeländisch/bern-jurassisch/oberaargauisch/emmentalisch) and has no "kantonal", else Kantonal; "!!ABGEBROCHEN!!" stripped from name and `cancelled=1`. Statistic PDF = `field_final_statistic_pdf`, else the `field_event_pdf` item described "Statistik"/"Schlussstatistik"/"Statistische Tabelle" (intermediate "Statistik nach N Gängen" ignored); ranking PDF analogous ("Schlussrangliste"). Festivals dated after today are counted (`future`) but not stored. Unparseable entries → `Skipped(reason)`, logged as warnings and counted. Tests: `tests/test_fests_crawler.py` (36, FakeApi on MockTransport routes by tid/year/offset to fixtures, asserts host is never esv.ch). Total 104 passed.
 - 2026-09-29 — **Task 6 done.** `cmd_crawl(cfg, transport=None)` in `src/cli.py`: real mode builds the client from Config and runs `crawl_festivals` (request cap `crawl_max_requests`=1500, current-season `listing_max_age_hours`=24, tqdm bar when stderr is a TTY), then logs a per-year × category table (+ "w/stat" = active festivals with a statistic PDF), upsert counts, future/skipped counts, requests/retries/cache hits. Exit 1 on `FetchError` or cap (finished years are already persisted — the crawler now upserts after every year). `--sample`: parses `tests/fixtures/sample/schlussgang/events_*.json` (currently a copy of `events_12_2011.json`, 6 Bergkranz festivals 2011) into `data/sample/schwingen.db`, no client at all. New Config fields `crawl_max_requests`, `listing_max_age_hours` (env-overridable). Tests: 4 new CLI tests + guard test; total 109 passed.
   - **Incident:** the Phase 0 test `test_warns_on_ignored_options[crawl --skip-crawl]` ran `crawl` without `--sample`; once crawl became real it hit the live API (93 successful listing requests, throttled 0.5–1.0 s with the project UA, into a pytest tmp dir) until I killed it after ~2 min. Fixes: that case now passes `--sample`; new `tests/conftest.py` autouse fixture makes `httpx.HTTPTransport.handle_request` raise, so no test can go online again (covered by `test_real_network_is_blocked_in_tests`). The 93 cached responses were copied into `data/raw/` (identical cache keys), so they count toward task 7 instead of being re-requested.
+- 2026-09-29 — **Task 7 done — full crawl 2011–2026 (listing pages only, no PDFs/event pages).** Estimate before running: 80 queries (16 years × 5 categories), 106 pages (Regional needs 2–3 pages/year) → far below the 1500 cap. Actual: 93 pages came from the accidental test crawl (task 6) + **13 new requests**, 0 retries, 0 errors; re-runs: 0 requests (106 cache hits). `data/raw/` 10 MB, `data/schwingen.db` 1.6 MB. **2037 festivals stored** (1999 active, 33 non_competition, 5 youth, 0 women), 5 future festivals not stored, 0 skipped/invalid.
+  - Active festivals per year × category (w/stat = active festivals with a statistic PDF URL):
+
+    | year | ESAF | Bergkranz | Teilverband | Kantonal | Gauverband | Regional | other kinds | w/stat |
+    |---|---|---|---|---|---|---|---|---|
+    | 2011 | 0 | 7 | 5 | 20 | 6 | **3** | 0 | 40 |
+    | 2012 | 0 | 6 | 5 | 20 | 6 | 114 | 2 | 130 |
+    | 2013 | 1 | 6 | 5 | 21 | 6 | 101 | 3 | 125 |
+    | 2014 | 0 | 7 | 5 | 20 | 6 | 108 | 2 | 131 |
+    | 2015 | 0 | 6 | 5 | 20 | 6 | 105 | 4 | 131 |
+    | 2016 | 1 | 6 | 5 | 21 | 6 | 99 | 3 | 131 |
+    | 2017 | 0 | 7 | 5 | 20 | 6 | 107 | 3 | 142 |
+    | 2018 | 0 | 6 | 5 | 21 | 6 | 101 | 3 | 134 |
+    | 2019 | 1 | 6 | 5 | 20 | 6 | 102 | 2 | 135 |
+    | 2020 | 0 | 0 | 0 | 0 | 0 | 6 | 2 | 6 |
+    | 2021 | 0 | 7 | 5 | 18 | 5 | 67 | 3 | 101 |
+    | 2022 | 1 | 6 | 5 | 21 | 6 | 106 | 2 | 134 |
+    | 2023 | 0 | 7 | 5 | 20 | 6 | 101 | 2 | 134 |
+    | 2024 | 0 | 7 | 5 | 21 | 6 | 102 | 3 | 130 |
+    | 2025 | 1 | 6 | 5 | 22 | 6 | 105 | 3 | 139 |
+    | 2026 | 0 | 7 | 5 | 21 | 6 | 100 | 1 | 136 |
+
+    Bergkranz = 6 Bergfeste + Unspunnen (2011/17/23), Kilchberg (2014/21/26), Jubiläumsschwingfest 125 J. ESV (2024). 2020 = COVID (only 6 early-season Regional events); 2021 shortened season.
+  - **Statistic PDF coverage:** 1879 of 1975 non-cancelled active festivals (95 %); every ESAF/Bergkranz/Teilverband/Kantonal/Gauverband festival has one; the 96 without are all Regional (mostly 2012–2015: only a Schlussrangliste, or no PDF at all). 24 active festivals are cancelled (23 Regional "!!ABGESAGT!!" + Weissenstein 2011 "!!ABGEBROCHEN!!"), none has PDFs. `esv_id` present for 872 active festivals (≈10–38/year until 2022, ~all from 2023).
+  - **Surprises / fixes made during this task:** (1) the first women regex matched the towns Frauenfeld/Frauenkappelen → 3 men's festivals were flagged `women` (incl. one with type "Aktivschwinger"); now word-bounded + tests. (2) "Nationalturnen am Eidgenössischen Turnfest 2025" (tid 11) was mapped to Bergkranz → now `non_competition` (not a Schwingfest; has no statistic PDF anyway). (3) Legacy PDF descriptions vary a lot ("Komplette Statistik", "Statisik", "Schlussrangliste mit Statistik", "Statistik (inkl. Nachwuchs)", "Statistik (nach 5 Gängen)", empty descriptions with `stat_*.pdf` / `notenblatter.pdf` filenames) → tiered picker + 9 parametrised tests; this raised coverage from 1839 to 1879 incl. ESAF 2016 and Unspunnen 2011. (4) **schlussgang lists only 3 Regional festivals for 2011** (vs ~100–110 in other years) — 2011 Regional coverage is a source gap, not a crawler bug. (5) 13 Regional events in 2012–2015 have PDFs described "(inkl. Nachwuchs)" — the Statistik includes youth categories; Phase 2 must filter the active category. (6) httpx logged every request URL at INFO → silenced unless `-v`.
+  - Tests: 121 passed.

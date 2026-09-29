@@ -106,6 +106,9 @@ def test_map_category(tid: int, name: str, expected: str | None) -> None:
     ("Nacht des Schwingsports „Der goldene Kranz“ 2015", None, "non_competition"),
     ("Goldener Kranz Schwingerbrunch 2016", None, "non_competition"),
     ("Jungfrau-Schwinget 2020", None, "active"),  # 'Jung' inside a place name
+    ("Thurgauer Kantonalschwingfest Frauenfeld 2019", None, "active"),  # place, not women
+    ("Mittelländisches Schwingfest Frauenkappelen 2023", "Aktivschwinger", "active"),
+    ("Nationalturnen am Eidgenössischen Turnfest Lausanne 2025", None, "non_competition"),
 ])
 def test_classify_kind(name: str, etype: str | None, expected: str) -> None:
     assert fc.classify_kind(name, etype) == expected
@@ -234,3 +237,52 @@ def test_listing_params_shape() -> None:
     assert p["filter[date][condition][value][1]"] == "2024-12-31"
     assert p["page[limit]"] == "50"
     assert "field_final_statistic_pdf" in p["include"]
+
+
+# ------------------------------------------------------------------ legacy PDF picking
+def _legacy(items: list[tuple[str, str]]) -> tuple[dict[tuple[str, str], Any], list[Any]]:
+    """(description, filename) pairs -> (included index, field_event_pdf refs)."""
+    inc: dict[tuple[str, str], Any] = {}
+    refs = []
+    for i, (desc, fname) in enumerate(items):
+        key = ("file--file", f"f{i}")
+        inc[key] = {"type": key[0], "id": key[1], "attributes": {
+            "filename": fname, "uri": {"url": f"/sites/default/files/{fname}"}}}
+        refs.append({"type": key[0], "id": key[1], "meta": {"description": desc}})
+    return inc, refs
+
+
+def _pick(items: list[tuple[str, str]]) -> tuple[str | None, str | None]:
+    inc, refs = _legacy(items)
+    stat = fc._pick_legacy_pdf(inc, refs, fc._STAT_RE)
+    rank = (fc._pick_legacy_pdf(inc, refs, fc._RANK_RE, avoid=fc._STAT_RE)
+            or fc._pick_legacy_pdf(inc, refs, fc._RANK_RE))
+    name = lambda u: u.rsplit("/", 1)[-1] if u else None  # noqa: E731
+    return name(stat), name(rank)
+
+
+@pytest.mark.parametrize(("items", "stat", "rank"), [
+    # ESAF 2016: "Komplette ..." plus many intermediate lists
+    ([("Komplette Schlussrangliste", "rl.pdf"), ("Zwischenrangliste nach 7 Gängen", "z7.pdf"),
+      ("Statistik nach 7 Gängen", "s7.pdf"), ("Komplette Statistik", "stat.pdf"),
+      ("Schlussrangliste 40-kg-Stein", "stein.pdf")], "stat.pdf", "rl.pdf"),
+    # empty descriptions -> filenames (Berchtold 2012)
+    ([("", "rl_zuerich12.pdf"), ("", "stat_zuerich12.pdf")], "stat_zuerich12.pdf",
+     "rl_zuerich12.pdf"),
+    ([("", "schlussrangliste-thorigen.pdf"), ("", "notenblatter.pdf")], "notenblatter.pdf",
+     "schlussrangliste-thorigen.pdf"),
+    # typo + youth-inclusive lists
+    ([("Schlussrangliste", "a.pdf"), ("Statisik", "b.pdf")], "b.pdf", "a.pdf"),
+    ([("Schlussrangliste (inkl. Nachwuchs)", "a.pdf"), ("Statistik (inkl. Nachwuchs)", "b.pdf")],
+     "b.pdf", "a.pdf"),
+    # combined document serves as both
+    ([("Schlussrangliste mit Statistik", "c.pdf")], "c.pdf", "c.pdf"),
+    # shortened festival: "(nach 5 Gängen)" is the final
+    ([("Schlussrangliste (nach 5 Gängen)", "r5.pdf"), ("Statistik (nach 5 Gängen)", "s5.pdf")],
+     "s5.pdf", "r5.pdf"),
+    # only a ranking -> no bout source
+    ([("Schlussrangliste", "a.pdf")], None, "a.pdf"),
+    ([], None, None),
+])
+def test_pick_legacy_pdf(items: list[tuple[str, str]], stat: str | None, rank: str | None) -> None:
+    assert _pick(items) == (stat, rank)

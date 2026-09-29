@@ -57,16 +57,28 @@ KANTONAL_RE = re.compile(r"kantonal|cantonal", re.I)
 
 YOUTH_RE = re.compile(
     r"jungschwing|nachwuchs|buebe|buben|knaben|\bjung\.?(?=\s|$)", re.I)
-WOMEN_RE = re.compile(r"frauen|damen|schwingerinnen", re.I)
+# Word-bounded: "Frauenfeld" / "Frauenkappelen" are places, not women's festivals.
+WOMEN_RE = re.compile(r"frauenschwing|damenschwing|schwingerinnen|\bfrauen\b|\bdamen\b", re.I)
+# Not a Schwingfest usable for ELO (meetings, awards, football, Nationalturnen).
 NON_COMPETITION_RE = re.compile(
     r"abgeordnetenversammlung|delegiertenversammlung|fussballturnier|nacht des schwingsports"
-    r"|prämierung|brunch|veteranentagung|goldene[rn]?\s+kranz|jahresversammlung", re.I)
+    r"|prämierung|brunch|veteranentagung|goldene[rn]?\s+kranz|jahresversammlung"
+    r"|nationalturn", re.I)
 CANCELLED_RE = re.compile(r"abgebrochen|abgesagt|annulliert", re.I)
 _CANCEL_MARKER_RE = re.compile(r"\s*!+\s*(abgebrochen|abgesagt)\s*!+\s*", re.I)
 
-# Statistic PDF (per-Gang opponent + grade) inside the legacy field_event_pdf list.
-_STAT_DESC_RE = re.compile(r"^\s*(schluss)?statisti(k|sche tabelle)\s*$", re.I)
-_RANK_DESC_RE = re.compile(r"^\s*schlussrangliste\s*$", re.I)
+# Legacy field_event_pdf items: which one is the final "Statistische Tabelle"
+# (per-Gang opponent + grade) and which the final Schlussrangliste.
+_STAT_RE = re.compile(r"stati\w*|notenbl\w*", re.I)  # Statistik, Statisik (sic), Notenblätter
+_RANK_RE = re.compile(r"rangliste", re.I)
+# Filenames (only used when the description is empty) abbreviate: stat_x.pdf, rl_x.pdf
+_STAT_FILE_RE = re.compile(r"(^|[^a-z])stat|notenbl", re.I)
+_RANK_FILE_RE = re.compile(r"rangliste|(^|[^a-z])rl[^a-z]", re.I)
+_FILE_PATTERNS = {_STAT_RE: _STAT_FILE_RE, _RANK_RE: _RANK_FILE_RE}
+_PARTIAL_RE = re.compile(r"nach\s+\d+\s+g[aä]ng", re.I)  # "Statistik nach 5 Gängen"
+_NOT_FINAL_RE = re.compile(
+    r"zwischen|einteilung|schwingerliste|selektion|stein|hornuss|spitzenpaar|qualifikation"
+    r"|kategorie", re.I)
 
 EVENT_FIELDS = ",".join([
     "title", "path", "drupal_internal__nid", "field_title_custom", "field_event_esv_id",
@@ -159,12 +171,36 @@ def _file_url(inc: dict[tuple[str, str], dict[str, Any]], ref: dict[str, Any] | 
 
 
 def _pick_legacy_pdf(inc: dict[tuple[str, str], dict[str, Any]], refs: list[dict[str, Any]],
-                     desc_re: re.Pattern[str]) -> str | None:
+                     want: re.Pattern[str], avoid: re.Pattern[str] | None = None) -> str | None:
+    """Pick the final PDF of a kind from the legacy ``field_event_pdf`` list.
+
+    Tiers: (1) description matches ``want`` (and not ``avoid``), is not an
+    intermediate/side list; (2) empty description and the filename matches;
+    (3) a "(nach N Gängen)" final of a shortened festival.
+    """
+    tiers: list[list[str]] = [[], [], []]
     for ref in refs or []:
-        if desc_re.match((ref.get("meta") or {}).get("description") or ""):
-            url = _file_url(inc, ref)
-            if url:
-                return url
+        url = _file_url(inc, ref)
+        if not url:
+            continue
+        desc = ((ref.get("meta") or {}).get("description") or "").strip()
+        f = inc.get((ref["type"], ref["id"])) or {}
+        fname = (f.get("attributes") or {}).get("filename") or url.rsplit("/", 1)[-1]
+        if desc:
+            if not want.search(desc) or _NOT_FINAL_RE.search(desc):
+                continue
+            if avoid is not None and avoid.search(desc):
+                continue
+            tiers[2 if _PARTIAL_RE.search(desc) else 0].append(url)
+        else:
+            want_f = _FILE_PATTERNS.get(want, want)
+            avoid_f = _FILE_PATTERNS.get(avoid, avoid) if avoid is not None else None
+            if want_f.search(fname) and not _NOT_FINAL_RE.search(fname) and not (
+                    avoid_f is not None and avoid_f.search(fname)):
+                tiers[1].append(url)
+    for tier in tiers:
+        if tier:
+            return tier[0]
     return None
 
 
@@ -214,9 +250,10 @@ def parse_event(node: dict[str, Any], inc: dict[tuple[str, str], dict[str, Any]]
     path = (a.get("path") or {}).get("alias")
     legacy = _rel(node, "field_event_pdf") or []
     stat = (_file_url(inc, _rel(node, "field_final_statistic_pdf"))
-            or _pick_legacy_pdf(inc, legacy, _STAT_DESC_RE))
+            or _pick_legacy_pdf(inc, legacy, _STAT_RE))
     rank = (_file_url(inc, _rel(node, "field_final_ranking_pdf"))
-            or _pick_legacy_pdf(inc, legacy, _RANK_DESC_RE))
+            or _pick_legacy_pdf(inc, legacy, _RANK_RE, avoid=_STAT_RE)
+            or _pick_legacy_pdf(inc, legacy, _RANK_RE))  # combined "Rangliste mit Statistik"
     location = (a.get("field_event_location") or "").strip() or None
 
     return Festival(

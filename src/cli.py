@@ -265,6 +265,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
+    if not args.verbose:  # httpx logs every request URL at INFO
+        logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         cfg = config_from_args(args)
     except (ValueError, KeyError) as exc:
