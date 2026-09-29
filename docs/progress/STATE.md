@@ -1,15 +1,15 @@
 # Project State
 
 **Last updated:** 2026-09-29
-**Current phase:** 1 — Festival crawler (in review, branch `phase-1-crawler`)
-**Next action:** Phase 1 reviewed and review fixes committed on `phase-1-crawler` — coordinator pushes and opens the PR; then ask the user before starting Phase 2 (read "Known risks from Phase 1 review" in phase-2-parser.md first).
+**Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
+**Next action:** Phase 2, task 1 — save Notenblatt/statistic-PDF fixtures (read "Known risks from Phase 1 review" in phase-2-parser.md first).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
-| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in review |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | not started |
+| 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | in progress |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
