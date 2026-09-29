@@ -1,14 +1,14 @@
 # Project State
 
 **Last updated:** 2026-09-29
-**Current phase:** 0 — Bootstrap + CLI + local script (in review)
-**Next action:** Phase 0 review fixes are in PR branch `phase-0-review-fixes` — after merge, user to approve closing Phase 0 before starting Phase 1.
+**Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
+**Next action:** Phase 1, task 1 — investigate sources (robots.txt/terms, festival index + Notenblatt URL patterns).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
-| 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | in review |
-| 1 | Festival crawler | M1 | `phase-1-crawler.md` | not started |
+| 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
+| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in progress |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | not started |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
