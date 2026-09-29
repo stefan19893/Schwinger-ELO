@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 1 — save Notenblatt/statistic-PDF fixtures (read "Known risks from Phase 1 review" in phase-2-parser.md first).
+**Next action:** Phase 2, task 2 — implement the statistic-sheet parser (standard, Rang, block, multi-column layouts) + tests against tests/fixtures/statistic/.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -59,6 +59,9 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — **User decision:** Kilchberger Schwinget, Unspunnen-Schwinget and ESV Jubiläumsschwingfest move to the ESAF tier (`category='ESAF'`, K = 48) — festivals with eidgenössischem Charakter awarding the eidgenössischer Kranz (reference data). New column `festivals.eidg_type` (`ESAF`/`Kilchberg`/`Unspunnen`/`Jubilaeum`, set iff category = ESAF; the real ESAF is `eidg_type='ESAF'`); schema `user_version` 2 with an in-place migration (ADD COLUMN, old ESAF rows → 'ESAF'). Unknown competitive tid-11 events keep the Bergkranz fallback.
 - 2026-09-29 — **User decision:** Gauverband K = 24, same as Kantonal — the reference groups Kantonal- and Gauverbandsfeste as one Kranzfest tier; separate category labels kept.
 - 2026-09-29 — User-supplied tier reference `src/scraper/reference/schwingfeste_schweiz.json` is used to *validate* (not override) the mapping: tests over all reference names + schlussgang spellings, and a crawl-time warning for active tid 11–14 festivals. Documented supplements in `src/scraper/festival_reference.py`: "Bern-Jurassisches Schwingfest" = Gauverband (real BKSV Gau festival the reference omits; BKSV has 6 Gaue) and the spelling "Basellandschaftliches". Not in the reference but correctly Kantonal: Tessiner, Jurassisches, "Baselbieter" Kantonalschwingfest, Jubiläums-Schwingfest 100 J. UKSV 2017.
+- 2026-09-29 — PDF library = **pypdfium2** (PDFium; BSD/Apache) instead of pypdf — pypdf fails on malformed sheets (2013 Binningen), PDFium reads all 1879 in 11 s with identical text on normal sheets.
+- 2026-09-29 — `crawl` downloads the statistic PDFs of active, non-cancelled festivals after the listings (`--no-pdfs` to skip); own cap `pdf_max_requests = 2500`; past-season PDFs cached forever, current-season PDFs re-checked after 24 h until fetched ≥ 14 days after the festival (`pdf_max_age_hours`, `pdf_final_grace_days`); stops after 10 consecutive download errors. `parse` works offline on the cache (spec §5).
+- 2026-09-29 — **Correction:** statistic-sheet symbols are `+` win, `-` gestellt (draw), `o`/`0` loss. The Phase 1 note "Schlussgang loser printed as `o`" was a misreading — `o` is the normal loss symbol.
 
 ## Open questions
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
