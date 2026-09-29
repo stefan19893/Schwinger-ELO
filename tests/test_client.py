@@ -214,3 +214,10 @@ def test_rejects_non_http_urls(tmp_path: Path) -> None:
 def test_invalid_delays_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         HttpClient(tmp_path, UA, delay_min=1.0, delay_max=0.5)
+
+
+def test_real_network_is_blocked_in_tests(tmp_path: Path) -> None:
+    """conftest.py safety net: a client without MockTransport cannot go online."""
+    with HttpClient(tmp_path, UA, retry_wait=wait_none(), sleep=lambda s: None) as c:
+        with pytest.raises(RuntimeError, match="forbidden"):
+            c.get("https://backend-api.schlussgang.ch/jsonapi/node/event")

@@ -16,22 +16,103 @@ import logging
 import sys
 from collections.abc import Callable, Sequence
 
+from typing import TYPE_CHECKING
+
+import httpx
+
 from src.config import Config, load_config
+
+if TYPE_CHECKING:
+    from src.scraper.fests_crawler import CrawlReport
 
 log = logging.getLogger("schwingen")
 
 
 # --------------------------------------------------------------------------- stages
-def cmd_crawl(cfg: Config) -> int:
+def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
+    """Discover festivals (schlussgang.ch JSON:API) into the SQLite ``festivals`` table."""
     if cfg.sample:
-        log.info("crawl: --sample mode, using %s (no network)", cfg.sample_dir)
-        return 0
-    log.info(
-        "crawl: years %d-%d, refresh=%s, cache=%s",
-        cfg.from_year, cfg.to_year, cfg.refresh, cfg.raw_dir,
-    )
-    log.warning("crawl: not implemented yet (Phase 1) - nothing fetched")
+        return _crawl_sample(cfg)
+    from src.db import connect
+    from src.scraper import fests_crawler as fc
+    from src.scraper.client import FetchError, client_from_config
+
+    log.info("crawl: years %d-%d, refresh=%s, cache=%s, db=%s",
+             cfg.from_year, cfg.to_year, cfg.refresh, cfg.raw_dir, cfg.db_path)
+    conn = connect(cfg.db_path)
+    try:
+        with client_from_config(cfg, transport=transport, offline=False) as client:
+            try:
+                report = fc.crawl_festivals(
+                    client, conn, cfg.from_year, cfg.to_year,
+                    current_max_age=cfg.listing_max_age_hours * 3600,
+                    max_requests=cfg.crawl_max_requests,
+                    progress=sys.stderr.isatty(),
+                )
+            except fc.CrawlLimitExceeded as exc:
+                log.error("crawl: %s - finished years are saved; raise "
+                          "SCHWINGEN_CRAWL_MAX_REQUESTS or narrow --from-year/--to-year", exc)
+                return 1
+            except FetchError as exc:
+                log.error("crawl: %s - finished years are saved, re-run to resume", exc)
+                return 1
+            stats = client.stats
+    finally:
+        conn.close()
+    _log_crawl_report(report)
+    log.info("crawl: %d network requests (%d retries), %d cache hits",
+             stats.network_requests, stats.retries, stats.cache_hits)
     return 0
+
+
+def _crawl_sample(cfg: Config) -> int:
+    """--sample: load committed listing JSON from the sample dataset, no network."""
+    import json
+
+    from src.db import connect, upsert_festivals
+    from src.scraper.fests_crawler import load_listing_files
+
+    files = sorted((cfg.sample_dir / "schlussgang").glob("events_*.json"))
+    log.info("crawl: --sample mode, %d listing file(s) from %s (no network)",
+             len(files), cfg.sample_dir)
+    parsed = load_listing_files(json.loads(f.read_text(encoding="utf-8")) for f in files)
+    for sk in parsed.skipped:
+        log.warning("crawl: skipped event %s %r: %s", sk.fest_id, sk.name, sk.reason)
+    conn = connect(cfg.db_path)
+    try:
+        up = upsert_festivals(conn, parsed.festivals)
+    finally:
+        conn.close()
+    log.info("crawl: %d festivals (%d new, %d updated, %d unchanged), %d skipped -> %s",
+             len(parsed.festivals), up.inserted, up.updated, up.unchanged,
+             len(parsed.skipped), cfg.db_path)
+    return 0
+
+
+def _log_crawl_report(report: CrawlReport) -> None:
+    from collections import Counter
+
+    from src.db import CATEGORIES
+
+    counts = report.counts()
+    years = sorted({y for y, _ in counts})
+    extra = sorted({c for _, c in counts if c not in CATEGORIES})
+    cols = [*CATEGORIES, *extra]
+    log.info("crawl: festivals per year (active by category, other kinds in [brackets]):")
+    log.info("  %-4s %s  %5s %6s", "year", " ".join(f"{c[:10]:>10}" for c in cols), "total",
+             "w/stat")
+    stat = Counter(f.year for f in report.festivals.values()
+                   if f.kind == "active" and f.statistic_pdf_url)
+    for y in years:
+        row = [counts.get((y, c), 0) for c in cols]
+        log.info("  %-4d %s  %5d %6d", y, " ".join(f"{n:>10}" for n in row), sum(row), stat[y])
+    log.info("crawl: %d festivals stored (%d new, %d updated, %d unchanged), "
+             "%d future (not stored), %d skipped/invalid, %d queries / %d pages",
+             len(report.festivals), report.upsert.inserted, report.upsert.updated,
+             report.upsert.unchanged, report.future, len(report.skipped),
+             report.queries, report.pages)
+    for sk in report.skipped:
+        log.warning("crawl: skipped %s %r: %s", sk.fest_id, sk.name, sk.reason)
 
 
 def cmd_parse(cfg: Config) -> int:

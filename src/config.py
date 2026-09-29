@@ -54,6 +54,10 @@ class Config:
     request_delay_max: float = 1.0
     request_timeout: float = 30.0
     max_retries: int = 4
+    # Safety cap on network requests per crawl run (listing pages only in Phase 1).
+    crawl_max_requests: int = 1500
+    # Listing pages of the current season are re-fetched when older than this.
+    listing_max_age_hours: float = 24.0
     user_agent: str = (
         "Schwinger-ELO/0.1 (non-commercial research project; "
         "historical Schwingen ELO ratings; "

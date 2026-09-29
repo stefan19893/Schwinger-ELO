@@ -160,7 +160,7 @@ def test_sample_uses_separate_data_dir() -> None:
 # ------------------------------------------------------------------ ignored options
 @pytest.mark.parametrize("argv, warned", [
     (["parse", "--skip-crawl"], "--skip-crawl"),
-    (["crawl", "--skip-crawl"], "--skip-crawl"),
+    (["crawl", "--sample", "--skip-crawl"], "--skip-crawl"),  # --sample: stay offline
     (["elo", "--refresh"], "--refresh"),
 ])
 def test_warns_on_ignored_options(argv: list[str], warned: str, tmp_path: Path,
@@ -176,3 +176,57 @@ def test_no_warning_for_scoped_options(tmp_path: Path, caplog: pytest.LogCapture
 
 def test_user_agent_has_contact_url() -> None:
     assert "https://github.com/" in Config().user_agent
+
+
+# ------------------------------------------------------------------ crawl
+def _crawl_cfg(tmp_path: Path, **kw: object) -> Config:
+    base: dict[str, object] = {"data_dir": tmp_path / "data", "from_year": 2011,
+                               "to_year": 2011, "request_delay_min": 0.001,
+                               "request_delay_max": 0.002}
+    return load_config({**base, **kw}, env={})
+
+
+def test_crawl_sample_is_offline_and_fills_db(tmp_path: Path) -> None:
+    from src.db import connect, load_festivals
+
+    assert cli.main(["crawl", "--sample", "--data-dir", str(tmp_path / "d")]) == 0
+    fests = load_festivals(connect(tmp_path / "d" / "schwingen.db"))
+    assert len(fests) == 6 and fests[26400].name == "Brünig-Schwinget 2011"
+    assert not (tmp_path / "d" / "raw").exists()  # nothing fetched or cached
+
+
+def test_crawl_command_with_mock_api(tmp_path: Path) -> None:
+    import httpx
+
+    from src.db import connect, load_festivals
+    from tests.test_fests_crawler import FakeApi
+
+    api = FakeApi()
+    cfg = _crawl_cfg(tmp_path)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 0
+    assert len(api.requests) == 5  # one listing query per crawled category
+    assert len(load_festivals(connect(cfg.db_path))) == 6
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 0
+    assert len(api.requests) == 5  # second run served from data/raw cache
+    refresh = _crawl_cfg(tmp_path, refresh=True)
+    assert cli.cmd_crawl(refresh, transport=httpx.MockTransport(api)) == 0
+    assert len(api.requests) == 10
+
+
+def test_crawl_command_request_cap(tmp_path: Path) -> None:
+    import httpx
+
+    from tests.test_fests_crawler import FakeApi
+
+    api = FakeApi()
+    cfg = _crawl_cfg(tmp_path, crawl_max_requests=2)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 1
+    assert len(api.requests) == 2
+
+
+def test_crawl_command_http_error_exits_1(tmp_path: Path) -> None:
+    import httpx
+
+    cfg = _crawl_cfg(tmp_path, max_retries=1)
+    transport = httpx.MockTransport(lambda req: httpx.Response(404))
+    assert cli.cmd_crawl(cfg, transport=transport) == 1

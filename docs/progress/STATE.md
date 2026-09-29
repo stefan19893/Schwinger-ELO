@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
-**Next action:** Phase 1, task 6 — wire `python -m src.cli crawl` (--from-year/--to-year/--refresh, --sample offline) + test.
+**Next action:** Phase 1, task 7 — full crawl 2011–present (listing pages only; estimate requests first, cap 1500).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -46,6 +46,9 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Youth (tid 10) and women's (tid 16) categories are not requested at all; events in tids 11–15 that are youth / women / non-competition (Abgeordnetenversammlung, Fussballturnier, awards…) are stored with `kind` ≠ 'active' and `category` NULL so nothing is dropped silently; ELO uses only `kind='active'` — adult men's competition only, halves request count.
 - 2026-09-29 — Listing pages for the current season (year ≥ today's year) are re-fetched when their cache entry is older than 24 h (`max_age`); all other pages are cached forever unless `--refresh` — otherwise new festivals could never be discovered without a full `--refresh`, which in Phase 2 would re-download every PDF. **User to confirm** (slight relaxation of "never re-fetch cached pages").
 - 2026-09-29 — Festivals dated after today are counted but not stored — no results yet; they are picked up by a later crawl.
+- 2026-09-29 — Crawl safety cap `crawl_max_requests = 1500` network requests per run (`SCHWINGEN_CRAWL_MAX_REQUESTS`) and `listing_max_age_hours = 24` in `src/config.py` — enforce the agreed request budget in code, not by convention.
+- 2026-09-29 — `tests/conftest.py` blocks all real httpx transport I/O in tests — a Phase 0 test accidentally triggered a live crawl once real crawling existed.
+- 2026-09-29 — Tests split as `tests/test_client.py`, `tests/test_db.py`, `tests/test_fests_crawler.py` instead of one `test_scraper.py` (spec §3) — smaller files per module.
 
 ## Open questions
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.

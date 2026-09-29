@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin
 
+from tqdm import tqdm
+
 from src.db import Festival, UpsertStats, upsert_festivals
 from src.scraper.client import HttpClient
 
@@ -294,19 +296,26 @@ def crawl_festivals(
     current_max_age: float | None = 24 * 3600,
     categories: Iterable[int] = tuple(SOURCE_CATEGORIES),
     max_requests: int | None = None,
+    progress: bool = False,
 ) -> CrawlReport:
     """Crawl listings for ``from_year..to_year`` and upsert into ``festivals``.
 
     Past seasons' listing pages are served from cache forever; pages for the
     current season (year >= today's year) are re-fetched once older than
     ``current_max_age`` so newly held festivals are discovered. Festivals dated
-    after ``today`` are counted but not stored (no results yet).
+    after ``today`` are counted but not stored (no results yet). Results are
+    persisted after every year, so an interrupted crawl keeps finished years.
     """
     today = today or _dt.date.today()
     report = CrawlReport()
+    tids = list(categories)
+    bar = tqdm(total=(to_year - from_year + 1) * len(tids), unit="query",
+               desc="crawl", disable=not progress)
     for year in range(from_year, to_year + 1):
         max_age = current_max_age if year >= today.year else None
-        for tid in categories:
+        year_fests: dict[int, Festival] = {}
+        for tid in tids:
+            bar.update(1)
             report.queries += 1
             for doc in iter_pages(client, tid, year, max_age=max_age,
                                   max_requests=max_requests):
@@ -322,10 +331,15 @@ def crawl_festivals(
                     if f.fest_id in report.festivals:
                         log.debug("duplicate event %d in listings", f.fest_id)
                     report.festivals[f.fest_id] = f
-        log.info("crawl %d: %d festivals so far, %d network requests, %d cache hits",
-                 year, len(report.festivals), client.stats.network_requests,
-                 client.stats.cache_hits)
-    report.upsert = upsert_festivals(conn, report.festivals.values())
+                    year_fests[f.fest_id] = f
+        up = upsert_festivals(conn, year_fests.values())
+        report.upsert.inserted += up.inserted
+        report.upsert.updated += up.updated
+        report.upsert.unchanged += up.unchanged
+        log.debug("crawl %d: %d festivals (%d new, %d updated), %d network requests, "
+                  "%d cache hits", year, len(year_fests), up.inserted, up.updated,
+                  client.stats.network_requests, client.stats.cache_hits)
+    bar.close()
     return report
 
 
