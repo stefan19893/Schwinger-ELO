@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated data (never committed)
+data/raw/
+data/processed/
+data/*.db
+data/*.db-journal
+data/*.sqlite
+dist/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
