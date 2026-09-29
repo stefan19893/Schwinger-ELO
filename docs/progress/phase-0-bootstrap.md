@@ -13,7 +13,7 @@ Runnable project skeleton so later phases only add code.
 
 ## Tasks
 - [x] 1. Create directory structure and package `__init__.py` files
-- [~] 2. Write `requirements.txt` (pinned major versions) and `pyproject.toml` / pytest config
+- [x] 2. Write `requirements.txt` (pinned major versions) and `pyproject.toml` / pytest config
 - [ ] 3. Write `.gitignore` (`.venv/`, `data/raw/`, `data/*.db`, `dist/`, caches)
 - [ ] 4. Create venv, install deps, add smoke test, confirm `pytest` passes
 - [ ] 5. `src/config.py` (paths, year range, rate limits, ELO params; env overrides) + `src/cli.py` with stub subcommands and `serve`
@@ -23,3 +23,4 @@ Runnable project skeleton so later phases only add code.
 ## Handoff notes
 <!-- YYYY-MM-DD — what was done / where / surprises -->
 - 2026-09-29 — Task 1: created spec §3 layout: `src/{scraper,pipeline,exporter}` packages with docstring-only stub modules (incl. `exporter/static_builder.py`), `tests/` (+ `fixtures/sample/.gitkeep`), `web/`, `.github/workflows/`, `scripts/`. `.gitignore` written early so the initial commit is clean (task 3 finalizes it). `web/js`, `web/css` and HTML templates deferred to Phase 5.
+- 2026-09-29 — Task 2: `requirements.txt` (major-version ranges: httpx, bs4, selectolax, tenacity, tqdm, pandas, numpy, scipy, pyarrow, pytest), `pyproject.toml` (metadata, `requires-python >=3.11`, pytest `testpaths=tests`), minimal `README.md`. Deps live only in requirements.txt (not duplicated in pyproject). pyarrow added for Parquet (not listed in spec stack).

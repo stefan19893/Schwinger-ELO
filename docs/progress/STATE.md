@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 2 — `requirements.txt` + `pyproject.toml`.
+**Next action:** Phase 0, task 3 — finalize `.gitignore`.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -21,6 +21,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 <!-- - YYYY-MM-DD — decision — reason -->
 - 2026-09-29 — Single CLI (`python -m src.cli`) used by both `scripts/deploy_local.sh` and GitHub Actions; `--sample` offline dataset for fast local runs — spec §5–6.
 - 2026-09-29 — Repo root `Schwinger-ELO/` is the project root (spec §3 updated accordingly).
+- 2026-09-29 — Added `pyarrow` to requirements — pandas needs a Parquet engine for `data/processed/*.parquet`.
+- 2026-09-29 — Dependencies listed only in `requirements.txt`; `pyproject.toml` holds metadata + pytest config — single source for the hash-based reinstall in `deploy_local.sh` and CI.
 
 ## Open questions
 - Which source is primary (schlussgang.ch vs esv.ch), and do their robots.txt / terms allow crawling? → answer in Phase 1.

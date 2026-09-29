@@ -1,0 +1,12 @@
+[project]
+name = "schwinger-elo"
+version = "0.1.0"
+description = "Historical ELO ratings for Swiss Schwingen athletes (2011-present)"
+readme = "README.md"
+requires-python = ">=3.11"
+# Dependencies are managed in requirements.txt (single source used by
+# scripts/deploy_local.sh and CI).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
