@@ -24,6 +24,7 @@ def test_defaults() -> None:
     assert cfg.from_year == 2011
     assert cfg.request_delay_min == 0.5 and cfg.request_delay_max == 1.0
     assert cfg.k_factors["ESAF"] == 48 and cfg.k_factors["Kantonal"] == 24
+    assert cfg.k_factors["Gauverband"] == 24 and cfg.k_factors["Regional"] == 16
     assert cfg.raw_dir == cfg.data_dir / "raw"
     assert cfg.db_path == cfg.data_dir / "schwingen.db"
 

@@ -15,13 +15,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2: festivals.eidg_type
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
+# Festivals with eidgenössischem Charakter; all share category 'ESAF' (K=48).
+EIDG_TYPES = ("ESAF", "Kilchberg", "Unspunnen", "Jubilaeum")
 
 _cat_list = ", ".join(f"'{c}'" for c in CATEGORIES)
 _kind_list = ", ".join(f"'{k}'" for k in KINDS)
+_eidg_list = ", ".join(f"'{e}'" for e in EIDG_TYPES)
+_EIDG_COLUMN = (f"eidg_type TEXT CHECK (eidg_type IS NULL OR "
+                f"(eidg_type IN ({_eidg_list}) AND category = 'ESAF'))")
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS festivals (
@@ -29,6 +34,7 @@ CREATE TABLE IF NOT EXISTS festivals (
     name                TEXT    NOT NULL,
     date                TEXT    NOT NULL,      -- ISO yyyy-mm-dd
     category            TEXT CHECK (category IS NULL OR category IN ({_cat_list})),
+    {_EIDG_COLUMN},  -- which eidg. festival; 'ESAF' = the real ESAF
     location            TEXT,
     kind                TEXT    NOT NULL CHECK (kind IN ({_kind_list})),
     cancelled           INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
@@ -57,6 +63,7 @@ class Festival:
     date: str
     category: str | None
     location: str | None
+    eidg_type: str | None = None  # set iff category == 'ESAF'
     kind: str = "active"
     cancelled: bool = False
     source_category: str | None = None
@@ -76,6 +83,11 @@ class Festival:
             raise ValueError(f"invalid kind {self.kind!r}")
         if self.kind == "active" and self.category is None:
             raise ValueError(f"active festival {self.fest_id} needs a category")
+        if self.eidg_type is not None and self.eidg_type not in EIDG_TYPES:
+            raise ValueError(f"invalid eidg_type {self.eidg_type!r}")
+        if (self.category == "ESAF") != (self.eidg_type is not None):
+            raise ValueError(f"festival {self.fest_id}: eidg_type must be set iff "
+                             f"category is ESAF (got {self.category!r}/{self.eidg_type!r})")
         _dt.date.fromisoformat(self.date)  # raises on bad dates
 
     @property
@@ -105,9 +117,20 @@ def init_schema(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise RuntimeError(f"database schema v{version} is newer than code v{SCHEMA_VERSION}")
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA)  # no-op for existing tables
+    _migrate(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring older tables up to date (idempotent, keyed on actual columns)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(festivals)")}
+    if "eidg_type" not in cols:  # v1 -> v2
+        conn.execute(f"ALTER TABLE festivals ADD COLUMN {_EIDG_COLUMN}")
+        # v1 stored only the real ESAF as 'ESAF'; the other eidg. festivals are
+        # re-derived by the next crawl (`crawl --offline` re-parses the cache).
+        conn.execute("UPDATE festivals SET eidg_type = 'ESAF' WHERE category = 'ESAF'")
 
 
 def _row_to_festival(row: sqlite3.Row) -> Festival:

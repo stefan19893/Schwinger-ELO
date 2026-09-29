@@ -120,6 +120,13 @@ def _log_crawl_report(report: CrawlReport) -> None:
              report.queries, report.pages)
     for sk in report.skipped:
         log.warning("crawl: skipped %s %r: %s", sk.fest_id, sk.name, sk.reason)
+    esaf = Counter(f.eidg_type for f in report.festivals.values() if f.category == "ESAF")
+    log.info("crawl: ESAF tier by eidg_type: %s",
+             ", ".join(f"{k}={v}" for k, v in sorted(esaf.items())) or "none")
+    unknown = Counter(f.name.rsplit(" ", 1)[0] for f in report.reference_unknown)
+    log.info("crawl: reference check: %d mismatches, %d Kranzfeste not in reference list%s",
+             len(report.reference_mismatches), len(report.reference_unknown),
+             f" (e.g. {', '.join(n for n, _ in unknown.most_common(5))})" if unknown else "")
 
 
 def cmd_parse(cfg: Config) -> int:

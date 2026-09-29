@@ -64,7 +64,10 @@ def test_eidgenoessische_anlaesse_mapping() -> None:
     assert f19[24360].kind == "non_competition" and f19[24360].category is None  # AV, type null
     assert f19[24077].kind == "non_competition"  # Fussballturnier
     f23 = by_id("events_11_2023.json")
-    assert f23[22371].category == "Bergkranz"  # Unspunnen -> Bergkranz-level K
+    assert f23[22371].category == "ESAF"  # Unspunnen: eidg. Kranz -> ESAF tier (K=48)
+    assert f23[22371].eidg_type == "Unspunnen"
+    assert f19[24110].eidg_type == "ESAF"  # the real ESAF
+    assert f19[24360].eidg_type is None
     assert f23[22599].kind == "non_competition"  # type "Allgmeiner Anlass"
 
 
@@ -79,8 +82,10 @@ def test_kantonal_vs_gauverband_rule() -> None:
 @pytest.mark.parametrize(("tid", "name", "expected"), [
     (11, "Eidgenössisches Schwing- und Älplerfest Glarnerland 2025", "ESAF"),
     (11, "Eidgenössisches Schwingfest Estavayer 2016", "ESAF"),
-    (11, "Kilchberger Schwinget Kilchberg 2021", "Bergkranz"),
-    (11, "Unspunnen-Schwinget Interlaken 2017", "Bergkranz"),
+    (11, "Kilchberger Schwinget Kilchberg 2021", "ESAF"),
+    (11, "Unspunnen-Schwinget Interlaken 2017", "ESAF"),
+    (11, "Jubiläumsschwingfest 125 Jahre ESV Appenzell 2024", "ESAF"),
+    (11, "Irgendein Eidgenössischer Anlass 2030", "Bergkranz"),  # unknown eidg. -> fallback
     (12, "Rigi-Schwinget 2011", "Bergkranz"),
     (13, "Innerschweizer Schwingfest Seedorf 2025", "Teilverband"),
     (14, "Seeländisches Schwingfest Täuffelen 2024", "Gauverband"),
@@ -351,3 +356,103 @@ def _pick(items: list[tuple[str, str]]) -> tuple[str | None, str | None]:
 ])
 def test_pick_legacy_pdf(items: list[tuple[str, str]], stat: str | None, rank: str | None) -> None:
     assert _pick(items) == (stat, rank)
+
+
+@pytest.mark.parametrize(("tid", "name", "expected"), [
+    (11, "Eidgenössisches Schwing- und Älplerfest Glarnerland 2025", "ESAF"),
+    (11, "Eidgenössisches Schwingfest Estavayer 2016", "ESAF"),
+    (11, "Kilchberger Schwinget Kilchberg 2026", "Kilchberg"),
+    (11, "Unspunnen-Schwinget Interlaken 2011", "Unspunnen"),
+    (11, "Jubiläumsschwingfest 125 Jahre ESV Appenzell 2024", "Jubilaeum"),
+    (14, "Jubiläums-Schwingfest 100 Jahre UKSV Altdorf 2017", None),  # cantonal jubilee
+    (12, "Rigi-Schwinget 2025", None),
+])
+def test_eidg_type(tid: int, name: str, expected: str | None) -> None:
+    assert fc.eidg_type(tid, name) == expected
+
+
+# ------------------------------------------------------------------ reference validation
+REFERENCE = json.loads(
+    (Path(__file__).parent.parent / "src" / "scraper" / "reference"
+     / "schwingfeste_schweiz.json").read_text(encoding="utf-8"))["schwingfeste_schweiz"]
+
+
+def _reference_cases() -> list[tuple[int, str, str]]:
+    """(schlussgang tid, name, expected category) for every festival in the reference."""
+    cases = [(11, t["name"], "ESAF") for t in REFERENCE["eidgenoessische_feste"]["turniere"]]
+    cases += [(12, t["fest"], "Bergkranz") for t in REFERENCE["bergkranzfeste"]["turniere"]]
+    cases += [(13, t["fest"], "Teilverband") for t in REFERENCE["teilverbandsfeste"]["turniere"]]
+    for tv, names in REFERENCE["kantonal_und_gauverbandsfeste"][
+            "unterteilung_nach_teilverband"].items():
+        cases += [(14, n, "Gauverband" if tv == "BKSV" else "Kantonal") for n in names]
+    return cases
+
+
+def test_reference_has_expected_shape() -> None:
+    cases = _reference_cases()
+    assert sum(c == "ESAF" for _, _, c in cases) == 4
+    assert sum(c == "Bergkranz" for _, _, c in cases) == 6
+    assert sum(c == "Teilverband" for _, _, c in cases) == 5
+    assert sum(c == "Gauverband" for _, _, c in cases) == 5  # reference omits Bern-Jura
+
+
+@pytest.mark.parametrize(("tid", "name", "expected"), _reference_cases())
+def test_mapping_agrees_with_reference(tid: int, name: str, expected: str) -> None:
+    from src.scraper.festival_reference import reference_category
+
+    assert fc.classify_kind(name, "Aktivschwinger") == "active"
+    assert fc.map_category(tid, name) == expected
+    assert reference_category(name) == expected
+
+
+@pytest.mark.parametrize(("tid", "name", "expected"), [
+    # schlussgang / fixture spellings of the reference festivals
+    (12, "Weissenstein-Schwinget ob Solothurn 2011", "Bergkranz"),
+    (12, "Stoos-Schwinget Ibach 2021", "Bergkranz"),
+    (13, "Innerschweizerisches Schwingfest Giswil 2027", "Teilverband"),
+    (13, "Innerschweizer Schwingfest Seedorf 2025", "Teilverband"),
+    (13, "Nordwestschweizerisches Schwingfest Lenzburg 2025", "Teilverband"),
+    (13, "Berner Kantonalschwingfest Langnau im Emmental 2025", "Teilverband"),
+    (13, "Südwestschweizer Schwingfest Neuenburg 2025", "Teilverband"),
+    (14, "Bündner-Glarner Schwingertag Davos 2024", "Kantonal"),
+    (14, "Glarner-Bündner Schwingertag Glarus 2024", "Kantonal"),
+    (14, "Basellandschaftliches Kantonalschwingfest Pratteln 2024", "Kantonal"),
+    (14, "Baselstädtischer Schwingertag Basel 2013", "Kantonal"),
+    (14, "Ob- und Nidwaldner Kantonalschwingfest Lungern 2024", "Kantonal"),
+    (14, "Bern-Jurassisches Schwingfest Raimeux 2024", "Gauverband"),  # not in reference
+    (11, "Jubiläumsschwingfest 125 Jahre ESV Appenzell 2024", "ESAF"),
+    (11, "Kilchberger Schwinget Kilchberg 2021", "ESAF"),
+])
+def test_name_variants_agree_with_reference(tid: int, name: str, expected: str) -> None:
+    from src.scraper.festival_reference import reference_category
+
+    assert fc.map_category(tid, name) == expected
+    assert reference_category(name) == expected
+
+
+@pytest.mark.parametrize("name", [
+    "Surenen-Schwinget 2025", "Allweg-Schwinget Ennetmoos 2026", "Lueg-Schwinget 2024",
+    "Hallenschwinget Sarnen 2025", "Jahresschwinget Thun 2025", "Gibel-Schwinget Bonstetten 2025",
+    "Toggenburger Verbandsschwingfest 2025",
+])
+def test_non_kranzfeste_stay_regional(name: str) -> None:
+    from src.scraper.festival_reference import reference_category
+
+    assert fc.map_category(15, name) == "Regional"
+    assert reference_category(name) is None
+
+
+def test_all_fixture_kranzfeste_agree_with_reference() -> None:
+    for name in FIX.glob("events_*.json"):
+        for f in fc.parse_listing(load(name.name)).festivals:
+            assert fc.check_reference(f) in (None, ""), f
+
+
+def test_crawl_reports_reference_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(fc._SIMPLE_MAP, 12, "Regional")  # simulate a mapping bug
+    api = FakeApi()
+    with make_client(tmp_path, api) as c:
+        rep = fc.crawl_festivals(c, connect(tmp_path / "s.db"), 2011, 2011, today=TODAY,
+                                 categories=[12])
+    assert len(rep.reference_mismatches) == 6
+    assert {exp for _, exp in rep.reference_mismatches} == {"Bergkranz"}

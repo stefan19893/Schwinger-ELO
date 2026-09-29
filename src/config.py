@@ -25,13 +25,13 @@ SAMPLE_DATA_DIR: Path = REPO_ROOT / "data" / "sample"
 # Politeness floor (spec §4.1): no configuration may go below this delay.
 MIN_REQUEST_DELAY = 0.5
 
-# Festival category -> K-factor (spec §4.2.3).
+# Festival category -> K-factor (spec §4.2.3, user decisions 2026-09-29).
 DEFAULT_K_FACTORS: dict[str, float] = {
-    "ESAF": 48.0,
-    "Bergkranz": 40.0,  # incl. Unspunnen, Kilchberg, Brünig, Rigi, Stoos, ...
+    "ESAF": 48.0,  # ESAF + Kilchberg, Unspunnen, ESV-Jubiläumsschwingfest (eidg. Kranz)
+    "Bergkranz": 40.0,  # the six Bergkranzfeste: Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein
     "Teilverband": 32.0,
     "Kantonal": 24.0,
-    "Gauverband": 16.0,
+    "Gauverband": 24.0,  # same Kranzfest tier as Kantonal (reference data)
     "Regional": 16.0,
 }
 

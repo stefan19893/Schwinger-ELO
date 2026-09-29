@@ -91,6 +91,8 @@ Schwinger-ELO/
 - **Politeness:** respect robots.txt/terms, 0.5–1.0 s delay between requests, descriptive User-Agent, retries with backoff, every response cached in `data/raw/` and never re-fetched unless `--refresh` is given.
 - **Data Entity Schema:**
   - `Festival`: `fest_id`, `name`, `date`, `category` (ESAF, Bergkranz, Teilverband, Kantonal, Gauverband, Regional), `location`.
+    - Category `ESAF` is the tier of all festivals with eidgenössischem Charakter (eidgenössischer Kranz): the ESAF itself, Kilchberger Schwinget, Unspunnen-Schwinget and ESV Jubiläumsschwingfeste. The column `eidg_type` (`ESAF`, `Kilchberg`, `Unspunnen`, `Jubilaeum`) tells them apart. `Bergkranz` = the six Bergkranzfeste (Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein); Berg festivals without a Kranz are `Regional`.
+    - Tier lists are backed by the user-supplied reference `src/scraper/reference/schwingfeste_schweiz.json` (the crawler warns on disagreements).
   - `Bout` (Gang): `bout_id`, `fest_id`, `gang_nr` (1–6, or 1–8 at ESAF), `athlete_a_id`, `athlete_b_id`, `outcome` (`WIN_A`, `WIN_B`, `DRAW`), `grade_a`, `grade_b`.
   - `Athlete`: `athlete_id`, `full_name`, `club` (Schwingklub), `sub_association` (BKSV, ISV, NOSV, NWSV, SWSV), `active_years`.
 - **Handling Ambiguity:** Match keys must resolve athlete collisions (e.g., duplicate names) using Schwingklub and unique profile slug URLs.
@@ -107,11 +109,11 @@ Standard chess ELO must be calibrated with the following domain parameters:
    - A maximum victory (Plattwurf $10.00$ vs $8.50$ / $8.75$) carries higher conviction than a minimal victory ($9.75$ vs $8.75$).
    - Multiplier $\lambda = 1.0 + \alpha \cdot (\text{Grade}_A - \text{Grade}_B - \text{BaselineDiff})$.
 3. **Festival Weighting ($K$-Factor Modulation):**
-   - ESAF (Eidgenössisches Schwing- und Älplerfest): $K = 48$
-   - Unspunnen / Kilchberg / Bergkranzfeste (Brünig, Rigi, Stoos, etc.): $K = 40$
+   - Eidgenössische Feste — ESAF (Eidgenössisches Schwing- und Älplerfest), Kilchberger Schwinget, Unspunnen-Schwinget, ESV Jubiläumsschwingfest: $K = 48$
+   - Bergkranzfeste (Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein): $K = 40$
    - Teilverbandsfeste: $K = 32$
-   - Kantonalfeste: $K = 24$
-   - Regional-/Rangschwinget: $K = 16$
+   - Kantonal- and Gauverbandsfeste (one Kranzfest tier): $K = 24$
+   - Regional-/Rangschwinget and Bergschwinget without Kranz: $K = 16$
 4. **Seasonality & Inactivity Decay:**
    - At the beginning of each season (April), apply Mean Reversion:
      $$R_{t+1} = R_t \cdot (1 - \delta) + R_{\text{mean}} \cdot \delta \quad (\text{with } \delta \approx 0.10, R_{\text{mean}} = 1500)$$

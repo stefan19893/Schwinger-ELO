@@ -25,6 +25,7 @@ from tqdm import tqdm
 
 from src.db import Festival, UpsertStats, upsert_festivals
 from src.scraper.client import CacheMiss, HttpClient
+from src.scraper.festival_reference import reference_category
 
 log = logging.getLogger("schwingen.crawl")
 
@@ -46,9 +47,14 @@ EXCLUDED_SOURCE_CATEGORIES: dict[int, str] = {10: "Jungschwingen", 16: "Frauensc
 
 _SIMPLE_MAP = {12: "Bergkranz", 13: "Teilverband", 15: "Regional"}
 
-# tid 11: only the ESAF itself is "ESAF"; Kilchberg, Unspunnen and other
-# eidgenössische competitions get Bergkranz-level K (spec §4.2.3).
-ESAF_RE = re.compile(r"eidgen(ö|oe)ssisches\s+schwing", re.I)
+# tid 11: festivals with eidgenössischem Charakter (eidg. Kranz) -> category
+# 'ESAF' (K=48); eidg_type tells the real ESAF apart (user decision 2026-09-29).
+EIDG_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("ESAF", re.compile(r"eidgen(ö|oe)ssisches\s+schwing", re.I)),
+    ("Kilchberg", re.compile(r"kilchberg", re.I)),
+    ("Unspunnen", re.compile(r"unspunnen", re.I)),
+    ("Jubilaeum", re.compile(r"jubil(ä|ae)ums-?schwingfest.*\besv\b", re.I)),
+)
 # tid 14: the Bernese Gauverbands-Schwingfeste; everything else is cantonal.
 GAU_RE = re.compile(
     r"mittelländisch|oberländisch|seeländisch|bern-jurassisch|oberaargauisch|emmentalisch",
@@ -140,12 +146,23 @@ def classify_kind(name: str, event_type: str | None) -> str:
     return "active"
 
 
+def eidg_type(tid: int, name: str) -> str | None:
+    """ESAF / Kilchberg / Unspunnen / Jubilaeum for eidg. festivals (tid 11), else None."""
+    if tid != 11:
+        return None
+    for label, rx in EIDG_RES:
+        if rx.search(name):
+            return label
+    return None
+
+
 def map_category(tid: int, name: str) -> str | None:
     """Map a schlussgang category tid (+ festival name) to a spec category."""
     if tid in _SIMPLE_MAP:
         return _SIMPLE_MAP[tid]
     if tid == 11:
-        return "ESAF" if ESAF_RE.search(name) else "Bergkranz"
+        # Unknown competitive eidg. events keep the previous Bergkranz level.
+        return "ESAF" if eidg_type(tid, name) else "Bergkranz"
     if tid == 14:
         if GAU_RE.search(name) and not KANTONAL_RE.search(name):
             return "Gauverband"
@@ -240,6 +257,7 @@ def parse_event(node: dict[str, Any], inc: dict[tuple[str, str], dict[str, Any]]
     event_type = a.get("field_event_type")
     kind = "women" if tid == 16 else "youth" if tid == 10 else classify_kind(name, event_type)
     category = map_category(tid, name) if kind == "active" else None
+    etype = eidg_type(tid, name) if category == "ESAF" else None
     if kind == "active" and category is None:
         return Skipped(nid, raw_name, f"unmapped category tid {tid}")
     state = (a.get("field_event_state") or "").lower()
@@ -258,6 +276,7 @@ def parse_event(node: dict[str, Any], inc: dict[tuple[str, str], dict[str, Any]]
 
     return Festival(
         fest_id=nid, name=name, date=date, category=category, location=location,
+        eidg_type=etype,
         kind=kind, cancelled=cancelled,
         source_category=source_category, source_category_tid=tid,
         association=((assoc or {}).get("attributes") or {}).get("name"),
@@ -295,11 +314,33 @@ class CrawlReport:
     future: int = 0
     upsert: UpsertStats = field(default_factory=UpsertStats)
     cache_misses: list[str] = field(default_factory=list)  # --offline: queries not cached
+    # Kranzfeste whose mapped category disagrees with the reference list / aren't in it.
+    reference_mismatches: list[tuple[Festival, str]] = field(default_factory=list)
+    reference_unknown: list[Festival] = field(default_factory=list)
 
     def counts(self) -> Counter[tuple[int, str]]:
         """(year, category or kind) -> number of stored festivals."""
         return Counter((f.year, f.category if f.kind == "active" else f"[{f.kind}]")
                        for f in self.festivals.values())
+
+
+KRANZFEST_TIDS = frozenset({11, 12, 13, 14})
+
+
+def check_reference(f: Festival) -> str | None:
+    """Expected category per reference if it disagrees with ``f.category``.
+
+    Only active festivals from Kranzfest source categories (tid 11-14) are
+    checked; Regional festivals share stems with Kranzfeste ("Urner
+    Rangschwinget" vs "Urner Kantonales") and are not Kranzfeste anyway.
+    Returns "" when the festival is not in the reference, None when it agrees.
+    """
+    if f.kind != "active" or f.source_category_tid not in KRANZFEST_TIDS:
+        return None
+    expected = reference_category(f.name)
+    if expected is None:
+        return ""
+    return expected if expected != f.category else None
 
 
 def listing_final_after(year: int, grace_days: int) -> _dt.datetime:
@@ -389,6 +430,13 @@ def crawl_festivals(
                         log.debug("duplicate event %d in listings", f.fest_id)
                     report.festivals[f.fest_id] = f
                     year_fests[f.fest_id] = f
+                    expected = check_reference(f)
+                    if expected == "":
+                        report.reference_unknown.append(f)
+                    elif expected is not None:
+                        log.warning("category %s for %r disagrees with reference (%s)",
+                                    f.category, f.name, expected)
+                        report.reference_mismatches.append((f, expected))
         up = upsert_festivals(conn, year_fests.values())
         report.upsert.inserted += up.inserted
         report.upsert.updated += up.updated

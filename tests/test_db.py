@@ -79,3 +79,50 @@ def test_refuses_newer_schema(tmp_path: Path) -> None:
     conn.close()
     with pytest.raises(RuntimeError):
         connect(tmp_path / "s.db")
+
+
+def test_eidg_type_validation() -> None:
+    esaf = replace(F, category="ESAF", eidg_type="Kilchberg")
+    assert esaf.eidg_type == "Kilchberg"
+    with pytest.raises(ValueError):
+        replace(F, category="ESAF")  # ESAF needs an eidg_type
+    with pytest.raises(ValueError):
+        replace(F, eidg_type="ESAF")  # eidg_type only for category ESAF
+    with pytest.raises(ValueError):
+        replace(F, category="ESAF", eidg_type="Brünig")
+
+
+def test_migrates_v1_database(tmp_path: Path) -> None:
+    """A v1 db (no eidg_type) gains the column; old ESAF rows become eidg_type='ESAF'."""
+    path = tmp_path / "v1.db"
+    raw = sqlite3.connect(path)
+    raw.executescript("""
+        CREATE TABLE festivals (
+            fest_id INTEGER PRIMARY KEY, name TEXT NOT NULL, date TEXT NOT NULL,
+            category TEXT, location TEXT, kind TEXT NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0,
+            source_category TEXT, source_category_tid INTEGER, association TEXT, esv_id INTEGER,
+            event_type TEXT, participant_count INTEGER, url TEXT NOT NULL,
+            statistic_pdf_url TEXT, ranking_pdf_url TEXT, first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL);
+        INSERT INTO festivals (fest_id, name, date, category, kind, url, first_seen, last_seen)
+        VALUES (1, 'ESAF Zug 2019', '2019-08-24', 'ESAF', 'active', 'u', 'n', 'n'),
+               (2, 'Kilchberg 2021', '2021-09-25', 'Bergkranz', 'active', 'u', 'n', 'n');
+        PRAGMA user_version = 1;
+    """)
+    raw.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+    fests = load_festivals(conn)
+    assert fests[1].eidg_type == "ESAF" and fests[2].eidg_type is None
+    # re-derived row (as `crawl --offline` does) updates cleanly
+    s = upsert_festivals(conn, [replace(fests[2], category="ESAF", eidg_type="Kilchberg")])
+    assert s.updated == 1 and load_festivals(conn)[2].category == "ESAF"
+    connect(path).close()  # idempotent
+
+
+def test_db_rejects_eidg_type_on_non_esaf(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "s.db")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO festivals (fest_id, name, date, category, eidg_type, kind, "
+                     "url, first_seen, last_seen) VALUES "
+                     "(1,'x','2020-01-01','Bergkranz','Kilchberg','active','u','n','n')")
