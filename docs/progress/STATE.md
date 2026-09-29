@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 5 — `src/config.py` + `src/cli.py` stubs.
+**Next action:** Phase 0, task 6 — `scripts/deploy_local.sh` + fresh-venv test.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -24,11 +24,17 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Added `pyarrow` to requirements — pandas needs a Parquet engine for `data/processed/*.parquet`.
 - 2026-09-29 — Dependencies listed only in `requirements.txt`; `pyproject.toml` holds metadata + pytest config — single source for the hash-based reinstall in `deploy_local.sh` and CI.
 - 2026-09-29 — When `ensurepip` is unavailable (Debian/Ubuntu without `python3.X-venv`), create `.venv` with `--without-pip` and bootstrap pip via `https://bootstrap.pypa.io/get-pip.py` — the dev machine (WSL, Python 3.14) lacks ensurepip and installing the apt package needs sudo. User may prefer `sudo apt install python3.14-venv` instead.
+- 2026-09-29 — `mov_alpha = 0.0`, `mov_baseline_diff = 0.0` placeholders in `src/config.py` (MoV multiplier neutral, λ = 1) — spec leaves them unspecified; calibrate in Phase 4.
+- 2026-09-29 — K-factor keys follow spec §4.1 categories; `Gauverband` and `Regional` both K = 16 — spec §4.2 lists only "Regional-/Rangschwinget" for the lowest tier.
+- 2026-09-29 — `serve` binds to `127.0.0.1` by default (`--host` / `SCHWINGEN_HOST` to change) — local preview only, don't expose on the LAN by default.
+- 2026-09-29 — Extra `serve --host` option and `SCHWINGEN_DIST_DIR` env override beyond spec §5 — needed for tests and flexibility; no spec behaviour changed.
 
 ## Open questions
 - Which source is primary (schlussgang.ch vs esv.ch), and do their robots.txt / terms allow crawling? → answer in Phase 1.
 - ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.
 - How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
+
+- User-Agent has no contact URL yet (`src/config.py`) — what is the public repo URL / contact to include? → settle before the first real crawl in Phase 1.
 
 ## Blockers
 - none
