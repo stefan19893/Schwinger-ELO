@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from src import cli
-from src.config import REPO_ROOT, Config, load_config
+from src.config import REPO_ROOT, SAMPLE_DATA_DIR, Config, load_config
 
 
 @pytest.fixture(autouse=True)
@@ -105,9 +105,74 @@ def test_build_is_idempotent(tmp_path: Path) -> None:
 
 def test_build_refuses_unsafe_dist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(REPO_ROOT))
-    with pytest.raises(ValueError):
-        cli.main(["build"])
+    assert cli.main(["build"]) == 1
+    assert (REPO_ROOT / "src").is_dir()
+
+
+def test_build_refuses_foreign_nonempty_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = tmp_path / "precious"
+    target.mkdir()
+    (target / "keep.txt").write_text("x")
+    monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(target))
+    assert cli.main(["build"]) == 1
+    assert (target / "keep.txt").is_file()
+
+
+def test_build_replaces_previous_build_and_empty_dir(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()  # empty dir is fine
+    assert cli.main(["build"]) == 0
+    (dist / "stale.json").write_text("{}")
+    assert cli.main(["build"]) == 0  # previous build (has marker) is replaced
+    assert not (dist / "stale.json").exists()
 
 
 def test_serve_without_dist_fails(tmp_path: Path) -> None:
     assert cli.main(["serve"]) == 1
+
+
+@pytest.mark.parametrize("port", ["0", "99999", "-1"])
+def test_serve_rejects_invalid_port(port: str) -> None:
+    assert cli.main(["serve", "--port", port]) == 2
+
+
+def test_serve_port_in_use_fails_cleanly(tmp_path: Path) -> None:
+    import socket
+
+    assert cli.main(["build"]) == 0
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        assert cli.main(["serve", "--port", str(port)]) == 1
+
+
+# ------------------------------------------------------------------ sample isolation
+def test_sample_uses_separate_data_dir() -> None:
+    assert load_config({"sample": True}, env={}).data_dir == SAMPLE_DATA_DIR
+    assert load_config(env={}).data_dir == REPO_ROOT / "data"
+    # explicit data dir (flag or env) still wins
+    assert load_config({"sample": True, "data_dir": "/d"}, env={}).data_dir == Path("/d")
+    env = {"SCHWINGEN_SAMPLE": "1", "SCHWINGEN_DATA_DIR": "/e"}
+    assert load_config(env=env).data_dir == Path("/e")
+
+
+# ------------------------------------------------------------------ ignored options
+@pytest.mark.parametrize("argv, warned", [
+    (["parse", "--skip-crawl"], "--skip-crawl"),
+    (["crawl", "--skip-crawl"], "--skip-crawl"),
+    (["elo", "--refresh"], "--refresh"),
+])
+def test_warns_on_ignored_options(argv: list[str], warned: str, tmp_path: Path,
+                                  caplog: pytest.LogCaptureFixture) -> None:
+    assert cli.main([*argv, "--data-dir", str(tmp_path)]) == 0
+    assert any(warned in r.getMessage() and "no effect" in r.getMessage() for r in caplog.records)
+
+
+def test_no_warning_for_scoped_options(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    assert cli.main(["all", "--sample", "--skip-crawl", "--refresh", "--data-dir", str(tmp_path)]) == 0
+    assert not any("no effect" in r.getMessage() for r in caplog.records)
+
+
+def test_user_agent_has_contact_url() -> None:
+    assert "https://github.com/" in Config().user_agent

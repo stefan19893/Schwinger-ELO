@@ -12,6 +12,7 @@ htmlcov/
 
 # Generated data (never committed)
 data/raw/
+data/sample/
 data/processed/
 data/*.db
 data/*.db-journal

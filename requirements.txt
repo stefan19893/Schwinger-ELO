@@ -12,7 +12,7 @@ tqdm>=4.66,<5
 pandas>=2.2,<3
 numpy>=2.1,<3
 scipy>=1.14,<2
-pyarrow>=18,<23
+pyarrow>=18  # no upper bound: majors ship ~quarterly, Parquet API we use is stable
 
 # Tests
 pytest>=8,<9

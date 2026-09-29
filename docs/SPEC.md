@@ -136,7 +136,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |
 
 Global options:
-- `--sample`: use the committed offline dataset in `tests/fixtures/sample/` instead of the network. The full pipeline finishes in well under a minute.
+- `--sample`: use the committed offline dataset in `tests/fixtures/sample/` instead of the network. The full pipeline finishes in well under a minute. Outputs go to `data/sample/` (unless `--data-dir` is given) so a sample run never overwrites real data.
 - `--data-dir`: use a different data directory.
 - `--skip-crawl`: in `all`, use only data that is already cached.
 
