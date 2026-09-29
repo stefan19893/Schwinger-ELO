@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 3 — finalize `.gitignore`.
+**Next action:** Phase 0, task 4 — create venv, install deps, smoke test.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
