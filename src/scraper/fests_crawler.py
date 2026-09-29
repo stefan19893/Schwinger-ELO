@@ -24,7 +24,7 @@ from urllib.parse import urljoin
 from tqdm import tqdm
 
 from src.db import Festival, UpsertStats, upsert_festivals
-from src.scraper.client import HttpClient
+from src.scraper.client import CacheMiss, HttpClient
 
 log = logging.getLogger("schwingen.crawl")
 
@@ -294,6 +294,7 @@ class CrawlReport:
     skipped: list[Skipped] = field(default_factory=list)
     future: int = 0
     upsert: UpsertStats = field(default_factory=UpsertStats)
+    cache_misses: list[str] = field(default_factory=list)  # --offline: queries not cached
 
     def counts(self) -> Counter[tuple[int, str]]:
         """(year, category or kind) -> number of stored festivals."""
@@ -301,7 +302,14 @@ class CrawlReport:
                        for f in self.festivals.values())
 
 
+def listing_final_after(year: int, grace_days: int) -> _dt.datetime:
+    """Moment after which a year's listing is considered final (Dec 31 + grace)."""
+    end = _dt.datetime(year, 12, 31, 23, 59, 59, tzinfo=_dt.timezone.utc)
+    return end + _dt.timedelta(days=grace_days)
+
+
 def iter_pages(client: HttpClient, tid: int, year: int, *, max_age: float | None,
+               final_after: _dt.datetime | None = None,
                max_requests: int | None = None) -> Iterator[dict[str, Any]]:
     url: str | None = API_URL
     params: list[tuple[str, str]] | None = listing_params(tid, year)
@@ -311,7 +319,7 @@ def iter_pages(client: HttpClient, tid: int, year: int, *, max_age: float | None
             return
         if max_requests is not None and client.stats.network_requests >= max_requests:
             raise CrawlLimitExceeded(f"request cap {max_requests} reached")
-        res = client.get(url, params, max_age=max_age)
+        res = client.get(url, params, max_age=max_age, final_after=final_after)
         if res.url in seen:
             log.warning("paging loop at %s - stopping", res.url)
             return
@@ -331,15 +339,18 @@ def crawl_festivals(
     *,
     today: _dt.date | None = None,
     current_max_age: float | None = 24 * 3600,
+    final_grace_days: int = 60,
     categories: Iterable[int] = tuple(SOURCE_CATEGORIES),
     max_requests: int | None = None,
     progress: bool = False,
 ) -> CrawlReport:
     """Crawl listings for ``from_year..to_year`` and upsert into ``festivals``.
 
-    Past seasons' listing pages are served from cache forever; pages for the
-    current season (year >= today's year) are re-fetched once older than
-    ``current_max_age`` so newly held festivals are discovered. Festivals dated
+    A year's listing pages are re-fetched once older than ``current_max_age``
+    until a copy fetched after Dec 31 of that year + ``final_grace_days`` exists
+    (late festivals, late PDF uploads); from then on the cache is final.
+    With an offline client, uncached queries are recorded in
+    ``report.cache_misses`` instead of aborting. Festivals dated
     after ``today`` are counted but not stored (no results yet). Results are
     persisted after every year, so an interrupted crawl keeps finished years.
     """
@@ -349,13 +360,22 @@ def crawl_festivals(
     bar = tqdm(total=(to_year - from_year + 1) * len(tids), unit="query",
                desc="crawl", disable=not progress)
     for year in range(from_year, to_year + 1):
-        max_age = current_max_age if year >= today.year else None
+        final_after = listing_final_after(year, final_grace_days)
         year_fests: dict[int, Festival] = {}
         for tid in tids:
             bar.update(1)
             report.queries += 1
-            for doc in iter_pages(client, tid, year, max_age=max_age,
-                                  max_requests=max_requests):
+            pages = iter_pages(client, tid, year, max_age=current_max_age,
+                               final_after=final_after, max_requests=max_requests)
+            while True:
+                try:
+                    doc = next(pages)
+                except StopIteration:
+                    break
+                except CacheMiss as exc:
+                    log.warning("crawl: tid=%d year=%d not in cache (offline): %s", tid, year, exc)
+                    report.cache_misses.append(f"tid={tid} year={year}")
+                    break
                 report.pages += 1
                 parsed = parse_listing(doc)
                 for s in parsed.skipped:

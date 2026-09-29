@@ -179,10 +179,19 @@ def test_user_agent_has_contact_url() -> None:
 
 
 # ------------------------------------------------------------------ crawl
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record instead of performing the client's politeness sleeps."""
+    import time
+
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    return slept
+
+
 def _crawl_cfg(tmp_path: Path, **kw: object) -> Config:
     base: dict[str, object] = {"data_dir": tmp_path / "data", "from_year": 2011,
-                               "to_year": 2011, "request_delay_min": 0.001,
-                               "request_delay_max": 0.002}
+                               "to_year": 2011}
     return load_config({**base, **kw}, env={})
 
 
@@ -195,7 +204,7 @@ def test_crawl_sample_is_offline_and_fills_db(tmp_path: Path) -> None:
     assert not (tmp_path / "d" / "raw").exists()  # nothing fetched or cached
 
 
-def test_crawl_command_with_mock_api(tmp_path: Path) -> None:
+def test_crawl_command_with_mock_api(tmp_path: Path, no_sleep: list[float]) -> None:
     import httpx
 
     from src.db import connect, load_festivals
@@ -213,7 +222,7 @@ def test_crawl_command_with_mock_api(tmp_path: Path) -> None:
     assert len(api.requests) == 10
 
 
-def test_crawl_command_request_cap(tmp_path: Path) -> None:
+def test_crawl_command_request_cap(tmp_path: Path, no_sleep: list[float]) -> None:
     import httpx
 
     from tests.test_fests_crawler import FakeApi
@@ -224,9 +233,56 @@ def test_crawl_command_request_cap(tmp_path: Path) -> None:
     assert len(api.requests) == 2
 
 
-def test_crawl_command_http_error_exits_1(tmp_path: Path) -> None:
+def test_crawl_command_http_error_exits_1(tmp_path: Path, no_sleep: list[float]) -> None:
     import httpx
 
     cfg = _crawl_cfg(tmp_path, max_retries=1)
     transport = httpx.MockTransport(lambda req: httpx.Response(404))
     assert cli.cmd_crawl(cfg, transport=transport) == 1
+
+
+# ------------------------------------------------------------------ politeness floor / offline
+@pytest.mark.parametrize("env", [
+    {"SCHWINGEN_REQUEST_DELAY_MIN": "0.1"},
+    {"SCHWINGEN_REQUEST_DELAY_MIN": "0", "SCHWINGEN_REQUEST_DELAY_MAX": "0"},
+    {"SCHWINGEN_REQUEST_DELAY_MIN": "0.49"},
+])
+def test_delay_floor_rejects_env_override(env: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="politeness"):
+        load_config(env=env)
+
+
+def test_delay_floor_rejected_by_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHWINGEN_REQUEST_DELAY_MIN", "0.01")
+    assert cli.main(["crawl", "--sample"]) == 2
+
+
+def test_delay_at_floor_is_allowed() -> None:
+    cfg = load_config(env={"SCHWINGEN_REQUEST_DELAY_MIN": "0.5",
+                           "SCHWINGEN_REQUEST_DELAY_MAX": "0.5"})
+    assert cfg.request_delay_min == 0.5
+
+
+def test_offline_flag_and_env() -> None:
+    args = cli.build_parser().parse_args(["crawl", "--offline"])
+    assert cli.config_from_args(args).offline is True
+    assert load_config(env={"SCHWINGEN_OFFLINE": "1"}).offline is True
+    assert load_config(env={}).offline is False
+    with pytest.raises(ValueError):
+        load_config({"offline": True, "refresh": True}, env={})
+
+
+def test_crawl_offline_uses_cache_and_reports_misses(tmp_path: Path,
+                                                     no_sleep: list[float]) -> None:
+    import httpx
+
+    from tests.test_fests_crawler import FakeApi
+
+    api = FakeApi()
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path), transport=httpx.MockTransport(api)) == 0
+    n = len(api.requests)
+    offline = _crawl_cfg(tmp_path, offline=True)
+    assert cli.cmd_crawl(offline, transport=httpx.MockTransport(api)) == 0  # all cached
+    wider = _crawl_cfg(tmp_path, offline=True, to_year=2012)
+    assert cli.cmd_crawl(wider, transport=httpx.MockTransport(api)) == 1  # 2012 not cached
+    assert len(api.requests) == n  # offline never fetched

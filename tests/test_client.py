@@ -221,3 +221,111 @@ def test_real_network_is_blocked_in_tests(tmp_path: Path) -> None:
     with HttpClient(tmp_path, UA, retry_wait=wait_none(), sleep=lambda s: None) as c:
         with pytest.raises(RuntimeError, match="forbidden"):
             c.get("https://backend-api.schlussgang.ch/jsonapi/node/event")
+
+
+# ------------------------------------------------------------------ Retry-After
+NOW = __import__("datetime").datetime(2026, 9, 29, 12, 0, 0,
+                                      tzinfo=__import__("datetime").timezone.utc)
+
+
+def _retry_after_client(tmp_path: Path, headers: list[dict[str, str]], ft: FakeTime,
+                        **kw: object) -> tuple[HttpClient, list[httpx.Request]]:
+    calls: list[httpx.Request] = []
+    responses = iter([httpx.Response(429, headers=h) for h in headers]
+                     + [httpx.Response(200, content=b"ok")])
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        return next(responses)
+
+    c = make_client(tmp_path, handler, ft=ft, utcnow=lambda: NOW, **kw)
+    return c, calls
+
+
+@pytest.mark.parametrize(("header", "expected"), [
+    ("7", 7.0),                                   # delta-seconds
+    ("Tue, 29 Sep 2026 12:00:42 GMT", 42.0),      # HTTP-date
+    ("100000", 300.0),                            # capped at retry_after_max
+])
+def test_retry_after_is_honoured(tmp_path: Path, header: str, expected: float) -> None:
+    ft = FakeTime()
+    c, calls = _retry_after_client(tmp_path, [{"Retry-After": header}], ft)
+    with c:
+        assert c.get(URL).content == b"ok"
+    assert len(calls) == 2
+    assert expected in ft.sleeps  # backoff sleep == Retry-After
+    assert sum(ft.sleeps) == pytest.approx(expected)  # throttle already satisfied by it
+
+
+def test_retry_after_cap_is_configurable(tmp_path: Path) -> None:
+    ft = FakeTime()
+    c, _ = _retry_after_client(tmp_path, [{"Retry-After": "120"}], ft, retry_after_max=30.0)
+    with c:
+        c.get(URL)
+    assert max(ft.sleeps) == 30.0
+
+
+@pytest.mark.parametrize("header", ["0", "garbage", "Tue, 29 Sep 2026 11:00:00 GMT"])
+def test_retry_after_never_below_throttle(tmp_path: Path, header: str) -> None:
+    """0 s, invalid or past Retry-After still waits the normal 0.5-1.0 s."""
+    ft = FakeTime()
+    c, calls = _retry_after_client(tmp_path, [{"Retry-After": header}], ft)
+    with c:
+        c.get(URL)
+    assert len(calls) == 2
+    assert 0.5 <= sum(ft.sleeps) <= 1.0
+
+
+def test_parse_retry_after() -> None:
+    from src.scraper.client import parse_retry_after
+
+    assert parse_retry_after(None, NOW) is None
+    assert parse_retry_after(" 12 ", NOW) == 12.0
+    assert parse_retry_after("-5", NOW) is None
+    assert parse_retry_after("Tue, 29 Sep 2026 12:01:00 GMT", NOW) == 60.0
+
+
+# ------------------------------------------------------------------ final_after / floor
+def test_final_after_makes_old_cache_permanent(tmp_path: Path) -> None:
+    import datetime as dt
+
+    calls: list[httpx.Request] = []
+    clock = {"now": dt.datetime(2026, 1, 10, tzinfo=dt.timezone.utc)}
+    final = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    with make_client(tmp_path, ok_handler(calls), utcnow=lambda: clock["now"]) as c:
+        c.get(URL)                                    # fetched 2026-01-10 (> final)
+        clock["now"] = dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc)
+        assert c.get(URL, max_age=60, final_after=final).from_cache
+        assert not c.get(URL, max_age=60).from_cache  # without final_after: stale
+    assert len(calls) == 2
+
+
+def test_client_enforces_delay_floor(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        HttpClient(tmp_path, UA, delay_min=0.1, delay_max=0.2)
+
+
+# ------------------------------------------------------------------ conftest socket guard
+@pytest.mark.parametrize("addr", [("93.184.216.34", 80), ("2606:2800:220:1::1", 443, 0, 0),
+                                  ("backend-api.schlussgang.ch", 443)])
+def test_socket_guard_blocks_remote_connect(addr: tuple[object, ...]) -> None:
+    import socket
+
+    fam = socket.AF_INET6 if ":" in str(addr[0]) else socket.AF_INET
+    with socket.socket(fam, socket.SOCK_STREAM) as s:
+        with pytest.raises(RuntimeError, match="forbidden"):
+            s.connect(addr)
+        with pytest.raises(RuntimeError, match="forbidden"):
+            s.connect_ex(addr)
+
+
+def test_socket_guard_allows_loopback() -> None:
+    import socket
+
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        with socket.socket() as client:
+            client.connect(server.getsockname())
+            conn, _ = server.accept()
+            conn.close()

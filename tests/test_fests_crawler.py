@@ -195,20 +195,85 @@ def test_refresh_refetches(tmp_path: Path) -> None:
     assert len(api.requests) == 2
 
 
-def test_current_season_listing_expires(tmp_path: Path) -> None:
+class FakeUtc:
+    def __init__(self, iso: str) -> None:
+        self.now = dt.datetime.fromisoformat(iso)
+
+    def set(self, iso: str) -> None:
+        self.now = dt.datetime.fromisoformat(iso)
+
+    def __call__(self) -> dt.datetime:
+        return self.now
+
+
+def test_listing_final_after() -> None:
+    assert fc.listing_final_after(2025, 60) == dt.datetime(
+        2026, 3, 1, 23, 59, 59, tzinfo=dt.timezone.utc)
+    assert fc.listing_final_after(2025, 0).date() == dt.date(2025, 12, 31)
+
+
+def test_year_listing_stays_fresh_until_fetched_after_grace(tmp_path: Path) -> None:
+    """Year rollover: 2025 listings expire after 24 h until fetched after 2026-03-01."""
     api = FakeApi()
     conn = connect(tmp_path / "s.db")
-    today = dt.date(2025, 12, 31)
+    clock = FakeUtc("2025-12-31T10:00:00+00:00")
+
+    def crawl() -> int:
+        before = len(api.requests)
+        with make_client(tmp_path, api, utcnow=clock) as c:
+            fc.crawl_festivals(c, conn, 2025, 2025, today=clock().date(), categories=[15],
+                               current_max_age=24 * 3600, final_grace_days=60)
+        return len(api.requests) - before
+
+    assert crawl() == 2                       # first fetch (2 pages)
+    clock.set("2026-01-01T09:00:00+00:00")
+    assert crawl() == 0                       # < 24 h old
+    clock.set("2026-01-02T11:00:00+00:00")
+    assert crawl() == 2                       # > 24 h and still within the grace period
+    clock.set("2026-03-05T08:00:00+00:00")
+    assert crawl() == 2                       # cached copy predates the final moment
+    clock.set("2027-06-01T08:00:00+00:00")
+    assert crawl() == 0                       # fetched after 2026-03-01: final forever
+    clock.set("2031-01-01T08:00:00+00:00")
+    assert crawl() == 0
+
+
+def test_past_year_cached_before_final_is_refetched_once(tmp_path: Path) -> None:
+    """A listing cached during its own season is not trusted forever (review finding)."""
+    api = FakeApi()
+    conn = connect(tmp_path / "s.db")
+    clock = FakeUtc("2011-09-01T00:00:00+00:00")
+    with make_client(tmp_path, api, utcnow=clock) as c:
+        fc.crawl_festivals(c, conn, 2011, 2011, today=dt.date(2011, 9, 1), categories=[12])
+    clock.set("2026-09-29T00:00:00+00:00")
+    for _ in range(2):
+        with make_client(tmp_path, api, utcnow=clock) as c:
+            fc.crawl_festivals(c, conn, 2011, 2011, today=TODAY, categories=[12])
+    assert len(api.requests) == 2  # initial + exactly one refresh
+
+
+def test_offline_reports_cache_misses(tmp_path: Path) -> None:
+    api = FakeApi()
+    conn = connect(tmp_path / "s.db")
     with make_client(tmp_path, api) as c:
-        fc.crawl_festivals(c, conn, 2025, 2025, today=today, categories=[15],
-                           current_max_age=3600)
-        fc.crawl_festivals(c, conn, 2025, 2025, today=today, categories=[15],
-                           current_max_age=3600)
-    assert len(api.requests) == 2  # fresh cache: no refetch
-    with make_client(tmp_path, api) as c:
-        fc.crawl_festivals(c, conn, 2025, 2025, today=today, categories=[15],
-                           current_max_age=-1)  # everything stale
-    assert len(api.requests) == 4
+        fc.crawl_festivals(c, conn, 2011, 2011, today=TODAY, categories=[12])
+    with make_client(tmp_path, api, offline=True) as c:
+        rep = fc.crawl_festivals(c, conn, 2011, 2012, today=TODAY, categories=[12, 14])
+    assert len(api.requests) == 1  # offline run made no requests
+    assert rep.cache_misses == ["tid=14 year=2011", "tid=12 year=2012", "tid=14 year=2012"]
+    assert len(rep.festivals) == 6  # cached 2011 Bergkranz still processed
+
+
+def test_offline_serves_stale_cache(tmp_path: Path) -> None:
+    api = FakeApi()
+    conn = connect(tmp_path / "s.db")
+    clock = FakeUtc("2026-06-01T00:00:00+00:00")
+    with make_client(tmp_path, api, utcnow=clock) as c:
+        fc.crawl_festivals(c, conn, 2026, 2026, today=TODAY, categories=[12])
+    clock.set("2026-09-29T00:00:00+00:00")  # stale, but offline must not fetch
+    with make_client(tmp_path, api, utcnow=clock, offline=True) as c:
+        rep = fc.crawl_festivals(c, conn, 2026, 2026, today=TODAY, categories=[12])
+    assert len(api.requests) == 1 and rep.cache_misses == []
 
 
 def test_future_festivals_counted_not_stored(tmp_path: Path) -> None:

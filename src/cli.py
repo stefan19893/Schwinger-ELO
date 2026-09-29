@@ -37,15 +37,16 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
     from src.scraper import fests_crawler as fc
     from src.scraper.client import FetchError, client_from_config
 
-    log.info("crawl: years %d-%d, refresh=%s, cache=%s, db=%s",
-             cfg.from_year, cfg.to_year, cfg.refresh, cfg.raw_dir, cfg.db_path)
+    log.info("crawl: years %d-%d, refresh=%s, offline=%s, cache=%s, db=%s",
+             cfg.from_year, cfg.to_year, cfg.refresh, cfg.offline, cfg.raw_dir, cfg.db_path)
     conn = connect(cfg.db_path)
     try:
-        with client_from_config(cfg, transport=transport, offline=False) as client:
+        with client_from_config(cfg, transport=transport, offline=cfg.offline) as client:
             try:
                 report = fc.crawl_festivals(
                     client, conn, cfg.from_year, cfg.to_year,
                     current_max_age=cfg.listing_max_age_hours * 3600,
+                    final_grace_days=cfg.listing_final_grace_days,
                     max_requests=cfg.crawl_max_requests,
                     progress=sys.stderr.isatty(),
                 )
@@ -62,6 +63,12 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
     _log_crawl_report(report)
     log.info("crawl: %d network requests (%d retries), %d cache hits",
              stats.network_requests, stats.retries, stats.cache_hits)
+    if report.cache_misses:
+        log.error("crawl: --offline: %d listing queries not in cache (%s) - run without "
+                  "--offline to fetch them", len(report.cache_misses),
+                  ", ".join(report.cache_misses[:10])
+                  + (" ..." if len(report.cache_misses) > 10 else ""))
+        return 1
     return 0
 
 
@@ -190,6 +197,8 @@ def _add_global_options(p: argparse.ArgumentParser, suppress: bool) -> None:
                    help="in `all`: use only already cached data")
     p.add_argument("--refresh", action="store_true", default=d(False),
                    help="re-fetch pages even if cached")
+    p.add_argument("--offline", action="store_true", default=d(False),
+                   help="crawl from the data/raw cache only; report cache misses, never fetch")
     p.add_argument("-v", "--verbose", action="store_true", default=d(False),
                    help="debug logging")
 
@@ -229,6 +238,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         # Flags only override when set; otherwise env/defaults apply.
         "sample": True if args.sample else None,
         "refresh": True if args.refresh else None,
+        "offline": True if args.offline else None,
     }
     return load_config(overrides)
 
@@ -247,6 +257,7 @@ COMMANDS: dict[str, Callable[[Config], int]] = {
 _OPTION_SCOPE: dict[str, frozenset[str]] = {
     "skip_crawl": frozenset({"all"}),
     "refresh": frozenset({"crawl", "all"}),
+    "offline": frozenset({"crawl", "all"}),
 }
 
 

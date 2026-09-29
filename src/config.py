@@ -22,6 +22,9 @@ REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 # touch the real SQLite db / Parquet files in data/.
 SAMPLE_DATA_DIR: Path = REPO_ROOT / "data" / "sample"
 
+# Politeness floor (spec §4.1): no configuration may go below this delay.
+MIN_REQUEST_DELAY = 0.5
+
 # Festival category -> K-factor (spec §4.2.3).
 DEFAULT_K_FACTORS: dict[str, float] = {
     "ESAF": 48.0,
@@ -44,6 +47,7 @@ class Config:
     # --- Run mode ----------------------------------------------------------
     sample: bool = False
     refresh: bool = False
+    offline: bool = False  # crawl from data/raw only; cache misses are reported, never fetched
 
     # --- Crawl range -------------------------------------------------------
     from_year: int = 2011
@@ -56,8 +60,13 @@ class Config:
     max_retries: int = 4
     # Safety cap on network requests per crawl run (listing pages only in Phase 1).
     crawl_max_requests: int = 1500
-    # Listing pages of the current season are re-fetched when older than this.
+    # A year's listing pages are re-fetched when older than this, until they
+    # were fetched after Dec 31 of that year + listing_final_grace_days
+    # (late festivals / late PDF uploads); after that they are cached forever.
     listing_max_age_hours: float = 24.0
+    listing_final_grace_days: int = 60
+    # Upper bound for honouring a server's Retry-After header (seconds).
+    retry_after_max: float = 300.0
     user_agent: str = (
         "Schwinger-ELO/0.1 (non-commercial research project; "
         "historical Schwingen ELO ratings; "
@@ -147,8 +156,16 @@ def load_config(
     cfg = Config(**values)
     if cfg.from_year > cfg.to_year:
         raise ValueError(f"from_year {cfg.from_year} > to_year {cfg.to_year}")
-    if not 0 < cfg.request_delay_min <= cfg.request_delay_max:
-        raise ValueError("require 0 < request_delay_min <= request_delay_max")
+    if not MIN_REQUEST_DELAY <= cfg.request_delay_min <= cfg.request_delay_max:
+        raise ValueError(f"require {MIN_REQUEST_DELAY} <= request_delay_min <= "
+                         f"request_delay_max (politeness floor)")
+    if cfg.offline and cfg.refresh:
+        raise ValueError("--offline and --refresh are mutually exclusive")
+    if cfg.listing_final_grace_days < 0 or cfg.listing_max_age_hours <= 0:
+        raise ValueError("listing_final_grace_days must be >= 0 and "
+                         "listing_max_age_hours > 0")
+    if cfg.retry_after_max <= 0:
+        raise ValueError("retry_after_max must be > 0")
     if not 1 <= cfg.port <= 65535:
         raise ValueError(f"port {cfg.port} out of range 1-65535")
     return cfg

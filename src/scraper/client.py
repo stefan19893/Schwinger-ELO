@@ -5,10 +5,13 @@ Politeness rules enforced here, so callers cannot forget them:
 * a random 0.5-1.0 s delay (configurable) between *network* requests,
 * the project User-Agent on every request,
 * retries with exponential backoff (``tenacity``) on transport errors,
-  HTTP 429 and 5xx,
+  HTTP 429 and 5xx, honouring ``Retry-After`` (capped),
 * every successful response is cached under ``cache_dir`` and served from
   there on later calls; the network is only hit again with ``refresh=True``
-  or when a caller passes ``max_age`` and the cached copy is older.
+  or when a caller passes ``max_age`` and the cached copy is older (unless it
+  was fetched after ``final_after``, i.e. the content can no longer change).
+* ``offline=True`` never touches the network: any cached copy (even stale)
+  is served, a missing one raises :class:`CacheMiss`.
 
 Cache layout: ``<cache_dir>/<host>/<sha[:2]>/<sha>.body`` + ``<sha>.meta.json``
 where ``sha`` is the SHA-256 of the full request URL (query included).
@@ -17,6 +20,7 @@ where ``sha`` is the SHA-256 of the full request URL (query included).
 from __future__ import annotations
 
 import datetime as _dt
+import email.utils
 import hashlib
 import json
 import logging
@@ -30,12 +34,15 @@ from typing import Any
 
 import httpx
 from tenacity import (
+    RetryCallState,
     Retrying,
     retry_if_exception,
     stop_after_attempt,
     wait_exponential_jitter,
 )
 from tenacity.wait import wait_base
+
+from src.config import MIN_REQUEST_DELAY
 
 log = logging.getLogger("schwingen.client")
 
@@ -58,9 +65,41 @@ class CacheMiss(RuntimeError):
 
 
 class _RetryableStatus(Exception):
-    def __init__(self, status: int) -> None:
+    def __init__(self, status: int, retry_after: float | None = None) -> None:
         super().__init__(f"HTTP {status}")
         self.status = status
+        self.retry_after = retry_after
+
+
+def parse_retry_after(value: str | None, now: _dt.datetime) -> float | None:
+    """``Retry-After`` as seconds (delta-seconds or HTTP-date); None if absent/invalid."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_dt.timezone.utc)
+    return max(0.0, (when - now).total_seconds())
+
+
+class _RetryAfterWait(wait_base):
+    """Backoff that waits at least the server's Retry-After (capped at ``cap``)."""
+
+    def __init__(self, base: wait_base, cap: float) -> None:
+        self.base = base
+        self.cap = cap
+
+    def __call__(self, retry_state: RetryCallState) -> float:
+        wait = float(self.base(retry_state))
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        if isinstance(exc, _RetryableStatus) and exc.retry_after is not None:
+            wait = max(wait, min(exc.retry_after, self.cap))
+        return wait
 
 
 @dataclass(frozen=True)
@@ -109,12 +148,14 @@ class HttpClient:
         offline: bool = False,
         transport: httpx.BaseTransport | None = None,
         retry_wait: wait_base | None = None,
-        sleep: Callable[[float], None] = time.sleep,
+        retry_after_max: float = 300.0,
+        sleep: Callable[[float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        utcnow: Callable[[], _dt.datetime] | None = None,
         rng: random.Random | None = None,
     ) -> None:
-        if not 0 < delay_min <= delay_max:
-            raise ValueError("require 0 < delay_min <= delay_max")
+        if not MIN_REQUEST_DELAY <= delay_min <= delay_max:
+            raise ValueError(f"require {MIN_REQUEST_DELAY} <= delay_min <= delay_max")
         self.cache_dir = Path(cache_dir)
         self.delay_min = delay_min
         self.delay_max = delay_max
@@ -122,9 +163,12 @@ class HttpClient:
         self.refresh = refresh
         self.offline = offline
         self.stats = ClientStats()
-        self._retry_wait = retry_wait or wait_exponential_jitter(initial=2, max=60)
-        self._sleep = sleep
+        self._retry_wait = _RetryAfterWait(
+            retry_wait or wait_exponential_jitter(initial=2, max=60), retry_after_max)
+        # Looked up at call time so tests can patch time.sleep.
+        self._sleep = sleep or (lambda seconds: time.sleep(seconds))
         self._clock = clock
+        self._utcnow = utcnow or (lambda: _dt.datetime.now(_dt.timezone.utc))
         self._rng = rng or random.Random()
         self._last_request: float | None = None
         self._http = httpx.Client(
@@ -171,10 +215,14 @@ class HttpClient:
             tmp.write_bytes(data)
             os.replace(tmp, path)
 
-    @staticmethod
-    def _age_seconds(fetched_at: str) -> float:
-        then = _dt.datetime.fromisoformat(fetched_at)
-        return (_dt.datetime.now(_dt.timezone.utc) - then).total_seconds()
+    def _is_fresh(self, cached: FetchResult, max_age: float | None,
+                  final_after: _dt.datetime | None) -> bool:
+        if max_age is None:
+            return True
+        fetched = _dt.datetime.fromisoformat(cached.fetched_at)
+        if final_after is not None and fetched > final_after:
+            return True  # fetched after the content was final: never stale
+        return (self._utcnow() - fetched).total_seconds() <= max_age
 
     # ------------------------------------------------------------ network
     def _throttle(self) -> None:
@@ -192,8 +240,10 @@ class HttpClient:
         finally:
             self._last_request = self._clock()
         if resp.status_code in RETRY_STATUS:
-            log.warning("HTTP %d for %s - will retry", resp.status_code, url)
-            raise _RetryableStatus(resp.status_code)
+            retry_after = parse_retry_after(resp.headers.get("retry-after"), self._utcnow())
+            log.warning("HTTP %d for %s - will retry%s", resp.status_code, url,
+                        f" (Retry-After {retry_after:.0f}s)" if retry_after is not None else "")
+            raise _RetryableStatus(resp.status_code, retry_after)
         return resp
 
     def _fetch_network(self, url: str) -> httpx.Response:
@@ -216,18 +266,20 @@ class HttpClient:
 
     # ------------------------------------------------------------ public
     def get(self, url: str, params: QueryParams = None, *,
-            max_age: float | None = None) -> FetchResult:
+            max_age: float | None = None,
+            final_after: _dt.datetime | None = None) -> FetchResult:
         """GET ``url`` (+ ``params``), from cache unless refresh/stale.
 
-        ``max_age`` (seconds): treat a cached copy older than this as stale.
+        ``max_age`` (seconds): treat a cached copy older than this as stale,
+        unless it was fetched after ``final_after`` (aware datetime).
         Only non-2xx responses raise :class:`FetchError`; they are not cached.
         """
         full = build_url(url, params)
         if not full.startswith(("http://", "https://")):
             raise ValueError(f"not an http(s) URL: {full}")
         cached = None if self.refresh else self._read_cache(full)
-        if cached is not None and (max_age is None
-                                   or self._age_seconds(cached.fetched_at) <= max_age):
+        if cached is not None and (self.offline
+                                   or self._is_fresh(cached, max_age, final_after)):
             self.stats.cache_hits += 1
             return cached
         if self.offline:
@@ -237,7 +289,7 @@ class HttpClient:
             raise FetchError(full, resp.status_code, f"HTTP {resp.status_code}")
         res = FetchResult(
             url=full, status=resp.status_code, content=resp.content,
-            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            fetched_at=self._utcnow().isoformat(timespec="seconds"),
             from_cache=False,
         )
         self._write_cache(res, resp.headers.get("content-type"))
@@ -255,7 +307,8 @@ def client_from_config(cfg: Any, *, transport: httpx.BaseTransport | None = None
         delay_max=cfg.request_delay_max,
         timeout=cfg.request_timeout,
         max_retries=cfg.max_retries,
+        retry_after_max=cfg.retry_after_max,
         refresh=cfg.refresh,
-        offline=cfg.sample if offline is None else offline,
+        offline=(cfg.sample or cfg.offline) if offline is None else offline,
         transport=transport,
     )
