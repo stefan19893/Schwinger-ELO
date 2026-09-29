@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 4 — create venv, install deps, smoke test.
+**Next action:** Phase 0, task 5 — `src/config.py` + `src/cli.py` stubs.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -23,6 +23,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Repo root `Schwinger-ELO/` is the project root (spec §3 updated accordingly).
 - 2026-09-29 — Added `pyarrow` to requirements — pandas needs a Parquet engine for `data/processed/*.parquet`.
 - 2026-09-29 — Dependencies listed only in `requirements.txt`; `pyproject.toml` holds metadata + pytest config — single source for the hash-based reinstall in `deploy_local.sh` and CI.
+- 2026-09-29 — When `ensurepip` is unavailable (Debian/Ubuntu without `python3.X-venv`), create `.venv` with `--without-pip` and bootstrap pip via `https://bootstrap.pypa.io/get-pip.py` — the dev machine (WSL, Python 3.14) lacks ensurepip and installing the apt package needs sudo. User may prefer `sudo apt install python3.14-venv` instead.
 
 ## Open questions
 - Which source is primary (schlussgang.ch vs esv.ch), and do their robots.txt / terms allow crawling? → answer in Phase 1.
