@@ -1,15 +1,15 @@
 # Project State
 
-**Last updated:** 2026-09-29
-**Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 6 — data-quality report (bouts per year, draw rate, parse failures) in handoff notes.
+**Last updated:** 2026-09-30
+**Current phase:** 2 — Bout parser (in review, branch `phase-2-parser`)
+**Next action:** Phase 2 in review — run the `phase-reviewer` agent against the Phase 2 exit criteria, then ask the user before starting Phase 3. User to confirm: borderline-event ELO defaults (`elo_exclude_flags = team,ausland`), `forfeit_injury` exclusion, `parse_min_pair_rate = 0.5`.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | in progress |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | in review |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
@@ -71,6 +71,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-30 — **AWAITING USER CONFIRMATION — borderline events:** all are parsed and stored; proposed ELO defaults via `elo_exclude_flags = "team,ausland"`: team competitions (Mannschaftsmeisterschaft) and Ausland festivals (Kanada/USA clubs, 52, mostly without statistic PDF) excluded; Jungaktive/U20 (11, 2021) and Hallenschwinget (142) included — U20/Jungaktive are regular active Schwinger in an age-limited field, indoor festivals are normal Rangschwinget. Changeable without code (`SCHWINGEN_ELO_EXCLUDE_FLAGS`).
 
 ## Open questions
+- Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang?
+- Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse (multicol/blocks variants) and ~1 % of entries have unresolved opponents — worth a parser v2 pass?
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
 - schlussgang lists only 3 Regional festivals for 2011 (vs ~100/year later) — accept the gap, or start ratings with a 2011 burn-in season? → decide in Phase 4.
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
