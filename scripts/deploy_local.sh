@@ -20,7 +20,8 @@ Usage: scripts/deploy_local.sh [options]
   --port N       Server port (default 8000)
   -h, --help     Show this help
 
-Environment: PYTHON=/path/to/python3.x selects the interpreter (>= 3.11).
+Environment: PYTHON=/path/to/python3.x selects the interpreter (>= 3.11);
+             GET_PIP_SHA256=<hex> pins get-pip.py when pip must be bootstrapped.
 EOF
 }
 
@@ -92,6 +93,15 @@ if ! "$VPY" -m pip --version >/dev/null 2>&1; then
   GETPIP="$VENV/get-pip.py"
   "$VPY" -c 'import sys, urllib.request; urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", sys.argv[1])' "$GETPIP" \
     || die "could not download get-pip.py (network?). Alternative: sudo apt install python3-venv, then delete .venv and re-run."
+  # get-pip.py is fetched over HTTPS but has no published signature. Print its
+  # hash for auditing; set GET_PIP_SHA256 to pin it. Preferred fix: install
+  # python3.X-venv so this fallback is never needed.
+  GETPIP_SHA="$("$VPY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$GETPIP")"
+  echo "get-pip.py sha256: $GETPIP_SHA"
+  if [[ -n "${GET_PIP_SHA256:-}" && "$GETPIP_SHA" != "$GET_PIP_SHA256" ]]; then
+    rm -f "$GETPIP"
+    die "get-pip.py hash mismatch (expected GET_PIP_SHA256=$GET_PIP_SHA256)"
+  fi
   "$VPY" "$GETPIP" --quiet || die "pip bootstrap via get-pip.py failed"
   rm -f "$GETPIP"
 fi

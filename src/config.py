@@ -18,6 +18,10 @@ ENV_PREFIX = "SCHWINGEN_"
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 
+# --sample runs write here unless a data dir is given explicitly, so they never
+# touch the real SQLite db / Parquet files in data/.
+SAMPLE_DATA_DIR: Path = REPO_ROOT / "data" / "sample"
+
 # Festival category -> K-factor (spec §4.2.3).
 DEFAULT_K_FACTORS: dict[str, float] = {
     "ESAF": 48.0,
@@ -50,10 +54,10 @@ class Config:
     request_delay_max: float = 1.0
     request_timeout: float = 30.0
     max_retries: int = 4
-    # TODO(Phase 1): add a contact URL once the public repo URL is confirmed.
     user_agent: str = (
         "Schwinger-ELO/0.1 (non-commercial research project; "
-        "historical Schwingen ELO ratings)"
+        "historical Schwingen ELO ratings; "
+        "+https://github.com/stefan19893/Schwinger-ELO)"
     )
 
     # --- ELO (spec §4.2) -----------------------------------------------------
@@ -112,6 +116,7 @@ def load_config(
     """Build a Config: defaults, then ``SCHWINGEN_*`` env vars, then ``overrides``.
 
     ``None`` values in ``overrides`` are ignored so unset CLI flags fall through.
+    In sample mode ``data_dir`` defaults to :data:`SAMPLE_DATA_DIR`.
     Non-scalar fields (``k_factors``) are not overridable from the environment.
     """
     env = os.environ if env is None else env
@@ -133,9 +138,13 @@ def load_config(
         if key not in {f.name for f in dataclasses.fields(Config)}:
             raise KeyError(f"unknown config key: {key}")
         values[key] = Path(val) if isinstance(getattr(defaults, key), Path) else val
+    if values.get("sample") and "data_dir" not in values:
+        values["data_dir"] = SAMPLE_DATA_DIR
     cfg = Config(**values)
     if cfg.from_year > cfg.to_year:
         raise ValueError(f"from_year {cfg.from_year} > to_year {cfg.to_year}")
     if not 0 < cfg.request_delay_min <= cfg.request_delay_max:
         raise ValueError("require 0 < request_delay_min <= request_delay_max")
+    if not 1 <= cfg.port <= 65535:
+        raise ValueError(f"port {cfg.port} out of range 1-65535")
     return cfg

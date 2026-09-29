@@ -13,6 +13,9 @@ from src.config import REPO_ROOT, Config
 
 _IGNORED = shutil.ignore_patterns(".gitkeep", "__pycache__", "*.pyc")
 
+# Written into every build; its presence marks a directory as safe to wipe.
+BUILD_MARKER = ".nojekyll"
+
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="de">
 <head>
@@ -34,12 +37,21 @@ def build_site(cfg: Config) -> Path:
 
     Copies ``web/`` (if present) and writes a placeholder ``index.html`` when
     ``web/`` does not provide one. Only relative URLs are used (spec §6.3).
+    An existing ``dist`` is only deleted if it is empty or carries the
+    :data:`BUILD_MARKER` of a previous build; otherwise ``ValueError``.
     """
     dist = cfg.dist_dir.resolve()
     protected = {cfg.web_dir.resolve(), cfg.data_dir.resolve(), REPO_ROOT, Path.home()}
     if dist in protected or dist in REPO_ROOT.parents:
         raise ValueError(f"refusing to wipe {dist}: not a safe dist directory")
     if dist.exists():
+        if not dist.is_dir():
+            raise ValueError(f"refusing to wipe {dist}: not a directory")
+        if any(dist.iterdir()) and not (dist / BUILD_MARKER).is_file():
+            raise ValueError(
+                f"refusing to wipe {dist}: not empty and not a previous build "
+                f"(no {BUILD_MARKER}); delete it yourself or pick another dist dir"
+            )
         shutil.rmtree(dist)
     if cfg.web_dir.is_dir():
         shutil.copytree(cfg.web_dir, dist, ignore=_IGNORED)
@@ -51,5 +63,5 @@ def build_site(cfg: Config) -> Path:
         mode = "sample" if cfg.sample else "real data"
         index.write_text(PLACEHOLDER_HTML.format(mode=mode, built=built), encoding="utf-8")
     # GitHub Pages: serve files as-is (no Jekyll processing).
-    (dist / ".nojekyll").touch()
+    (dist / BUILD_MARKER).touch()
     return dist

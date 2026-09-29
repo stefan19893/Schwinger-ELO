@@ -82,7 +82,13 @@ def cmd_serve(cfg: Config) -> int:
         log.error("serve: %s/index.html missing - run `python -m src.cli build` first", dist)
         return 1
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(dist))
-    with http.server.ThreadingHTTPServer((cfg.host, cfg.port), handler) as httpd:
+    try:
+        httpd = http.server.ThreadingHTTPServer((cfg.host, cfg.port), handler)
+    except OSError as exc:
+        log.error("serve: cannot bind %s:%d (%s) - port in use? try --port N",
+                  cfg.host, cfg.port, exc.strerror or exc)
+        return 1
+    with httpd:
         print(f"Serving {dist} at http://localhost:{cfg.port}/  (Ctrl+C to stop)", flush=True)
         try:
             httpd.serve_forever()
@@ -156,6 +162,21 @@ COMMANDS: dict[str, Callable[[Config], int]] = {
 }
 
 
+# Options that are accepted globally but only affect some subcommands.
+_OPTION_SCOPE: dict[str, frozenset[str]] = {
+    "skip_crawl": frozenset({"all"}),
+    "refresh": frozenset({"crawl", "all"}),
+}
+
+
+def _warn_ignored_options(args: argparse.Namespace) -> None:
+    for opt, commands in _OPTION_SCOPE.items():
+        if getattr(args, opt) and args.command not in commands:
+            flag = "--" + opt.replace("_", "-")
+            log.warning("%s has no effect on `%s` (only: %s)",
+                        flag, args.command, ", ".join(sorted(commands)))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -168,9 +189,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ValueError, KeyError) as exc:
         log.error("configuration error: %s", exc)
         return 2
-    if args.command == "all":
-        return cmd_all(cfg, skip_crawl=args.skip_crawl)
-    return COMMANDS[args.command](cfg)
+    _warn_ignored_options(args)
+    try:
+        if args.command == "all":
+            return cmd_all(cfg, skip_crawl=args.skip_crawl)
+        return COMMANDS[args.command](cfg)
+    except ValueError as exc:
+        log.error("%s: %s", args.command, exc)
+        return 1
 
 
 if __name__ == "__main__":
