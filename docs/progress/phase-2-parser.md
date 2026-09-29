@@ -15,8 +15,8 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 ## Tasks
 - [x] 1. Save Notenblatt fixtures (normal festival, ESAF, edge cases)
 - [x] 2. Implement parser for one festival sheet + tests
-- [~] 3. Validation rules (grade range, symmetric bouts, gang count) + tests
-- [ ] 4. Batch-parse all crawled festivals into SQLite `bouts` / `athletes_raw`
+- [x] 3. Validation rules (grade range, symmetric bouts, gang count) + tests
+- [~] 4. Batch-parse all crawled festivals into SQLite `bouts` / `athletes_raw`
 - [ ] 5. Wire `cli parse`; create `tests/fixtures/sample/` and `--sample` support for crawl/parse
 - [ ] 6. Report data quality (bouts per year, draw rate, parse failures) in handoff notes
 
@@ -46,3 +46,4 @@ Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.m
   - **Header check:** dates (numeric, two-day `30.-31.08.2025`, German/French month names) within ±1 day, else festival-name token; only a definite date mismatch blocks import (shared Oberarth/Schwarzenberg sheet → Schwarzenberg `header_mismatch`).
   - **Full-corpus dry run** (scratch, 1879 sheets, 21 s): 482,034 bouts, 98.5 % of 978,785 entries paired; festivals ok 717 / partial 1080 / failed 72 / header_mismatch 10. Known unfixable sources: Thörigen 2023 (first names differ between headers and opponent lines), Sarnen 2016 (athlete names missing from text layer), Lueg 2014 (right-column grades missing), ESAF 2013 sheet incomplete (~80 athletes only appear as opponents), upper-case "Notenblaetterdetails" 2014 variant, garbled/empty PDFs.
   - Tests: `tests/test_bouts_parser.py` (75: totals per layout, Klewenalp clean sheet incl. `o` = loss in the Schlussgang, ESAF 8 Gänge + Stucki–Wicki rematch, suffixes, youth sections, forfeits, shared sheet, same-name resolution, Notenblatt blocks, garbled, PDF→text on real PDFs, frames, units). Total 298 passed.
+- 2026-09-29 — **Task 3 done.** Validation rules (in `bouts_parser.py`): per bout — both grades within 8.25–10.00 and multiples of 0.25 (`grade_out_of_range`), symmetric entries (pairing; `unmatched_entry`, `opponent_not_found`, `ambiguous_opponent`, `self_bout`), complementary symbols or unambiguous grades (`inconsistent_outcome`), Gang ≤ `max_gaenge(category, eidg_type)` = 8 at the ESAF itself, else 6 (`gang_out_of_range`); soft flags `unusual_win_grades` (winner < 9.25 or loser > 8.75), `unusual_draw_grades`, `gang_inferred`/`gang_uncertain`, `column_ambiguous`. Festival level (`validate_festival`): pair rate < `parse_min_pair_rate` (Config, 0.5) → all bouts withdrawn, `low_pair_rate`, status failed (dry run: 25 festivals / 805 bouts); athlete with two bouts in one Gang → `gang_collision` flag; athlete flag `points_mismatch` (printed points ≠ sum of grades; 0.6 % of athletes). 12 new tests (synthetic sheets). Total 310 passed.

@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 2 — Bout parser (in progress, branch `phase-2-parser`)
-**Next action:** Phase 2, task 3 — validation rules (grade range, symmetric bouts, gang count/collisions) + tests.
+**Next action:** Phase 2, task 4 — SQLite bouts/athletes_raw/parse_rejects/festival_parse tables (+ festivals.event_flags/elo_eligible, schema v3) and batch-parse all cached PDFs.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -66,6 +66,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Injury-decided bouts (`u`, `> unfall`, 0.00 grade) are rejected as `forfeit_injury`, not rated — not a sporting result.
 - 2026-09-29 — Gang number = position in the complete list (or the larger position); flagged `gang_inferred`/`gang_uncertain` when list positions disagree (~1 % of bouts) — only used to order bouts within a festival.
 - 2026-09-29 — Same-name athletes in one sheet are disambiguated by the mirror entry; raw names (suffixes "1"/"2", birth years, S/T markers) are kept for Phase 3.
+- 2026-09-29 — `parse_min_pair_rate = 0.5`: sheets where < 50 % of entries pair into bouts are treated as structurally unreliable and import no bouts (25 festivals / ~800 bouts in the dry run) — better to lose a few bouts than import misassigned ones. Max Gänge: 8 for the ESAF itself (`eidg_type='ESAF'`), else 6.
 
 ## Open questions
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.

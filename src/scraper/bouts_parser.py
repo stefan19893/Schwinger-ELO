@@ -881,7 +881,7 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             "name_raw": b.name_raw, "name": name, "name_key": full, "name_base_key": base,
             "status": status_of(b.name_raw), "mark": b.mark or None,
             "sennen_turner": _st_marker(b.name_raw),
-            "withdrawn": b.mark == "°", "points": b.points,
+            "withdrawn": b.mark == "°", "points": b.points, "points_mismatch": False,
             "n_entries": len(b.entries), "grade_sum": round(sum(grades), 2) if grades else 0.0,
             **details,
         })
@@ -1006,9 +1006,47 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
     return res
 
 
+def max_gaenge(category: str | None, eidg_type: str | None) -> int:
+    """Gänge per festival: 8 at the ESAF itself, otherwise 6 (spec §4.1)."""
+    return 8 if category == "ESAF" and eidg_type == "ESAF" else 6
+
+
+def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> FestivalParse:
+    """Festival-level validation on top of the pairing checks (in place).
+
+    * pair rate below ``min_pair_rate`` -> structurally unreliable sheet: all
+      bouts are withdrawn (``low_pair_rate``) and the festival fails;
+    * an athlete with two bouts in the same Gang -> ``gang_collision`` flag;
+    * printed points != sum of grades -> athlete flag ``points_mismatch``;
+    * grades / outcomes / Gang range are enforced in :func:`build_festival`.
+    """
+    if not res.entries_total or not res.bouts:
+        return res
+    rate = 2 * len(res.bouts) / res.entries_total
+    if rate < min_pair_rate:
+        res.rejects.append(Reject(res.fest_id, "festival", "low_pair_rate",
+                                  f"{rate:.0%} of {res.entries_total} entries paired; "
+                                  f"{len(res.bouts)} bouts not imported"))
+        res.bouts = []
+        res.status = "failed"
+        return res
+    slots: Counter[tuple[object, object]] = Counter()
+    for b in res.bouts:
+        slots[(b["athlete_a_id"], b["gang_nr"])] += 1
+        slots[(b["athlete_b_id"], b["gang_nr"])] += 1
+    for b in res.bouts:
+        if slots[(b["athlete_a_id"], b["gang_nr"])] > 1 or slots[(b["athlete_b_id"], b["gang_nr"])] > 1:
+            b["flags"] = ",".join(filter(None, [b["flags"], "gang_collision"]))
+    for a in res.athletes:
+        pts, got = a["points"], a["grade_sum"]
+        a["points_mismatch"] = bool(pts is not None and a["n_entries"]
+                                    and abs(float(pts) - float(got)) > 0.001)  # type: ignore[arg-type]
+    return res
+
+
 def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
-                   max_gang: int = 6) -> FestivalParse:
-    """Full pipeline for one sheet: layout -> blocks -> header check -> bouts."""
+                   max_gang: int = 6, min_pair_rate: float = 0.5) -> FestivalParse:
+    """Full pipeline for one sheet: layout -> blocks -> header check -> bouts -> validation."""
     sheet = parse_sheet(text, int(fest_date[:4]))
     check, detail = verify_header(sheet.header, fest_date, fest_name)
     if check == "mismatch":
@@ -1018,7 +1056,7 @@ def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
         return res
     res = build_festival(sheet, fest_id, max_gang=max_gang)
     res.header_check = check if check == "ok" else f"{check}: {detail}"
-    return res
+    return validate_festival(res, min_pair_rate=min_pair_rate)
 
 
 # ----------------------------------------------------------------------------- frames
@@ -1026,7 +1064,7 @@ BOUT_COLUMNS = ["bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id",
                 "grade_a", "grade_b", "schlussgang", "flags"]
 ATHLETE_COLUMNS = ["athlete_raw_id", "fest_id", "idx", "rank", "name_raw", "name", "name_key",
                    "name_base_key", "status", "mark", "sennen_turner", "withdrawn", "points",
-                   "n_entries",
+                   "points_mismatch", "n_entries",
                    "grade_sum", "birth_year", "association", "place"]
 
 

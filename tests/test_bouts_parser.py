@@ -65,6 +65,8 @@ def result_for(bout: dict[str, Any], res: bp.FestivalParse, name: str) -> tuple[
 def test_every_entry_is_accounted_for(fid: int) -> None:
     """Nothing is dropped silently: entries = 2*bouts + entry rejects + 2*bout rejects."""
     res = parsed(fid)
+    if "low_pair_rate" in reasons(res):  # bouts deliberately withdrawn, festival-level reject
+        return
     entry = sum(1 for r in res.rejects if r.stage == "entry")
     bout = sum(1 for r in res.rejects if r.stage == "bout")
     assert res.entries_total == 2 * len(res.bouts) + entry + 2 * bout
@@ -284,3 +286,87 @@ def test_gang_from_complete_list() -> None:
     assert g[("1-000", "1-002")] == 2  # Alpha's complete list says Gang 2 (Gamma's says 1)
     assert "gang_inferred:2/1" in [b for b in res.bouts if b["gang_nr"] == 2
                                    and b["athlete_b_id"] == "1-002"][0]["flags"]
+
+
+# ------------------------------------------------------------------ validation (task 3)
+def _sheet(lines: list[str]) -> bp.Sheet:
+    return bp.parse_sheet("\n".join(lines))
+
+
+def test_grades_outside_range_are_rejected() -> None:
+    res = bp.build_festival(_sheet([
+        "1 Alpha Anton 20.00", "+ Beta Bruno 10.50", "+ Gamma Gustav 10.00",
+        "2 Beta Bruno 8.00", "o Alpha Anton 8.00",
+        "3 Gamma Gustav 8.10", "o Alpha Anton 8.10",
+    ]), 7)
+    assert res.bouts == []
+    assert reasons(res)["grade_out_of_range"] == 2
+
+
+def test_asymmetric_bouts_are_rejected() -> None:
+    res = bp.build_festival(_sheet([
+        "1 Alpha Anton 20.00", "+ Beta Bruno 10.00", "+ Gamma Gustav 10.00",
+        "2 Beta Bruno 10.00", "+ Alpha Anton 10.00",      # both claim the win
+        "3 Gamma Gustav 8.50", "o Alpha Anton 8.50",
+    ]), 7)
+    assert len(res.bouts) == 1
+    assert reasons(res)["inconsistent_outcome"] == 1
+
+
+def test_one_sided_entry_is_rejected() -> None:
+    res = bp.build_festival(_sheet([
+        "1 Alpha Anton 20.00", "+ Beta Bruno 10.00", "+ Gamma Gustav 10.00",
+        "2 Beta Bruno 8.50", "o Alpha Anton 8.50",
+        "3 Gamma Gustav 8.50", "o Delta Dan 8.50",         # Gamma never lists Alpha
+    ]), 7)
+    r = reasons(res)
+    assert len(res.bouts) == 1 and r["unmatched_entry"] == 1 and r["opponent_not_found"] == 1
+
+
+def test_gang_count_limit() -> None:
+    lines = ["1 Alpha Anton 70.00"] + [f"+ Opp{i} Otto 10.00" for i in range(7)]
+    for i in range(7):
+        lines += [f"{i + 2} Opp{i} Otto 8.50", "o Alpha Anton 8.50"]
+    res = bp.build_festival(_sheet(lines), 7, max_gang=6)
+    assert max(b["gang_nr"] for b in res.bouts) == 6
+    assert reasons(res)["gang_out_of_range"] == 1
+    assert len(bp.build_festival(_sheet(lines), 7, max_gang=8).bouts) == 7
+
+
+@pytest.mark.parametrize(("category", "eidg", "n"), [
+    ("ESAF", "ESAF", 8), ("ESAF", "Kilchberg", 6), ("ESAF", "Unspunnen", 6),
+    ("Bergkranz", None, 6), ("Regional", None, 6),
+])
+def test_max_gaenge(category: str, eidg: str | None, n: int) -> None:
+    assert bp.max_gaenge(category, eidg) == n
+
+
+def test_low_pair_rate_withdraws_bouts() -> None:
+    sheet = _sheet([
+        "1 Alpha Anton 38.50", "+ Beta Bruno 10.00", "o X1 Y 8.50", "o X2 Y 8.50", "o X3 Y 8.50",
+        "2 Beta Bruno 8.50", "o Alpha Anton 8.50",
+    ])
+    res = bp.validate_festival(bp.build_festival(sheet, 7), min_pair_rate=0.5)
+    assert res.status == "failed" and res.bouts == []
+    assert reasons(res)["low_pair_rate"] == 1
+    res2 = bp.validate_festival(bp.build_festival(sheet, 7), min_pair_rate=0.2)
+    assert len(res2.bouts) == 1
+
+
+def test_gang_collision_is_flagged() -> None:
+    res = bp.FestivalParse(fest_id=1, layout="standard", status="ok", entries_total=4, bouts=[
+        {"athlete_a_id": "a", "athlete_b_id": "b", "gang_nr": 1, "flags": ""},
+        {"athlete_a_id": "a", "athlete_b_id": "c", "gang_nr": 1, "flags": "gang_inferred:1/2"},
+    ])
+    bp.validate_festival(res, min_pair_rate=0.0)
+    assert [b["flags"] for b in res.bouts] == ["gang_collision", "gang_inferred:1/2,gang_collision"]
+
+
+def test_points_mismatch_flag() -> None:
+    res = parsed(46055)
+    assert not any(a["points_mismatch"] for a in res.athletes)
+    bad = bp.parse_festival("\n".join([
+        "Statistische Tabelle Test 2025", "01.01.2025",
+        "1 Alpha Anton 25.00", "+ Beta Bruno 10.00", "2 Beta Bruno 8.50", "o Alpha Anton 8.50",
+    ]), 9, "2025-01-01", "Test 2025")
+    assert [a["points_mismatch"] for a in bad.athletes] == [True, False]
