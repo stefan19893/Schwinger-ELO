@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
-**Next action:** Phase 1, task 4 — SQLite `festivals` schema + persistence helper.
+**Next action:** Phase 1, task 5 — implement `src/scraper/fests_crawler.py` (JSON:API listing → festivals, incremental) + tests.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -41,6 +41,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — esv.ch is NOT crawled at all (its Nutzungsbedingungen forbid scraping); only the ESV Anlass id from schlussgang (`field_event_esv_id`) is stored as a reference field.
 - 2026-09-29 — Festival index via JSON:API `backend-api.schlussgang.ch/jsonapi/node/event` instead of HTML scraping — same data as /resultate, structured, includes category/association/PDF links (coordinator: prefer JSON API).
 - 2026-09-29 — Bout source for Phase 2 = "Statistische Tabelle" PDFs linked from each event node (`field_final_statistic_pdf` or `field_event_pdf` item described "Statistik") — the only place schlussgang exposes opponent + grade per Gang.
+- 2026-09-29 — `festivals.fest_id` = schlussgang node id (`drupal_internal__nid`, stable INTEGER); extra columns beyond spec §4.1 (kind, cancelled, source category, association, esv_id, event_type, participant_count, url, statistic/ranking PDF URLs, first/last_seen) — needed for Phase 2 and for traceability; schema in `src/db.py`, versioned via `PRAGMA user_version`.
 
 ## Open questions
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
