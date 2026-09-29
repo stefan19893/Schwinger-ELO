@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 0 — Bootstrap + CLI + local script (in progress)
-**Next action:** Phase 0, task 6 — `scripts/deploy_local.sh` + fresh-venv test.
+**Next action:** Phase 0, task 7 — update the Commands section in `CLAUDE.md` to match the script flags and CLI.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -28,6 +28,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — K-factor keys follow spec §4.1 categories; `Gauverband` and `Regional` both K = 16 — spec §4.2 lists only "Regional-/Rangschwinget" for the lowest tier.
 - 2026-09-29 — `serve` binds to `127.0.0.1` by default (`--host` / `SCHWINGEN_HOST` to change) — local preview only, don't expose on the LAN by default.
 - 2026-09-29 — Extra `serve --host` option and `SCHWINGEN_DIST_DIR` env override beyond spec §5 — needed for tests and flexibility; no spec behaviour changed.
+
+- 2026-09-29 — `deploy_local.sh` also accepts `--port=N`, `-h/--help` and a `PYTHON=` env var to pick the interpreter; pip bootstrap runs whenever `.venv` lacks pip (not only right after creation) — convenience/self-healing, spec §6 behaviour unchanged.
 
 ## Open questions
 - Which source is primary (schlussgang.ch vs esv.ch), and do their robots.txt / terms allow crawling? → answer in Phase 1.
