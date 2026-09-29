@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
-**Next action:** Phase 1, task 2 — save JSON:API fixtures (one listing response per category) to tests/fixtures/.
+**Next action:** Phase 1, task 3 — implement `src/scraper/client.py` (rate limit, tenacity retries, cache in data/raw/) + tests.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |

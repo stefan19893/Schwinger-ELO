@@ -14,7 +14,7 @@ Discover every festival 2011–present and persist it in SQLite.
 ## Tasks
 - [x] 1. Investigate sources: check robots.txt/terms, locate festival index + Notenblatt pages, document URL patterns in handoff notes; record primary-source decision in `STATE.md`
 - [x] 2. Save representative HTML fixtures (index page, one festival page per category)
-- [ ] 3. Implement `client.py` (rate limit, retries, cache in `data/raw/`) + tests
+- [~] 3. Implement `client.py` (rate limit, retries, cache in `data/raw/`) + tests
 - [ ] 4. Define SQLite schema (`festivals`) + persistence helper
 - [ ] 5. Implement `fests_crawler.py` (incremental: skip known festivals) + tests
 - [ ] 6. Wire `cli crawl` + test
