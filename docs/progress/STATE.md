@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-29
 **Current phase:** 1 — Festival crawler (in progress, branch `phase-1-crawler`)
-**Next action:** Phase 1, task 5 — implement `src/scraper/fests_crawler.py` (JSON:API listing → festivals, incremental) + tests.
+**Next action:** Phase 1, task 6 — wire `python -m src.cli crawl` (--from-year/--to-year/--refresh, --sample offline) + test.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -42,6 +42,10 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — Festival index via JSON:API `backend-api.schlussgang.ch/jsonapi/node/event` instead of HTML scraping — same data as /resultate, structured, includes category/association/PDF links (coordinator: prefer JSON API).
 - 2026-09-29 — Bout source for Phase 2 = "Statistische Tabelle" PDFs linked from each event node (`field_final_statistic_pdf` or `field_event_pdf` item described "Statistik") — the only place schlussgang exposes opponent + grade per Gang.
 - 2026-09-29 — `festivals.fest_id` = schlussgang node id (`drupal_internal__nid`, stable INTEGER); extra columns beyond spec §4.1 (kind, cancelled, source category, association, esv_id, event_type, participant_count, url, statistic/ranking PDF URLs, first/last_seen) — needed for Phase 2 and for traceability; schema in `src/db.py`, versioned via `PRAGMA user_version`.
+- 2026-09-29 — Category mapping (schlussgang tid → spec): 11 Eidgenössische Anlässe → `ESAF` only for the ESAF itself (name "Eidgenössisches Schwing…"), other competitive tid-11 events (Kilchberg, Unspunnen, Jubiläumsschwingfest 125 J. ESV) → `Bergkranz` (spec §4.2.3 puts Unspunnen/Kilchberg at K=40); 12 → `Bergkranz`; 13 → `Teilverband` (incl. Berner Kantonalschwingfest, which schlussgang files as the BKSV Teilverbandsfest); 15 → `Regional`; 14 Kantonal-/Gaufest → `Gauverband` iff the name matches a Bernese Gau festival (Mittelländisches, Oberländisches, Seeländisches, Bern-Jurassisches, Oberaargauisches, Emmentalisches) and doesn't contain "kantonal", else `Kantonal` (only BKSV has Gauverbände; Basel-Stadt / Glarner-Bündner count as Kantonal) — coordinator instruction + source taxonomy.
+- 2026-09-29 — Youth (tid 10) and women's (tid 16) categories are not requested at all; events in tids 11–15 that are youth / women / non-competition (Abgeordnetenversammlung, Fussballturnier, awards…) are stored with `kind` ≠ 'active' and `category` NULL so nothing is dropped silently; ELO uses only `kind='active'` — adult men's competition only, halves request count.
+- 2026-09-29 — Listing pages for the current season (year ≥ today's year) are re-fetched when their cache entry is older than 24 h (`max_age`); all other pages are cached forever unless `--refresh` — otherwise new festivals could never be discovered without a full `--refresh`, which in Phase 2 would re-download every PDF. **User to confirm** (slight relaxation of "never re-fetch cached pages").
+- 2026-09-29 — Festivals dated after today are counted but not stored — no results yet; they are picked up by a later crawl.
 
 ## Open questions
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
