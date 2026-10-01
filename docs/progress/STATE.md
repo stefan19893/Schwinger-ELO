@@ -1,15 +1,15 @@
 # Project State
 
 **Last updated:** 2026-10-01
-**Current phase:** 2 — Bout parser (review fixes in progress, branch `phase-2-parser`)
-**Next action:** Phase 2 review fixes: R5 — full re-parse of the real cache (`python -m src.cli parse --force`), before/after report, notes in phase-3/phase-4 files.
+**Current phase:** 2 — Bout parser (in review — review fixes done, branch `phase-2-parser`)
+**Next action:** Phase 2 review fixes R1–R5 done (parser v2, schema v4, real DB re-parsed: 491,669 bouts). Re-run the `phase-reviewer` against the Phase 2 exit criteria + review findings, then ask the user before Phase 3. User to decide: `grade_missing` extension of the NULL-grade rule, fetching the ESAF 2013 "Statistik nach 4 Gängen" PDF, one-sided Schlussgang entries (see Open questions).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | in progress |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | in review |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
@@ -89,7 +89,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 ## Open questions
 - **ESAF 2013 (25862) completeness:** the final "Statistik" sheet omits the 77 athletes eliminated after Gang 4 (198 one-sided entries, 636 bouts vs ~905 at other ESAFs). The node also links "Statistik nach 4 Gängen" (`stat_burgdorf13-gang4_0.pdf`), not cached. Fetch it (1 request) and merge the Gänge 1–4 of the eliminated athletes? → user decision (Phase 2 follow-up).
 - **One-sided Schlussgang entries:** some sheets omit the Schlussgang loser's line entirely (e.g. Engstligenalp 2023 Gobeli–Rolli); 23 festival winners since 2016 lose their Schlussgang this way. Keep such entries as bouts (outcome from the winner's symbol, loser grade NULL, flag e.g. `mirror_missing`), or keep rejecting one-sided entries (current rule)? → user decision.
-- Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang?
+- Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang? (Phase 2 review recommends once per festival or per Ausstich phase; see `phase-4-elo.md`.)
 - ~~Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse~~ — resolved 2026-10-01 (4 rescued; Freiburg 2012 and Genf 2013 are source limitations).
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
 - schlussgang lists only 3 Regional festivals for 2011 (vs ~100/year later) — accept the gap, or start ratings with a 2011 burn-in season? → decide in Phase 4.

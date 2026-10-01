@@ -96,6 +96,8 @@ Schwinger-ELO/
     - Category `ESAF` is the tier of all festivals with eidgenössischem Charakter (eidgenössischer Kranz): the ESAF itself, Kilchberger Schwinget, Unspunnen-Schwinget and ESV Jubiläumsschwingfeste. The column `eidg_type` (`ESAF`, `Kilchberg`, `Unspunnen`, `Jubilaeum`) tells them apart. `Bergkranz` = the six Bergkranzfeste (Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein); Berg festivals without a Kranz are `Regional`.
     - Tier lists are backed by the user-supplied reference `src/scraper/reference/schwingfeste_schweiz.json` (the crawler warns on disagreements).
   - `Bout` (Gang): `bout_id`, `fest_id`, `gang_nr` (1–6, or 1–8 at ESAF), `athlete_a_id`, `athlete_b_id`, `outcome` (`WIN_A`, `WIN_B`, `DRAW`), `grade_a`, `grade_b`.
+    - Grades are 8.25–10.00. A grade is NULL only for an **extra bout** (Zusatzgang: with an odd field one athlete fights one bout more than the festival has Gänge; his sheet line shows 0.00 / 0.25 / no grade — flag `extra_bout`) or a line printed without grade (flag `grade_missing`); enforced by a CHECK (user decision 2026-10-01). Injury/forfeit bouts (`u`, `> unfall`, 0.00 in a regular Gang) are not bouts.
+    - Extra columns: `flags` (e.g. `extra_bout`, `gang_inferred`, `gang_collision`) and `schlussgang` (1/0 only where the sheet marks it, else NULL = unknown).
   - `Athlete`: `athlete_id`, `full_name`, `club` (Schwingklub), `sub_association` (BKSV, ISV, NOSV, NWSV, SWSV), `active_years`.
 - **Handling Ambiguity:** Match keys must resolve athlete collisions (e.g., duplicate names) using Schwingklub and unique profile slug URLs.
 
@@ -110,6 +112,7 @@ Standard chess ELO must be calibrated with the following domain parameters:
    - Notes range from $8.25$ to $10.00$.
    - A maximum victory (Plattwurf $10.00$ vs $8.50$ / $8.75$) carries higher conviction than a minimal victory ($9.75$ vs $8.75$).
    - Multiplier $\lambda = 1.0 + \alpha \cdot (\text{Grade}_A - \text{Grade}_B - \text{BaselineDiff})$.
+   - Bouts with a NULL grade (extra bouts, `grade_missing`) count with their outcome only: no MoV multiplier ($\lambda = 1$).
 3. **Festival Weighting ($K$-Factor Modulation):**
    - Eidgenössische Feste — ESAF (Eidgenössisches Schwing- und Älplerfest), Kilchberger Schwinget, Unspunnen-Schwinget, ESV Jubiläumsschwingfest: $K = 48$
    - Bergkranzfeste (Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein): $K = 40$

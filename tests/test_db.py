@@ -216,7 +216,7 @@ def test_migrates_v3_bouts_to_nullable_grades(tmp_path: Path) -> None:
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
     assert [tuple(r) for r in conn.execute("SELECT bout_id, grade_a FROM bouts")] == [("x", 9.0)]
     notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
-    assert notnull["grade_a"] == 0 and notnull["grade_b"] == 0
+    assert notnull["grade_a"] == notnull["grade_b"] == notnull["schlussgang"] == 0
     assert "n_gaenge" in {r[1] for r in conn.execute("PRAGMA table_info(festival_parse)")}
     assert conn.execute("SELECT name FROM sqlite_master WHERE name='idx_bouts_fest'").fetchone()
     conn.execute("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, "

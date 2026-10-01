@@ -231,8 +231,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # the next `parse` replace them anyway.
     if "n_gaenge" not in {r[1] for r in conn.execute("PRAGMA table_info(festival_parse)")}:
         conn.execute(f"ALTER TABLE festival_parse ADD COLUMN {_N_GAENGE_COLUMN}")
-    grade_a = [r for r in conn.execute("PRAGMA table_info(bouts)") if r[1] == "grade_a"]
-    if grade_a and grade_a[0][3]:  # notnull -> v3 table
+    notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
+    if any(notnull.get(c) for c in ("grade_a", "grade_b", "schlussgang")):  # v3 table
         cols_b = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(bouts)"))
         conn.execute("ALTER TABLE bouts RENAME TO bouts_v3")
         conn.execute("DROP INDEX IF EXISTS idx_bouts_fest")

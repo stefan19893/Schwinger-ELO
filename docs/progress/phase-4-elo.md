@@ -21,3 +21,12 @@
 - [ ] 6. Sanity tests with known elite athletes; summarize top-20 per era in handoff notes
 
 ## Handoff notes
+
+## Known inputs from Phase 2 review
+Notes only (2026-10-01, Phase 2 review fixes; data = `data/schwingen.db`, parser v2).
+- **Gang order is approximate.** `gang_collision` (an athlete has two bouts in the same Gang) affects ~2 % of bouts in every era (10,605 of 491,669), plus `gang_uncertain` 4,845 / `gang_inferred` 1,446, because the sources list some bouts out of order (Corcelles 2024: Pellaton has Burger as his 4th bout, Burger has Pellaton as his 3rd). Recommendation: update once per festival from pre-festival ratings, or at most by Ausstich phase (Gänge 1–4, then 5+), not strictly sequentially by `gang_nr`.
+- **Extra bouts have NULL grades** (742 bouts flagged `extra_bout`, 723 with one NULL grade; 2 `grade_missing`): use the outcome, skip the MoV multiplier (λ = 1, SPEC §4.2). Their `gang_nr` is the opponent's position (often the last Gang); extra bouts are excluded from `gang_collision`. Several are the Schlussgang itself (the Schlussgang loser's line printed as a surplus 0.00 / no-grade entry).
+- **A is always the better-ranked athlete on the sheet** (lower sheet index; WIN_A 69.6 %, WIN_B 10.1 %, DRAW 20.3 %): do not treat A/B asymmetrically (no home advantage, no ordering prior).
+- **Coverage:** ESAF 2013 is ~70 % complete (636 bouts vs ~905–919 at other ESAFs; the final sheet omits the 77 athletes eliminated after Gang 4 — see STATE.md open question); 2011–2014 coverage is weaker (paired entries 95–97.6 % vs ≥ 98.5 % later; several truncated sheets list only the top ranks; 2011 has only 3 Regional festivals on schlussgang). `festival_parse.n_gaenge` gives each festival's derived Gang count (5-Gang festivals exist).
+- `bouts.schlussgang` is NULL (unknown) except on 18 bouts of sheets that mark it — don't use it.
+- Only festivals with `festivals.elo_eligible = 1` count (excludes `team`, `ausland`; user decision 2026-10-01).

@@ -1,5 +1,5 @@
 # Phase 2 — Bout parser (Milestone 2)
-**Status:** in progress — review fixes (phase-reviewer verdict "needs fixes", user decisions 2026-10-01)
+**Status:** in review — review fixes R1–R5 done 2026-10-01 (phase-reviewer verdict "needs fixes" of 2026-10-01 addressed; re-review not yet run)
 **Agent:** data-engineer
 
 ## Goal
@@ -26,7 +26,7 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 - [x] R2. Bout-like lines never vanish: wrapped lines, missing-grade lines parsed; the rest -> `parse_rejects`; line accounting test
 - [x] R3. Should-fix: header print timestamps + date tolerance, real Gang count in `_assign_gaenge`, `schlussgang` column, duplicate fixtures
 - [x] R4. Rescue old layouts (6 failed Kantonalfeste, multicol/blocks/notenblatt loss, ESAF 2013) — timeboxed
-- [~] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
+- [x] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
 
 ## Known risks from Phase 1 review
 Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.md` (task 1 + task 7 notes). Not yet addressed.
@@ -115,3 +115,27 @@ Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.m
   - **Remaining entry loss is mostly truncated source sheets** (the sheet lists only the top ranks; the missing athletes occur in the text exactly as often as they are referenced as opponents): blocks — Stoos 2011/2013/2014, Ibach 2012–2015, Schwyzer Kantonal 2013 (to rank 23); notenblatt — NWS Teilverband 2011/2013 (to rank 19), Solothurn 2012, Basel-Stadt 2011/2014, BL 2013; multicol — St. Gallen 2011 (to rank 24), plus Klewenalp 2013 and ESAF 2013 (standard). Waadt 2012 (26314) has the same missing-names problem as Freiburg 2012. Not chased (user decision).
   - **Left (small, Regional K=16 only):** 60 failed Regional sheets in one-off layouts (NWSV start-number lists "2 31 Thoenen Henryc -K 8.75", column-scrambled multicol such as Oberdiessbach 2014 / Bolligen 2013–2014, scanned PDFs, youth-only sheets), Thörigen + Altstätten 2023 (opponent names don't belong to the listed athletes — corrupt source), Riggisberg 2021 (27 names listed twice).
   - **`unmatched_entry` composition (corrects the task-6 wording "mostly opponent withdrew"):** of 1,615 in imported sheets, 69 % are one-sided entries whose opponent's list is complete but does not mention the athlete (one side prints a wrong opponent, or the sheet omits the Schlussgang loser's line — 23 of them are festival winners' Schlussgang entries, e.g. Engstligenalp 2023 Gobeli–Rolli), 18 % have an opponent with a short list (withdrawal/injury possible), 13 % are rematch-count differences. → open question whether one-sided Schlussgang entries should be kept (outcome known, loser grade NULL).
+- 2026-10-01 — **Review fixes complete (R5: full re-parse + report).** `python -m src.cli parse --force` on the real cache (offline, parser v2, 49 s): 1,975 festivals re-parsed; incremental re-run: 1,975 unchanged. Integrity: 0 FK violations, 0 orphan bouts, every active festival has a `festival_parse` row, accounting invariant `entries = 2·bouts + entry rejects + 2·bout rejects` holds for every imported sheet, no NULL grade without `extra_bout`/`grade_missing`. Surprise: the real DB had already been migrated to an intermediate v4 (opened via `connect()` by a fixture-export script before `schlussgang` became nullable) → the v4 rebuild now triggers on any outdated NOT NULL column (`grade_a/grade_b/schlussgang`), tested. `data/schwingen.db` is 146 MB (not vacuumed; generated, not committed).
+
+  | metric | before (parser v1) | after (parser v2) |
+  |---|---|---|
+  | total bouts | 481,229 | **491,669** (+10,440) |
+  | bouts flagged `extra_bout` | 0 | **742** (721 with a NULL grade, 21 graded surplus) |
+  | `forfeit_injury` rejects | 454 | **67** (57 `> unfall`, 7 `u`, 3 × 0.00 in a regular Gang) |
+  | festivals `header_mismatch` | 10 | **6** (all genuine wrong PDFs, incl. Krummenau 2015 on purpose) |
+  | festival status ok / partial / failed | 717 / 1,055 / 97 | **1,298 / 513 / 62** (+ no_pdf 96 both) |
+  | paired % 2011 / 12 / 13 / 14 / 15 / 16 | 95.0 / 92.9 / 94.3 / 96.8 / 98.0 / 98.4 | **97.6 / 95.5 / 95.3 / 97.5 / 98.2 / 98.5** |
+  | paired % all entries | 98.3 % of 978,785 | **98.7 % of 995,910** |
+  | ESAF 2013 bouts | 635 | **636** (source limitation, see STATE open question) |
+  | entry loss blocks / multicol / notenblatt (ok+partial sheets) | 10.8 / 5.8 / 2.9 % | **10.7 / 6.0 / 2.7 %** (multicol now incl. 25 rescued sheets; all multicol sheets incl. failed: 17.3 → 8.7 %) |
+  | winners since 2016 with fewer bouts than Gänge | 91 / 1,293 = 7.0 % | **21 / 1,304 = 1.6 %** (20 = 1.5 % vs. the derived Gang count) |
+  | draw rate | 20.3 % | 20.3 % |
+  | raw athletes | 171,517 | 174,175 |
+
+  - **Six Kantonalfeste:** Zug 2011 partial 465 bouts, Zug 2013 partial 470, Luzern 2011 partial 541, Thurgau 2015 **ok** 394; Freiburg 2012 and Genf 2013 still failed (source limitations).
+  - Bouts per year now: 2011 14,871 · 2012 30,021 · 2013 29,388 · 2014 32,313 · 2015 33,458 · 2016 35,913 · 2017 38,457 · 2018 37,547 · 2019 37,582 · 2020 1,250 · 2021 21,246 · 2022 33,782 · 2023 35,168 · 2024 35,099 · 2025 37,811 · 2026 37,763.
+  - **Top rejects now:** opponent_not_found 9,323 (mostly truncated sheets that list only top ranks, plus Sarnen 2016 / Thörigen + Altstätten 2023 source errors), unparsed_line_with_grade 2,571 (mostly multicol rows of failed / column-scrambled Regional sheets — formerly ~3,600 of them vanished silently as "header"), unmatched_entry 2,030 (composition: see R4 note — **not** "mostly opponent withdrew"), entry_without_athlete 541, more_cells_than_columns 419, duplicate_name_in_sheet 396 (informational), ambiguous_opponent 389, unparsed_bout_line 242, forfeit_injury 67, inconsistent_outcome 48.
+  - **Corrections of the task-6 report:** "unmatched_entry = mostly opponent withdrew" was wrong (69 % are one-sided entries against a complete opponent list = source inconsistencies / omitted Schlussgang-loser lines); "forfeit_injury 454" contained ~400 extra bouts — genuine forfeits are 67 after the fixes.
+  - Notes for later phases written to `phase-3-cleaning.md` / `phase-4-elo.md` ("Known inputs from Phase 2 review"); SPEC §4.1 (Bout: NULL grades only for flagged extra bouts, `schlussgang` NULL = unknown) and §4.2 (no MoV for NULL grades) updated.
+  - Tests: 388 passed (was 340).
+  - **Not resolved / for the user:** ESAF 2013 interim sheet (needs 1 download), one-sided Schlussgang entries (keep with NULL loser grade?), confirmation of the `grade_missing` extension of the NULL-grade CHECK; 60 failed Regional sheets in one-off layouts; truncated source sheets (documented, not chased).
