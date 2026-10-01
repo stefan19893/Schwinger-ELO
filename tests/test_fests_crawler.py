@@ -456,3 +456,46 @@ def test_crawl_reports_reference_mismatch(tmp_path: Path, monkeypatch: pytest.Mo
                                  categories=[12])
     assert len(rep.reference_mismatches) == 6
     assert {exp for _, exp in rep.reference_mismatches} == {"Bergkranz"}
+
+
+# ------------------------------------------------------------------ borderline events (Phase 2)
+@pytest.mark.parametrize(("name", "assoc", "flags"), [
+    ("Mannschaftsmeisterschaft Comptoir Lausanne 2015", None, "team"),
+    ("Rangschwinget Jungaktive Sarnen 2021", "Innerschweiz", "jungaktive"),
+    ("U20-Schwingfest Schwarzsee 2021", None, "jungaktive"),
+    ("Schwingfest Truckee (CA/USA) 2023", None, "ausland"),
+    ("San Joaquin Valley Swiss Club", "Ausland", "ausland"),
+    ("Hallenschwinget Kirchberg 2025", "Bern", "hallenschwinget"),
+    ("Südwestschweizer Schwingfest Romanel-sur-Lausanne 2023", None, ""),  # 'usa' in Lausanne
+    ("Thurgauer Klubmeisterschaft Frauenfeld 2014", None, ""),
+    ("Hallenschwinget Lausanne 2019", None, "hallenschwinget"),
+])
+def test_event_flags(name: str, assoc: str | None, flags: str) -> None:
+    assert fc.event_flags_for(name, assoc) == flags
+
+
+@pytest.mark.parametrize(("kind", "cancelled", "flags", "exclude", "ok"), [
+    ("active", False, "", ("team", "ausland"), True),
+    ("active", False, "hallenschwinget", ("team", "ausland"), True),
+    ("active", False, "jungaktive", ("team", "ausland"), True),
+    ("active", False, "ausland", ("team", "ausland"), False),
+    ("active", False, "team", ("team", "ausland"), False),
+    ("active", False, "ausland", (), True),
+    ("active", True, "", (), False),
+    ("youth", False, "", (), False),
+])
+def test_elo_eligible(kind: str, cancelled: bool, flags: str, exclude: tuple[str, ...],
+                      ok: bool) -> None:
+    assert fc.elo_eligible(kind, cancelled, flags, exclude) is ok
+
+
+def test_crawl_applies_exclude_flags(tmp_path: Path) -> None:
+    api = FakeApi()
+    conn = connect(tmp_path / "s.db")
+    with make_client(tmp_path, api) as c:
+        fc.crawl_festivals(c, conn, 2025, 2025, today=TODAY, categories=[15])
+    quebec = load_festivals(conn)[48706]
+    assert quebec.event_flags == "ausland" and quebec.elo_eligible is False
+    with make_client(tmp_path, api) as c:
+        fc.crawl_festivals(c, conn, 2025, 2025, today=TODAY, categories=[15], exclude_flags=())
+    assert load_festivals(conn)[48706].elo_eligible is True

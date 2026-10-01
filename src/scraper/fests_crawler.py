@@ -11,6 +11,7 @@ PDFs (bout source) are only *located* (URL stored) and fetched in Phase 2.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import logging
 import re
@@ -70,6 +71,38 @@ NON_COMPETITION_RE = re.compile(
     r"abgeordnetenversammlung|delegiertenversammlung|fussballturnier|nacht des schwingsports"
     r"|prämierung|brunch|veteranentagung|goldene[rn]?\s+kranz|jahresversammlung"
     r"|nationalturn", re.I)
+# Borderline events (Phase 2): stored and parsed, eligibility decided by config.
+EVENT_FLAG_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("team", re.compile(r"mannschaftsmeisterschaft|mannschaftsschwing", re.I)),
+    ("jungaktive", re.compile(r"jungaktiv|\bu\s?-?20\b", re.I)),
+    ("ausland", re.compile(r"\b(kanada|canada|usa|quebec|québec)\b", re.I)),
+    ("hallenschwinget", re.compile(r"hallen-?schwing", re.I)),
+)
+
+
+# proposed default (awaiting user confirmation); Config.elo_exclude_flags overrides
+DEFAULT_EXCLUDE_FLAGS = ("team", "ausland")
+
+
+def event_flags_for(name: str, association: str | None) -> str:
+    """Comma-separated borderline markers (team, jungaktive, ausland, hallenschwinget)."""
+    flags = [label for label, rx in EVENT_FLAG_RES if rx.search(name)]
+    if association == "Ausland" and "ausland" not in flags:
+        flags.append("ausland")
+    return ",".join(f for f, _ in EVENT_FLAG_RES if f in flags)
+
+
+def elo_eligible(kind: str, cancelled: bool, flags: str, exclude: Iterable[str]) -> bool:
+    """Counts toward ELO: active, not cancelled, no excluded borderline flag."""
+    return kind == "active" and not cancelled \
+        and not set(filter(None, flags.split(","))) & set(exclude)
+
+
+def apply_eligibility(f: Festival, exclude: Iterable[str]) -> Festival:
+    ok = elo_eligible(f.kind, f.cancelled, f.event_flags, exclude)
+    return f if ok == f.elo_eligible else dataclasses.replace(f, elo_eligible=ok)
+
+
 CANCELLED_RE = re.compile(r"abgebrochen|abgesagt|annulliert", re.I)
 _CANCEL_MARKER_RE = re.compile(r"\s*!+\s*(abgebrochen|abgesagt)\s*!+\s*", re.I)
 
@@ -274,12 +307,15 @@ def parse_event(node: dict[str, Any], inc: dict[tuple[str, str], dict[str, Any]]
             or _pick_legacy_pdf(inc, legacy, _RANK_RE))  # combined "Rangliste mit Statistik"
     location = (a.get("field_event_location") or "").strip() or None
 
+    association = ((assoc or {}).get("attributes") or {}).get("name")
+    flags = event_flags_for(name, association)
     return Festival(
         fest_id=nid, name=name, date=date, category=category, location=location,
         eidg_type=etype,
         kind=kind, cancelled=cancelled,
         source_category=source_category, source_category_tid=tid,
-        association=((assoc or {}).get("attributes") or {}).get("name"),
+        association=association, event_flags=flags,
+        elo_eligible=elo_eligible(kind, cancelled, flags, DEFAULT_EXCLUDE_FLAGS),
         esv_id=_to_int(a.get("field_event_esv_id")),
         event_type=event_type, participant_count=_to_int(a.get("field_event_participant_count")),
         url=urljoin(SITE_URL, path) if path else f"{SITE_URL}/node/{nid}",
@@ -384,6 +420,7 @@ def crawl_festivals(
     categories: Iterable[int] = tuple(SOURCE_CATEGORIES),
     max_requests: int | None = None,
     progress: bool = False,
+    exclude_flags: Iterable[str] = DEFAULT_EXCLUDE_FLAGS,
 ) -> CrawlReport:
     """Crawl listings for ``from_year..to_year`` and upsert into ``festivals``.
 
@@ -423,6 +460,7 @@ def crawl_festivals(
                     log.warning("skipped event %s %r: %s", s.fest_id, s.name, s.reason)
                 report.skipped.extend(parsed.skipped)
                 for f in parsed.festivals:
+                    f = apply_eligibility(f, exclude_flags)
                     if _dt.date.fromisoformat(f.date) > today:
                         report.future += 1
                         continue

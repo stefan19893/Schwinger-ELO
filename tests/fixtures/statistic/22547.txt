@@ -1,0 +1,351 @@
+Statistische Tabelle Regionalschwingfest Belfaux 2023
+23.04.2023
+1a Kramer Lario *** 58.50
++ Baeriswyl Christoph ** 10.00
++ Pasquier Loïc * 10.00
++ Loup Alexandre * 10.00
++ Gapany Benjamin *** 10.00
++ Gottofrey Marc ** 9.75
+o Gapany Benjamin *** 8.75
+1b Gapany Benjamin *** 58.50
++ Kramer Dorian ** 9.75
++ Schmid Romain * 10.00
++ Gottofrey Luc * 10.00
+o Kramer Lario *** 8.50
++ Schläfli Hugo ** 10.00
++ Baeriswyl Christoph ** 10.00
++ Kramer Lario *** 0.25
+2 Ducrest Etienne * 57.25
+o Loup Alexandre * 8.50
++ Dorsaz Théo * 10.00
++ Vonlanthen Alexandre 10.00
+- Gottofrey Marc ** 8.75
++ Bapst Ludovic * 10.00
++ Kramer Dorian ** 10.00
+3 Balimann Fabian * 57.00
++ Emonet Fabien ** 9.75
+o Gottofrey Luc * 8.50
++ Gilgen Cédric 10.00
+- Schmid Romain * 8.75
++ Suchet Yannick 10.00
++ Emonet Frédéric ** 10.00
+4a Gottofrey Marc ** 56.75
++ Emonet Frédéric ** 10.00
++ Portmann Fabio * 9.75
++ Loup Grégoire 9.75
+- Ducrest Etienne * 8.75
+o Kramer Lario *** 8.50
++ Collaud Bastien * 10.00
+4b Pasquier Loïc * 56.75
++ Krebs Clemens * 9.75
+o Kramer Lario *** 8.50
++ Bapst Ludovic * 10.00
++ Loup Alexandre * 10.00
+o Kramer Dorian ** 8.50
++ Vonlanthen Alexandre 10.00
+5 Kramer Dorian ** 56.50
+o Gapany Benjamin *** 8.50
++ Erb Vincent 10.00
++ Tschanz Jeremy 9.75
++ Emonet Frédéric ** 9.75
++ Pasquier Loïc * 9.75
+o Ducrest Etienne * 8.75
+6 Baeriswyl Christoph ** 56.00
+o Kramer Lario *** 8.50
++ Vachoud Alain 10.00
+- Schär Alex * 9.00
++ Crausaz Gaetan 10.00
++ Stoll Thomas * 9.75
+o Gapany Benjamin *** 8.75
+7 Collaud Bastien * 55.75
++ Menoud Liam 9.75
+- Barras André * 8.75
++ Vachoud Alain 10.00
+- Gottofrey Luc * 8.75
++ Burri Flemming 10.00
+o Gottofrey Marc ** 8.50
+8a Gottofrey Luc * 55.50
++ Balimann Sandro * 9.75
++ Balimann Fabian * 10.00
+o Gapany Benjamin *** 8.50
+- Collaud Bastien * 8.75
+- Loup Alexandre * 8.75
++ Leuenberger Gian 9.75
+8b Bapst Ludovic * 55.50
+- Gilgen Cédric 8.75
++ Tuscher Esteban 10.00
+o Pasquier Loïc * 8.50
++ Zryd Teo 10.00
+o Ducrest Etienne * 8.50
++ Berger Dilan 9.75
+9a Erb Vincent 55.25
++ Leuenberger Gian 9.75
+o Kramer Dorian ** 8.50
+o Fankhauser Hans * 8.50
++ Ulrich Nicolas 9.75
++ Portmann Fabio * 10.00
+- Loup Alexandre * 8.75
+9b Portmann Fabio * 55.25
++ Fankhauser Hans * 9.75
+o Gottofrey Marc ** 8.50
++ Fankhauser Tom 9.75
+o Stoll Thomas * 8.50
+o Erb Vincent 8.75
++ Menoud Liam 10.00
+9c Emonet Frédéric ** 55.25
+o Gottofrey Marc ** 8.50
++ Perret Loïc 10.00
++ Leuenberger Gian 9.75
+o Kramer Dorian ** 8.50
++ Fankhauser Hans * 10.00
+o Balimann Fabian * 8.50
+9d Schär Alex * 55.25
+- Schläfli Hugo ** 9.00
++ Beuret Valentin 10.00
+- Baeriswyl Christoph ** 9.00
+- Fankhauser Hans * 8.75
+- Loup Grégoire 8.75
++ Schmid Romain * 9.75
+10a Fankhauser Hans * 55.00
+o Portmann Fabio * 8.50
++ Ulrich Nicolas 10.00
++ Erb Vincent 9.75
+- Schär Alex * 8.50
+o Emonet Frédéric ** 8.50
++ Barras André * 9.75
+10b Stoll Thomas * 55.00
+- Barras André * 8.75
+- Schläfli Hugo ** 8.75
++ Beuret Valentin 10.00
++ Portmann Fabio * 10.00
+o Baeriswyl Christoph ** 8.50
+- Tschanz Jeremy 9.00
+10c Schläfli Hugo ** 55.00
+- Schär Alex * 9.00
+- Stoll Thomas * 8.75
++ Ulrich Nicolas 10.00
++ Evard Melvin 10.00
+o Gapany Benjamin *** 8.50
+- Balimann Sandro * 8.75
+10d Loup Grégoire 55.00
+- Vonlanthen Alexandre 8.75
++ Cerf Quentin 10.00
+o Gottofrey Marc ** 8.50
+- Jacquaz Fabien 9.00
+- Schär Alex * 8.75
++ Perret Loïc 10.00
+11a Suchet Yannick 54.75
++ Zryd Teo 9.75
+- Krebs Clemens * 8.75
+- Perret Loïc 9.00
++ Fankhauser Tom 9.75
+o Balimann Fabian * 8.50
+- Burri Flemming 9.00
+11b Balimann Sandro * 54.75
+o Gottofrey Luc * 8.50
++ Emonet Fabien ** 10.00
+- Jacquaz Fabien 8.75
++ Perroud Florian 9.75
+- Barras André * 9.00
+- Schläfli Hugo ** 8.7511c Fankhauser Tom 54.75
+- Berger Dilan 8.75
++ Crausaz Gaetan 9.75
+o Portmann Fabio * 8.75
+o Suchet Yannick 8.75
+- Perret Loïc 8.75
++ Evard Melvin 10.00
+11d Emonet Fabien ** 54.75
+o Balimann Fabian * 8.50
+o Balimann Sandro * 8.75
+- Berger Dilan 9.00
++ Gilgen Cédric 10.00
+- Tschanz Jeremy 8.75
++ Krebs Clemens * 9.75
+12a Tschanz Jeremy 54.50
+- Jacquaz Fabien 8.75
++ Dupertuis Guillaume 9.75
+o Kramer Dorian ** 8.50
++ Vachoud Alain 9.75
+- Emonet Fabien ** 9.00
+- Stoll Thomas * 8.75
+12b Vonlanthen Alexandre 54.50
+- Loup Grégoire 8.75
++ Menoud Liam 10.00
+o Ducrest Etienne * 8.50
++ Leuenberger Gian 9.75
+- Krebs Clemens * 8.75
+o Pasquier Loïc * 8.75
+12c Loup Alexandre * 54.50
++ Ducrest Etienne * 10.00
++ Burri Flemming 10.00
+o Kramer Lario *** 8.50
+o Pasquier Loïc * 8.50
+- Gottofrey Luc * 8.75
+- Erb Vincent 8.75
+12d Dorsaz Théo * 54.50
+o Schmid Romain * 8.50
+o Ducrest Etienne * 8.50
+- Burri Flemming 9.00
+- Perret Loïc 8.75
++ Linder Laurent 9.75
++ Grandgirard Nathan 10.00
+12e Zryd Teo 54.50
+o Suchet Yannick 8.50
++ Saudan Edouard 10.00
+o Schmid Romain * 8.50
+o Bapst Ludovic * 8.50
+- Evard Melvin 9.00
++ Beuret Valentin 10.00
+13a Barras André * 54.25
+- Stoll Thomas * 8.75
+- Collaud Bastien * 8.75
++ Krebs Clemens * 9.75
++ Menoud Liam 9.75
+- Balimann Sandro * 8.75
+o Fankhauser Hans * 8.50
+13b Gilgen Cédric 54.25
+- Bapst Ludovic * 8.75
++ Perroud Florian 9.75
+o Balimann Fabian * 8.50
+o Emonet Fabien ** 8.50
++ Crausaz Gaetan 9.75
+- Jacquaz Fabien 9.00
+13c Burri Flemming 54.25
++ Cerf Quentin 10.00
+o Loup Alexandre * 8.50
+- Dorsaz Théo * 8.75
++ Beuret Valentin 9.75
+o Collaud Bastien * 8.50
+- Suchet Yannick 8.75
+13d Dupertuis Guillaume 54.25
+- Saudan Edouard 8.75
+o Tschanz Jeremy 8.50
+o Evard Melvin 8.75
++ Linder Laurent 9.75
+o Leuenberger Gian 8.50
++ Crausaz Gaetan 10.00
+13e Leuenberger Gian 54.25
+o Erb Vincent 8.50
++ Evard Melvin 10.00
+o Emonet Frédéric ** 8.50
+o Vonlanthen Alexandre 8.75
++ Dupertuis Guillaume 10.00
+o Gottofrey Luc * 8.50
+14a Schmid Romain * 54.00
++ Dorsaz Théo * 9.75
+o Gapany Benjamin *** 8.50
++ Zryd Teo 9.75
+- Balimann Fabian * 8.75
+- Jacquaz Fabien 8.75
+o Schär Alex * 8.50
+14b Linder Laurent 54.00
+- Evard Melvin 8.75
+- Berger Dilan 8.75
+o Dupertuis Guillaume 8.50
++ Tuscher Esteban 9.75
+o Dorsaz Théo * 8.50
++ Ulrich Nicolas 9.75
+14c Jacquaz Fabien 54.00
+- Tschanz Jeremy 8.75
++ Grandgirard Nathan 10.00
+- Balimann Sandro * 8.75
+- Loup Grégoire 9.00
+- Schmid Romain * 8.75
+- Gilgen Cédric 8.75
+14d Berger Dilan 54.00
+- Fankhauser Tom 9.00
+- Linder Laurent 9.00
+- Emonet Fabien ** 9.00
+o Krebs Clemens * 8.50
++ Perroud Florian 9.75
+o Bapst Ludovic * 8.75
+15a Perroud Florian 53.75
+o Perret Loïc 8.50
+o Gilgen Cédric 8.50
++ Cerf Quentin 10.00
+o Balimann Sandro * 8.50
+o Berger Dilan 8.50
++ Tuscher Esteban 9.75
+15b Menoud Liam 53.75
+o Collaud Bastien * 8.50
+o Vonlanthen Alexandre 8.50
++ Grandgirard Nathan 9.75
+o Barras André * 8.50
++ Ulrich Nicolas 10.00
+o Portmann Fabio * 8.50
+16a Vachoud Alain 53.50
++ Tuscher Esteban 9.75
+o Baeriswyl Christoph ** 8.50
+o Collaud Bastien * 8.50
+o Tschanz Jeremy 8.50
+o Beuret Valentin 8.50
++ Cerf Quentin 9.75
+16b Grandgirard Nathan 53.50
+o Beuret Valentin 8.50
+o Jacquaz Fabien 8.50
+o Menoud Liam 8.50
++ Cerf Quentin 9.75
++ Tuscher Esteban 9.75
+o Dorsaz Théo * 8.50
+16c Beuret Valentin 53.50
++ Grandgirard Nathan 9.75
+o Schär Alex * 8.50
+o Stoll Thomas * 8.50
+o Burri Flemming 8.50
++ Vachoud Alain 9.75
+o Zryd Teo 8.50
+17a Perret Loïc 53.25
++ Perroud Florian 9.75
+o Emonet Frédéric ** 8.50
+- Suchet Yannick 9.00
+- Dorsaz Théo * 8.75
+- Fankhauser Tom 8.75
+o Loup Grégoire 8.50
+17b Evard Melvin 53.25
+- Linder Laurent 8.75
+o Leuenberger Gian 8.50
++ Dupertuis Guillaume 10.00
+o Schläfli Hugo ** 8.50
+- Zryd Teo 9.00
+o Fankhauser Tom 8.50
+18 Krebs Clemens * 53.00
+o Pasquier Loïc * 8.50
+- Suchet Yannick 8.75
+o Barras André * 8.75
++ Berger Dilan 9.75
+- Vonlanthen Alexandre 8.75
+o Emonet Fabien ** 8.50
+Belfaux Quelle: ESV 19.04.2024 21:5519a Ulrich Nicolas 52.50
++ Crausaz Gaetan 10.00
+o Fankhauser Hans * 8.50
+o Schläfli Hugo ** 8.50
+o Erb Vincent 8.50
+o Menoud Liam 8.50
+o Linder Laurent 8.50
+19b Tuscher Esteban 52.75
+o Vachoud Alain 8.50
+o Bapst Ludovic * 8.50
+o Crausaz Gaetan 8.50
+o Linder Laurent 8.50
+o Grandgirard Nathan 8.50
++ Cerf Quentin 10.00
+o Perroud Florian 0.25
+19c Crausaz Gaetan 52.50
+o Ulrich Nicolas 8.75
+o Fankhauser Tom 8.50
++ Tuscher Esteban 9.75
+o Baeriswyl Christoph ** 8.50
+o Gilgen Cédric 8.50
+o Dupertuis Guillaume 8.50
+20 Cerf Quentin 51.00
+o Burri Flemming 8.50
+o Loup Grégoire 8.50
+o Perroud Florian 8.50
+o Grandgirard Nathan 8.50
+o Tuscher Esteban 8.50
+o Vachoud Alain 8.50
+21 Saudan Edouard 17.25
+- Dupertuis Guillaume 8.75
+o Zryd Teo 8.50
+* Kantonal- bzw. Gauverbandskranzschwinger ** Teilverbandskranzschwinger *** Eidg. Kranzschwinger
+Belfaux Quelle: ESV 19.04.2024 21:55

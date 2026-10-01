@@ -7,6 +7,7 @@ beautifulsoup4>=4.12,<5
 selectolax>=0.3,<1
 tenacity>=9,<10
 tqdm>=4.66,<5
+pypdfium2>=4,<6  # PDFium text extraction of the "Statistische Tabelle" PDFs (tolerates malformed files)
 
 # Processing / storage
 pandas>=2.2,<3

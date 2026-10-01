@@ -1,0 +1,516 @@
+{
+ "data": [
+  {
+   "type": "node--event",
+   "id": "31275eff-4d5c-485a-9b07-924fa5ef5872",
+   "attributes": {
+    "drupal_internal__nid": 26400,
+    "path": {
+     "alias": "/event/bruenig-schwinget-2011",
+     "pid": 26280,
+     "langcode": "de"
+    },
+    "field_event_date": "2011-07-31",
+    "field_title_custom": "Brünig-Schwinget 2011",
+    "title": "Brünig-Schwinget 2011 31.07.2011 (1255) ()",
+    "field_event_esv_id": 1255,
+    "field_event_location": "Brünig-Passhöhe",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "790b638a-498b-4bc0-8858-b9a7f46b4ae0",
+      "meta": {
+       "drupal_internal__target_id": 12
+      }
+     }
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": [
+      {
+       "type": "file--file",
+       "id": "f874ee8e-bf9e-48ca-89b7-548195efd44e",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste",
+        "drupal_internal__target_id": 11227
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "71448644-4e0e-4cc2-9801-de4133fb39a9",
+       "meta": {
+        "display": true,
+        "description": "Statistik",
+        "drupal_internal__target_id": 11228
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "3590cf92-f097-4e31-a544-15d8744871dd",
+   "attributes": {
+    "drupal_internal__nid": 24110,
+    "path": {
+     "alias": "/event/eidgenoessisches-schwing-und-aelplerfest-zug-2019",
+     "pid": 23993,
+     "langcode": "de"
+    },
+    "field_event_date": "2019-08-24",
+    "field_title_custom": "Eidgenössisches Schwing- und Älplerfest Zug 2019",
+    "title": "Eidgenössisches Schwing- und Älplerfest Zug 2019 24.08.2019 () ()",
+    "field_event_esv_id": null,
+    "field_event_location": "Zug",
+    "field_event_participant_count": null,
+    "field_event_state": null,
+    "field_event_type": null
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+      "meta": {
+       "drupal_internal__target_id": 11
+      }
+     }
+    },
+    "field_event_association": {
+     "data": null
+    },
+    "field_event_pdf": {
+     "data": [
+      {
+       "type": "file--file",
+       "id": "05337797-abec-4ebe-b545-023931b00c6c",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste",
+        "drupal_internal__target_id": 6529
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "a7f54b08-a943-4217-bb71-9fa6fa27f568",
+       "meta": {
+        "display": true,
+        "description": "Statistik",
+        "drupal_internal__target_id": 6530
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "7504be19-0906-41aa-aa2a-a9b8b4c90913",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste Steinstossen 83,5-kg-Stein",
+        "drupal_internal__target_id": 6531
+       }
+      },
+      {
+       "type": "file--file",
+       "id": "130f7bb4-12b2-4d73-8ff6-8b1f9fd2ce5f",
+       "meta": {
+        "display": true,
+        "description": "Schlussrangliste Steinstossen (ohne Final 83,5-kg-Stein)",
+        "drupal_internal__target_id": 6532
+       }
+      }
+     ]
+    },
+    "field_final_ranking_pdf": {
+     "data": null
+    },
+    "field_final_statistic_pdf": {
+     "data": null
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "aee12f6c-ee7e-4880-b7dc-46e83dfa2e6e",
+   "attributes": {
+    "drupal_internal__nid": 37052,
+    "title": "Scheidegg-Schwinget ob Grindelwald 2024 27.07.2024 (6494) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/scheidegg-schwinget-ob-grindelwald-2024",
+     "pid": 33202,
+     "langcode": "de"
+    },
+    "field_event_date": "2024-07-27",
+    "field_event_esv_id": 6494,
+    "field_event_location": "Grindelwald",
+    "field_event_participant_count": 47,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Scheidegg-Schwinget ob Grindelwald 2024"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "1e4e8b7e-6f01-4ac9-bb3f-67441b2c09b3",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 88517
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "e1ecd06d-2c02-4614-84f9-3eea04769da9",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 88519
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "6d0f5683-9ac6-4d8a-96bb-f16789f03aee",
+   "attributes": {
+    "drupal_internal__nid": 45965,
+    "title": "Hallenschwinget Kirchberg 2025 08.02.2025 (6828) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/hallenschwinget-kirchberg-2025",
+     "pid": 35025,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-02-08",
+    "field_event_esv_id": 6828,
+    "field_event_location": "Kirchberg",
+    "field_event_participant_count": 67,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Hallenschwinget Kirchberg 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+      "meta": {
+       "drupal_internal__target_id": 26
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "5f4d2d21-0a5a-443f-8027-9d36efc2e49d",
+      "meta": {
+       "display": null,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 90276
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "3a699921-9b1e-4a58-a57c-eddf8736026f",
+      "meta": {
+       "display": null,
+       "description": "Statistik",
+       "drupal_internal__target_id": 90278
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--event",
+   "id": "b1e73ba5-0d35-485e-889a-648bac852c2c",
+   "attributes": {
+    "drupal_internal__nid": 46055,
+    "title": "Klewenalp-Schwinget 2025 02.08.2025 (6878) (Aktivschwinger)",
+    "path": {
+     "alias": "/event/klewenalp-schwinget-2025",
+     "pid": 35092,
+     "langcode": "de"
+    },
+    "field_event_date": "2025-08-02",
+    "field_event_esv_id": 6878,
+    "field_event_location": "Klewenalp",
+    "field_event_participant_count": 99,
+    "field_event_state": "finished",
+    "field_event_type": "Aktivschwinger",
+    "field_title_custom": "Klewenalp-Schwinget 2025"
+   },
+   "relationships": {
+    "field_category": {
+     "data": {
+      "type": "taxonomy_term--event_tags",
+      "id": "9db61825-e444-4538-b86b-e7900bd36604",
+      "meta": {
+       "drupal_internal__target_id": 15
+      }
+     }
+    },
+    "field_event_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+      "meta": {
+       "drupal_internal__target_id": 27
+      }
+     }
+    },
+    "field_event_pdf": {
+     "data": []
+    },
+    "field_final_ranking_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "116e5e49-5234-4170-93b0-5cd5e740fb68",
+      "meta": {
+       "display": true,
+       "description": "Schlussrangliste",
+       "drupal_internal__target_id": 94518
+      }
+     }
+    },
+    "field_final_statistic_pdf": {
+     "data": {
+      "type": "file--file",
+      "id": "bf540b13-67c2-4f1a-91c5-62c8c82e4a13",
+      "meta": {
+       "display": true,
+       "description": "Statistik",
+       "drupal_internal__target_id": 94520
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "9db61825-e444-4538-b86b-e7900bd36604",
+   "attributes": {
+    "name": "Regionalfeste",
+    "drupal_internal__tid": 15
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "a20757e0-0043-41bb-a3a3-0df836eff5b2",
+   "attributes": {
+    "drupal_internal__tid": 27,
+    "name": "Innerschweiz"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "116e5e49-5234-4170-93b0-5cd5e740fb68",
+   "attributes": {
+    "filename": "46055-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/46055-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/46055-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "bf540b13-67c2-4f1a-91c5-62c8c82e4a13",
+   "attributes": {
+    "filename": "46055-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/46055-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/46055-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "29c06639-c4e4-4fe8-a24e-c964f2cf5d07",
+   "attributes": {
+    "name": "Eidgenössische Anlässe",
+    "drupal_internal__tid": 11
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "05337797-abec-4ebe-b545-023931b00c6c",
+   "attributes": {
+    "filename": "schlussrangliste_367.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/schlussrangliste_367.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/schlussrangliste_367.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "a7f54b08-a943-4217-bb71-9fa6fa27f568",
+   "attributes": {
+    "filename": "schlussstatistik.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/schlussstatistik.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/schlussstatistik.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "7504be19-0906-41aa-aa2a-a9b8b4c90913",
+   "attributes": {
+    "filename": "rl_steinstossen-us-stein.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/rl_steinstossen-us-stein.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/rl_steinstossen-us-stein.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "130f7bb4-12b2-4d73-8ff6-8b1f9fd2ce5f",
+   "attributes": {
+    "filename": "steinstossen-rl.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/steinstossen-rl.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/steinstossen-rl.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "38e7d921-b21e-4359-8ba0-6e50b00fb5b6",
+   "attributes": {
+    "drupal_internal__tid": 26,
+    "name": "Bern"
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "1e4e8b7e-6f01-4ac9-bb3f-67441b2c09b3",
+   "attributes": {
+    "filename": "37052-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/37052-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/37052-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "e1ecd06d-2c02-4614-84f9-3eea04769da9",
+   "attributes": {
+    "filename": "37052-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/37052-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/37052-statistic-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "taxonomy_term--event_tags",
+   "id": "790b638a-498b-4bc0-8858-b9a7f46b4ae0",
+   "attributes": {
+    "name": "Bergkranzfest",
+    "drupal_internal__tid": 12
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "f874ee8e-bf9e-48ca-89b7-548195efd44e",
+   "attributes": {
+    "filename": "rl_bruenig.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/rl_bruenig.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/rl_bruenig.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "71448644-4e0e-4cc2-9801-de4133fb39a9",
+   "attributes": {
+    "filename": "stat_bruenig.pdf",
+    "uri": {
+     "value": "public://public://schlussrangliste-pdfs/stat_bruenig.pdf.pdf",
+     "url": "/sites/default/files/public%3A//schlussrangliste-pdfs/stat_bruenig.pdf.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "5f4d2d21-0a5a-443f-8027-9d36efc2e49d",
+   "attributes": {
+    "filename": "45965-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/45965-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/45965-final.pdf"
+    }
+   }
+  },
+  {
+   "type": "file--file",
+   "id": "3a699921-9b1e-4a58-a57c-eddf8736026f",
+   "attributes": {
+    "filename": "45965-statistic-final.pdf",
+    "uri": {
+     "value": "public://event-ranking-list/45965-statistic-final.pdf",
+     "url": "/sites/default/files/event-ranking-list/45965-statistic-final.pdf"
+    }
+   }
+  }
+ ],
+ "links": {}
+}

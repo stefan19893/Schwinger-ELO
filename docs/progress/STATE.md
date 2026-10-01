@@ -1,15 +1,15 @@
 # Project State
 
-**Last updated:** 2026-09-29
-**Current phase:** 1 — Festival crawler (in review, branch `phase-1-crawler`)
-**Next action:** Phase 1 reviewed and review fixes committed on `phase-1-crawler` — coordinator pushes and opens the PR; then ask the user before starting Phase 2 (read "Known risks from Phase 1 review" in phase-2-parser.md first).
+**Last updated:** 2026-10-01
+**Current phase:** 2 — Bout parser (in review — re-review passed, follow-ups done, branch `phase-2-parser`)
+**Next action:** push + PR, then ask the user before Phase 3. (Phase 2 re-review passed 2026-10-01; post-review follow-ups R6 done, parser v3 / schema v5, real DB re-parsed: 491,676 bouts.)
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
-| 1 | Festival crawler | M1 | `phase-1-crawler.md` | in review |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | not started |
+| 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | in review |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
@@ -59,8 +59,45 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-09-29 — **User decision:** Kilchberger Schwinget, Unspunnen-Schwinget and ESV Jubiläumsschwingfest move to the ESAF tier (`category='ESAF'`, K = 48) — festivals with eidgenössischem Charakter awarding the eidgenössischer Kranz (reference data). New column `festivals.eidg_type` (`ESAF`/`Kilchberg`/`Unspunnen`/`Jubilaeum`, set iff category = ESAF; the real ESAF is `eidg_type='ESAF'`); schema `user_version` 2 with an in-place migration (ADD COLUMN, old ESAF rows → 'ESAF'). Unknown competitive tid-11 events keep the Bergkranz fallback.
 - 2026-09-29 — **User decision:** Gauverband K = 24, same as Kantonal — the reference groups Kantonal- and Gauverbandsfeste as one Kranzfest tier; separate category labels kept.
 - 2026-09-29 — User-supplied tier reference `src/scraper/reference/schwingfeste_schweiz.json` is used to *validate* (not override) the mapping: tests over all reference names + schlussgang spellings, and a crawl-time warning for active tid 11–14 festivals. Documented supplements in `src/scraper/festival_reference.py`: "Bern-Jurassisches Schwingfest" = Gauverband (real BKSV Gau festival the reference omits; BKSV has 6 Gaue) and the spelling "Basellandschaftliches". Not in the reference but correctly Kantonal: Tessiner, Jurassisches, "Baselbieter" Kantonalschwingfest, Jubiläums-Schwingfest 100 J. UKSV 2017.
+- 2026-09-29 — PDF library = **pypdfium2** (PDFium; BSD/Apache) instead of pypdf — pypdf fails on malformed sheets (2013 Binningen), PDFium reads all 1879 in 11 s with identical text on normal sheets.
+- 2026-09-29 — `crawl` downloads the statistic PDFs of active, non-cancelled festivals after the listings (`--no-pdfs` to skip); own cap `pdf_max_requests = 2500`; past-season PDFs cached forever, current-season PDFs re-checked after 24 h until fetched ≥ 14 days after the festival (`pdf_max_age_hours`, `pdf_final_grace_days`); stops after 10 consecutive download errors. `parse` works offline on the cache (spec §5).
+- 2026-09-29 — **Correction:** statistic-sheet symbols are `+` win, `-` gestellt (draw), `o`/`0` loss. The Phase 1 note "Schlussgang loser printed as `o`" was a misreading — `o` is the normal loss symbol.
+- 2026-09-29 — Bouts are built by pairing both athletes' entries; unpaired/unresolvable entries are rejects (not one-sided bouts) — both grades are needed for the MoV multiplier and one-sided entries are mostly source errors.
+- 2026-09-29 — ~~Injury-decided bouts (`u`, `> unfall`, 0.00 grade) are rejected as `forfeit_injury`~~ **SUPERSEDED 2026-10-01 by user decisions (extra bouts kept, see below).** Genuine injuries/forfeits stay rejected.
+- 2026-09-29 — Gang number = position in the complete list (or the larger position); flagged `gang_inferred`/`gang_uncertain` when list positions disagree (~1 % of bouts) — only used to order bouts within a festival.
+- 2026-09-29 — Same-name athletes in one sheet are disambiguated by the mirror entry; raw names (suffixes "1"/"2", birth years, S/T markers) are kept for Phase 3.
+- 2026-09-29 — (**confirmed by user 2026-10-01**, see below) `parse_min_pair_rate = 0.5`: sheets where < 50 % of entries pair into bouts are treated as structurally unreliable and import no bouts (25 festivals / ~800 bouts in the dry run) — better to lose a few bouts than import misassigned ones. Max Gänge: 8 for the ESAF itself (`eidg_type='ESAF'`), else 6.
+- 2026-09-30 — Schema v3: `festivals.event_flags` + `elo_eligible`, tables `festival_parse`, `athletes_raw`, `bouts`, `parse_rejects` (bout athlete ids are per-sheet `athletes_raw` ids until Phase 3 identity resolution). `parse` is incremental on PDF sha256 + `PARSER_VERSION`.
+- 2026-09-30 — ~~AWAITING USER CONFIRMATION — borderline events~~ **resolved 2026-10-01 by user decision (see below).** Original proposal: team + Ausland excluded via `elo_exclude_flags`, Jungaktive/U20 and Hallenschwinget included.
+
+- 2026-10-01 — **User decision (Phase 2 review): keep extra bouts (Zusatzgang).** With an odd field one athlete fights an extra 7th (9th at ESAF) bout; his line shows 0.00 / 0.25 / no grade while the opponent's line is normal. Both entries are paired, the outcome comes from both symbols, the placeholder grade is stored as NULL and the bout is flagged `extra_bout`. `bouts.grade_a/grade_b` become nullable (schema v4, CHECK: NULL only with an explanatory flag). Phase 4 uses the outcome and skips the MoV multiplier for these bouts.
+- 2026-10-01 — **User decision: genuine injuries / forfeits stay rejected** as `forfeit_injury` (`u`, `> unfall`, 0.00 that is not an extra bout; ~45 cases, mostly Gänge 1–5).
+- 2026-10-01 — **User decision: borderline events confirmed** — `elo_exclude_flags = "team,ausland"`; Jungaktive/U20 and Hallenschwinget count toward ELO.
+- 2026-10-01 — **User decision: `parse_min_pair_rate = 0.5` confirmed** — sheets with a pair rate below 0.5 import no bouts.
+- 2026-10-01 — **User decision: rescue old layouts** (6 failed Kantonalfeste 2011–2015, weak 2012–2014 multicol/blocks/notenblatt sheets, ESAF 2013), prioritised by K-factor and timeboxed; truncated source sheets (e.g. Klewenalp 2013) are documented, not chased.
+- 2026-10-01 — **User decision: nothing bout-like may vanish** — wrapped and missing-grade lines are parsed where the mirror exists; every other bout-like line is stored as a `parse_rejects` row.
+- 2026-10-01 — Extra-bout detection rule: placeholder (0.00 / 0.25), no-grade or `z` entry of an athlete with more entries than the festival's Gang count → paired with its mirror, outcome from complementary symbols, NULL grade, flag `extra_bout`, Gang = opponent's position; the same entry types in a regular Gang stay `forfeit_injury` — corpus survey separates both cleanly (details: phase-2 handoff R1/R2).
+- 2026-10-01 — **Extension of the user decision (confirmed by user 2026-10-01, see below):** a no-grade line in a *regular* Gang whose mirror is complete and consistent is kept as a bout with NULL grade and flag `grade_missing` (2 bouts in the corpus); the bouts CHECK therefore allows NULL grades with `extra_bout` **or** `grade_missing` — the user asked to parse missing-grade lines whose mirror exists, and fabricating a grade is not an option.
+- 2026-10-01 — Schema v4: nullable `bouts.grade_a/grade_b` (CHECK above), `festival_parse.n_gaenge`; migration rebuilds the v3 `bouts` table. `PARSER_VERSION` 2.
+- 2026-10-01 — Festival Gang count derived per sheet (`festival_gang_count`: ≥ 10 % of athletes, min. 2, clamped to 8 ESAF / 6 else) — recognises 5-Gang festivals; no genuine 7/8-Gang festival besides the ESAF exists in the corpus, so the category cap stays.
+- 2026-10-01 — Sheets shared by the `--sample` dataset and parser tests are stored once, in `tests/fixtures/sample/statistic/` (`tests/fixture_paths.py` resolves both directories) — review should-fix (duplicate fixtures).
+- 2026-10-01 — Header check ignores print timestamps (date + clock time) and allows ±3 days — review should-fix; Krummenau 2015 (sheet 06.09., schlussgang 13.09.) stays `header_mismatch` as probable wrong schlussgang metadata.
+- 2026-10-01 — `bouts.schlussgang` is NULL (unknown) unless the sheet marks the Schlussgang explicitly (`s+` in block layouts, 13 sheets) — no reliable marker exists elsewhere; a NULL is better than a misleading 0 (review should-fix).
+- 2026-10-01 — Glyph-id text layers are decoded (`decode_glyph_ids`: standard Macintosh glyph order exact; per-document non-ASCII glyphs → `?`, informational reject `glyph_ids_decoded_lossy`) — rescues Thurgau 2015 and 9 Regional sheets; lossy names need fuzzy matching in Phase 3.
+- 2026-10-01 — R4 timebox stopped with all Kranzfeste parsed except Freiburg 2012 and Genf 2013 (source limitations); remaining loss is mostly truncated source sheets (top ranks only) and one-off Regional layouts.
+- 2026-10-01 — **User decision: `grade_missing` confirmed** — no-grade lines in a regular Gang with a consistent mirror stay bouts with a NULL grade; Phase 4 treats them like extra bouts (outcome only, no MoV).
+- 2026-10-01 — **User decision: ESAF 2013 supplement** — fetch the "Statistik nach 4 Gängen" PDF (exactly the needed request, via HttpClient, cached) and merge it so the 77 athletes eliminated after Gang 4 get their Gänge 1–4; de-duplicate against the final sheet. Other truncated festivals with interim sheets are only listed, not fetched.
+- 2026-10-01 — **User decision: one-sided Schlussgang bouts** — where a sheet omits the Schlussgang loser's line entirely, keep the bout from the winner's entry alone, only if the opponent resolves to exactly one athlete and the entry is the athlete's final Gang; loser grade NULL, flag `one_sided`, Phase 4 outcome-only. Narrow rule — other unmatched entries stay rejects.
+- 2026-10-01 — Schema v5 / parser v3: `one_sided` allowed in the NULL-grade CHECK, `athletes_raw.flags` (`entries_overflow`, `interim_sheet`); migration rebuilds `bouts` when its CHECK lacks a NULL-grade flag.
+- 2026-10-01 — Interim sheets only via the explicit registry `supplements.INTERIM_SHEETS` (ESAF 2013 only; 1 request made). The fetched sheet is itself truncated (+3 bouts); further ESAF 2013 interim sheets ("nach 2/3 Gängen") would need a new user OK.
+- 2026-10-01 — One-sided rule narrowed further than the user's wording: the winner must be rank 1, the entry a graded `+`, the opponent's list complete and without any entry against him — keeps it to the Schlussgang (16 bouts).
+- 2026-10-01 — Reviewer suggestions applied: `schlussgang` NULL for a festival whose marked bout isn't imported; `entries_overflow` (> Gänge + 1 entries) disables extra-bout logic and flags the athlete; permanent duplicate-content check (`flag_duplicate_sheets`: same sha256 or ≥ 80 % identical bouts → status `duplicate_sheet`, verified header / earlier festival keeps the bouts).
 
 ## Open questions
+- ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
+- ~~One-sided Schlussgang entries~~ — resolved 2026-10-01 by user decision (keep, flag `one_sided`).
+- Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang? (Phase 2 review recommends once per festival or per Ausstich phase; see `phase-4-elo.md`.)
+- ~~Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse~~ — resolved 2026-10-01 (4 rescued; Freiburg 2012 and Genf 2013 are source limitations).
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
 - schlussgang lists only 3 Regional festivals for 2011 (vs ~100/year later) — accept the gap, or start ratings with a 2011 burn-in season? → decide in Phase 4.
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.

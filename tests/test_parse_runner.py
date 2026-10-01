@@ -1,0 +1,176 @@
+"""Batch parse into SQLite (offline: fixture PDFs served via MockTransport)."""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import random
+from dataclasses import replace
+from pathlib import Path
+
+import httpx
+import pytest
+from tenacity import wait_none
+
+from src.db import Festival, connect, upsert_festivals
+from src.scraper import parse_runner as pr
+from src.scraper.client import HttpClient
+
+from tests.fixture_paths import STATISTIC as FIX
+from tests.fixture_paths import sheet_file
+
+META = json.loads((FIX / "festivals.json").read_text(encoding="utf-8"))
+TODAY = dt.date(2026, 9, 30)
+
+
+def fest(fid: int) -> Festival:
+    m = {k: v for k, v in META[str(fid)].items() if k != "fixture_note"}
+    return Festival(**m)
+
+
+def client(tmp_path: Path, pdfs: dict[str, bytes], offline: bool) -> HttpClient:
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = pdfs.get(str(req.url))
+        return httpx.Response(200, content=body) if body is not None else httpx.Response(404)
+    return HttpClient(tmp_path / "raw", "test", transport=httpx.MockTransport(handler),
+                      offline=offline, retry_wait=wait_none(), sleep=lambda s: None,
+                      rng=random.Random(0))
+
+
+@pytest.fixture
+def setup(tmp_path: Path) -> tuple[Path, list[Festival]]:
+    """DB with 2 real festivals (PDF cached), 1 without PDF, 1 not cached, 1 corrupt."""
+    kle, kir = fest(46055), fest(45965)
+    no_pdf = replace(fest(37052), statistic_pdf_url=None)
+    missing = replace(fest(21055), statistic_pdf_url="https://www.schlussgang.ch/x/missing.pdf")
+    corrupt = replace(fest(24110), statistic_pdf_url="https://www.schlussgang.ch/x/corrupt.pdf")
+    fests = [kle, kir, no_pdf, missing, corrupt]
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, fests)
+    conn.close()
+    pdfs = {kle.statistic_pdf_url: sheet_file("46055.pdf").read_bytes(),
+            kir.statistic_pdf_url: sheet_file("45965.pdf").read_bytes(),
+            corrupt.statistic_pdf_url: b"%PDF-1.4 not really a pdf"}
+    with client(tmp_path, pdfs, offline=False) as c:  # simulate `crawl` filling the cache
+        for f in (kle, kir, corrupt):
+            c.get(f.statistic_pdf_url)  # type: ignore[arg-type]
+    return tmp_path, fests
+
+
+def run(tmp_path: Path, **kw: object) -> pr.ParseRunReport:
+    conn = connect(tmp_path / "s.db")
+    with client(tmp_path, {}, offline=True) as c:
+        rep = pr.parse_all(conn, c, today=TODAY, **kw)  # type: ignore[arg-type]
+    conn.close()
+    return rep
+
+
+def test_parse_all_stores_everything(setup: tuple[Path, list[Festival]]) -> None:
+    tmp_path, _ = setup
+    rep = run(tmp_path)
+    assert rep.status == {"ok": 2, "no_pdf": 1, "pdf_not_cached": 1, "pdf_error": 1}
+    conn = connect(tmp_path / "s.db")
+    q = lambda s: [tuple(r) for r in conn.execute(s).fetchall()]  # noqa: E731
+    assert q("SELECT COUNT(*) FROM bouts") == [(274 + 198,)]
+    assert q("SELECT COUNT(*) FROM athletes_raw") == [(99 + 67,)]
+    status = dict(q("SELECT fest_id, status FROM festival_parse"))
+    assert status == {46055: "ok", 45965: "ok", 37052: "no_pdf", 21055: "pdf_not_cached",
+                      24110: "pdf_error"}
+    reasons = {r for (r,) in q("SELECT DISTINCT reason FROM parse_rejects")}
+    assert {"no_statistic_pdf", "pdf_not_cached", "pdf_unreadable"} <= reasons
+    # Kirchberg's two 0.00 lines are extra bouts with a NULL grade (schema v4 CHECK)
+    assert q("SELECT COUNT(*) FROM bouts WHERE grade_a IS NULL OR grade_b IS NULL") == [(2,)]
+    assert q("SELECT COUNT(*) FROM bouts WHERE flags LIKE '%extra_bout%'") == [(2,)]
+    assert q("SELECT n_gaenge FROM festival_parse WHERE fest_id=45965") == [(6,)]
+    assert q("SELECT n_bouts, n_entries, parser_version FROM festival_parse WHERE fest_id=46055") \
+        == [(274, 548, pr.PARSER_VERSION)]
+
+
+def test_parse_is_incremental(setup: tuple[Path, list[Festival]]) -> None:
+    tmp_path, _ = setup
+    run(tmp_path)
+    rep = run(tmp_path)
+    # unchanged: 2 parsed sheets, no_pdf, and the corrupt PDF (same sha); only the
+    # missing PDF is re-checked (it may have been downloaded meanwhile)
+    assert rep.unchanged == 4 and rep.status == {"pdf_not_cached": 1}
+    forced = run(tmp_path, force=True)
+    assert forced.unchanged == 0 and forced.bouts == 274 + 198
+
+
+def test_reparse_replaces_rows(setup: tuple[Path, list[Festival]]) -> None:
+    tmp_path, _ = setup
+    run(tmp_path)
+    run(tmp_path, force=True)
+    conn = connect(tmp_path / "s.db")
+    assert conn.execute("SELECT COUNT(*) FROM bouts").fetchone()[0] == 274 + 198
+
+
+def test_low_pair_rate_setting_is_applied(setup: tuple[Path, list[Festival]]) -> None:
+    tmp_path, _ = setup
+    rep = run(tmp_path, min_pair_rate=1.01)  # both sheets pair 100 % -> both below
+    assert rep.status["failed"] == 2 and rep.rejects["low_pair_rate"] == 2
+
+
+# ------------------------------------------------------------------ duplicate content
+def test_identical_pdf_under_two_festivals_is_flagged(tmp_path: Path) -> None:
+    """Safeguard (e.g. 'unverified' headers): the same sheet is imported only once."""
+    kir = fest(45965)
+    twin = replace(kir, fest_id=99001, date="2025-02-09",
+                   statistic_pdf_url="https://www.schlussgang.ch/x/twin.pdf")
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, [kir, twin])
+    conn.close()
+    body = sheet_file("45965.pdf").read_bytes()
+    with client(tmp_path, {kir.statistic_pdf_url: body, twin.statistic_pdf_url: body},
+                offline=False) as c:
+        for f in (kir, twin):
+            c.get(f.statistic_pdf_url)  # type: ignore[arg-type]
+    rep = run(tmp_path)
+    assert [(k, d) for k, d, _ in rep.duplicates] == [(45965, 99001)]
+    conn = connect(tmp_path / "s.db")
+    status = dict(conn.execute("SELECT fest_id, status FROM festival_parse").fetchall())
+    assert status == {45965: "ok", 99001: "duplicate_sheet"}
+    assert conn.execute("SELECT COUNT(*) FROM bouts WHERE fest_id=99001").fetchone()[0] == 0
+    assert conn.execute("SELECT reason FROM parse_rejects WHERE fest_id=99001").fetchall()[-1][0] \
+        == "duplicate_sheet"
+
+
+def test_near_identical_bouts_are_flagged(tmp_path: Path) -> None:
+    """Different files (PDF vs. extracted text) with the same bouts -> duplicate."""
+    from src.scraper.statistic_pdfs import pdf_to_text
+    d = tmp_path / "sheets"
+    d.mkdir()
+    kir = fest(45965)
+    twin = replace(kir, fest_id=99002, date="2025-02-10")
+    (d / "45965.pdf").write_bytes(sheet_file("45965.pdf").read_bytes())
+    (d / "99002.txt").write_text(pdf_to_text(sheet_file("45965.pdf").read_bytes()),
+                                 encoding="utf-8")
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, [kir, twin])
+    rep = pr.parse_from_dir(conn, d)
+    assert len(rep.duplicates) == 1 and rep.duplicates[0][:2] == (45965, 99002)
+    assert "bouts identical" in rep.duplicates[0][2]
+
+
+# ------------------------------------------------------------------ interim sheets
+def test_interim_sheet_is_merged_or_reported(tmp_path: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registered interim sheet is fetched from the cache and merged; a cache miss
+    is recorded as a reject (parse never downloads)."""
+    from src.scraper import supplements
+    kle = fest(46055)
+    url = "https://www.schlussgang.ch/x/interim.pdf"
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, [kle])
+    conn.close()
+    with client(tmp_path, {kle.statistic_pdf_url: sheet_file("46055.pdf").read_bytes()},
+                offline=False) as c:
+        c.get(kle.statistic_pdf_url)  # type: ignore[arg-type]
+    monkeypatch.setitem(supplements.INTERIM_SHEETS, 46055, url)
+    rep = run(tmp_path)
+    assert rep.rejects["interim_sheet_not_cached"] == 1 and rep.bouts == 274
+    with client(tmp_path, {url: sheet_file("46055.pdf").read_bytes()}, offline=False) as c:
+        c.get(url)  # the same sheet as "interim": nothing new to merge
+    rep = run(tmp_path)  # content hash changed -> re-parsed
+    assert rep.parsed == 1 and rep.rejects["interim_sheet_merged"] == 1 and rep.bouts == 274
+

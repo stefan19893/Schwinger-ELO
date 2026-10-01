@@ -65,6 +65,20 @@ class Config:
     # (late festivals / late PDF uploads); after that they are cached forever.
     listing_max_age_hours: float = 24.0
     listing_final_grace_days: int = 60
+    # Statistic PDFs (bout source, Phase 2): own request cap per run; PDFs of
+    # past seasons are cached forever, current-season ones are re-checked when
+    # older than pdf_max_age_hours until fetched pdf_final_grace_days after the
+    # festival date.
+    crawl_pdfs: bool = True  # `crawl` also downloads statistic PDFs (--no-pdfs to skip)
+    pdf_max_requests: int = 2500
+    pdf_max_age_hours: float = 24.0
+    pdf_final_grace_days: int = 14
+    # Borderline festivals (festivals.event_flags) excluded from ELO; proposed
+    # default awaiting user confirmation (Phase 2): team events and Ausland.
+    elo_exclude_flags: str = "team,ausland"
+    # Parse (Phase 2): sheets where fewer than this share of entries pair into
+    # bouts are treated as structurally unreliable (no bouts imported).
+    parse_min_pair_rate: float = 0.5
     # Upper bound for honouring a server's Retry-After header (seconds).
     retry_after_max: float = 300.0
     user_agent: str = (
@@ -164,6 +178,17 @@ def load_config(
     if cfg.listing_final_grace_days < 0 or cfg.listing_max_age_hours <= 0:
         raise ValueError("listing_final_grace_days must be >= 0 and "
                          "listing_max_age_hours > 0")
+    if cfg.pdf_max_requests < 0 or cfg.pdf_max_age_hours <= 0 or cfg.pdf_final_grace_days < 0:
+        raise ValueError("pdf_max_requests/pdf_final_grace_days must be >= 0, "
+                         "pdf_max_age_hours > 0")
+    from src.db import EVENT_FLAGS
+    unknown = set(filter(None, (x.strip() for x in cfg.elo_exclude_flags.split(",")))) \
+        - set(EVENT_FLAGS)
+    if unknown:
+        raise ValueError(f"elo_exclude_flags: unknown flags {sorted(unknown)} "
+                         f"(allowed: {', '.join(EVENT_FLAGS)})")
+    if not 0 <= cfg.parse_min_pair_rate <= 1:
+        raise ValueError("parse_min_pair_rate must be within 0..1")
     if cfg.retry_after_max <= 0:
         raise ValueError("retry_after_max must be > 0")
     if not 1 <= cfg.port <= 65535:
