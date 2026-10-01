@@ -1,12 +1,14 @@
 """Statistic-sheet parser tests against saved schlussgang sheets (offline).
 
-Fixtures: ``tests/fixtures/statistic/<fest_id>.txt`` (PDF text extracted with
-PDFium), two real PDFs and ``festivals.json`` (the matching festival rows).
+Fixtures: ``<fest_id>.txt`` (PDF text extracted with PDFium) and two real PDFs in
+``tests/fixtures/statistic/`` or (sheets of the ``--sample`` dataset)
+``tests/fixtures/sample/statistic/``, plus ``statistic/festivals.json`` (festival rows).
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -16,14 +18,14 @@ import pytest
 
 from src.scraper import bouts_parser as bp
 from src.scraper.statistic_pdfs import pdf_to_text
-
-FIX = Path(__file__).parent / "fixtures" / "statistic"
+from tests.fixture_paths import STATISTIC as FIX
+from tests.fixture_paths import sheet_file
 META: dict[str, dict[str, Any]] = json.loads((FIX / "festivals.json").read_text(encoding="utf-8"))
 SHARED_SHEET = {"23796": "23674"}  # Oberarth 2022's sheet is stored once (shared URL)
 
 
 def text(fid: int | str) -> str:
-    return (FIX / f"{SHARED_SHEET.get(str(fid), fid)}.txt").read_text(encoding="utf-8")
+    return sheet_file(f"{SHARED_SHEET.get(str(fid), fid)}.txt").read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=None)
@@ -72,17 +74,42 @@ def test_every_entry_is_accounted_for(fid: int) -> None:
     assert res.entries_total == 2 * len(res.bouts) + entry + 2 * bout
 
 
+@pytest.mark.parametrize("fid", [int(k) for k in META])
+def test_every_bout_like_line_is_accounted_for(fid: int) -> None:
+    """No line that looks like a bout entry vanishes: it is an entry of an athlete, a
+    'line' reject, or part of a youth section (skipped on purpose)."""
+    m = META[str(fid)]
+    sheet = bp.parse_sheet(text(fid), int(m["date"][:4]))
+    if sheet.layout in ("empty", "garbled"):
+        return
+    used = {e.line for b in sheet.blocks for e in b.entries} | {b.line for b in sheet.blocks}
+    used |= {line for line, _, _ in sheet.suspicious} | sheet.youth_lines
+    lines = bp.normalize_text(text(fid))
+    lost = [ln for i, ln in enumerate(lines) if LOOKS_LIKE_BOUT.match(ln) and i not in used
+            and "gewonnen" not in ln]  # symbol legend "+ gewonnen - gestellt o verloren"
+    assert lost == []
+    assert not any(LOOKS_LIKE_BOUT.match(ln) for _, ln in sheet.noise)
+
+
+# deliberately looser than the parser's BOUT_LIKE_RE: symbol + any letter
+LOOKS_LIKE_BOUT = re.compile(r"^(?:z\s+)?s?(?:[+\-]\s*|[o0u]\s+)[^\W\d_]{2}")
+
+
 @pytest.mark.parametrize(("fid", "layout", "status", "athletes", "bouts"), [
     (46055, "standard", "ok", 99, 274),        # normal recent 6-Gang festival
-    (24110, "standard", "partial", 276, 908),  # ESAF 2019 (1 forfeit)
-    (21055, "standard", "partial", 274, 918),  # ESAF 2025
+    (24110, "standard", "ok", 276, 909),       # ESAF 2019 (1 extra bout)
+    (21055, "standard", "ok", 274, 919),       # ESAF 2025 (1 extra bout)
     (26296, "multicol", "ok", 57, 171),        # 2012 multi-column, youth-mixed
     (26412, "multicol", "partial", 101, 280),  # 2011 multi-column Bergkranz
     (26414, "blocks", "partial", 83, 212),     # 2011 block layout
     (26413, "rang", "partial", 134, 372),      # 2011 Rang: layout
     (26108, "rang", "partial", 64, 177),       # 2013 Rang: variant
     (24013, "standard", "ok", 62, 179),        # Jungaktive, S/T suffixes
-    (45965, "standard", "partial", 67, 196),   # Hallenschwinget
+    (45965, "standard", "ok", 67, 198),        # Hallenschwinget (2 extra bouts, 0.00)
+    (24434, "standard", "ok", 130, 367),       # extra bout 0.00 (Schlussgang loser)
+    (22547, "standard", "ok", 50, 149),        # extra bouts 0.25
+    (25977, "blocks", "partial", 66, 166),     # truncated sheet, no-grade Schlussgang line
+    (26200, "standard", "ok", 34, 102),        # wrapped entry lines
     (23796, "standard", "ok", 70, 210),        # true owner of the shared sheet
 ])
 def test_sheet_totals(fid: int, layout: str, status: str, athletes: int, bouts: int) -> None:
@@ -122,7 +149,13 @@ def test_esaf_eight_gaenge_and_rematch() -> None:
         [(5, "D", 9.0), (8, "W", 10.0)]
     assert athlete(res, "Odermatt Adrian (2001)")["birth_year"] == "2001"
     assert athlete(res, "Streiff Dominik")["withdrawn"] is True
-    assert reasons(res) == Counter({"forfeit_injury": 1})
+    assert reasons(res) == Counter()
+    # Bernold Christian's 9th line "o Fellmann Roman ** 0.00" is an extra bout
+    (eb,) = bouts_between(res, "Fellmann Roman", "Bernold Christian")
+    assert "extra_bout" in eb["flags"] and eb["gang_nr"] == 8  # Fellmann's 8th entry
+    assert result_for(eb, res, "Fellmann Roman") == ("W", 10.0)
+    assert result_for(eb, res, "Bernold Christian") == ("L", None)
+    assert sum("extra_bout" in b["flags"] for b in res.bouts) == 1
 
 
 def test_esaf_two_day_header() -> None:
@@ -146,14 +179,91 @@ def test_youth_mixed_keeps_only_actives() -> None:
     assert "Duplan Steve (SWS)" not in {a["name"] for a in res2.athletes}  # 1997 category
 
 
-def test_youth_extra_bouts_are_rejected_with_reason() -> None:
-    assert reasons(parsed(25799))["extra_bout_without_grade"] == 1
+def test_z_line_extra_bout_is_kept() -> None:
+    """'z - Walker Marcel' (no grade) on Herger's list: extra bout, drawn."""
+    res = parsed(25799)
+    (b,) = bouts_between(res, "Herger Andreas", "Walker Marcel")
+    assert "extra_bout" in b["flags"] and b["outcome"] == "DRAW"
+    assert "extra_bout_without_grade" not in reasons(res)
 
 
 def test_injury_forfeits_are_not_bouts() -> None:
     assert reasons(parsed(26412))["forfeit_injury"] == 2   # "> unfall"
     assert reasons(parsed(26413))["forfeit_injury"] == 2   # 'u' symbol
-    assert reasons(parsed(45965))["forfeit_injury"] == 2   # 0.00 grade
+
+
+def test_zero_grade_extra_bouts_are_kept() -> None:
+    """0.00 on the surplus (7th) line is an extra bout, not a forfeit."""
+    res = parsed(45965)  # Kirchberg 2025: "o Thöni Pius 0.00" is Maurer Sam's 7th line
+    assert "forfeit_injury" not in reasons(res)
+    (b,) = bouts_between(res, "Maurer Sam", "Thöni Pius")
+    assert "extra_bout" in b["flags"]
+    assert result_for(b, res, "Thöni Pius") == ("W", 10.0)
+    assert result_for(b, res, "Maurer Sam") == ("L", None)
+    assert athlete(res, "Maurer Sam")["n_entries"] == 7
+    # Schaffhausen 2018: Schlussgang loser Schneider lists "o Bless Michael *** 0.00" 7th
+    res = parsed(24434)
+    (sg,) = bouts_between(res, "Bless Michael", "Schneider Domenic")
+    assert "extra_bout" in sg["flags"] and sg["gang_nr"] == 6
+    assert result_for(sg, res, "Bless Michael") == ("W", 10.0)
+    assert result_for(sg, res, "Schneider Domenic") == ("L", None)
+
+
+def test_quarter_point_extra_bouts_are_kept() -> None:
+    """0.25 lines (e.g. Belfaux 2023 Gapany-Kramer decider) pair with their mirror."""
+    res = parsed(22547)
+    assert reasons(res) == Counter()
+    gk = bouts_between(res, "Gapany Benjamin", "Kramer Lario")
+    assert [result_for(b, res, "Gapany Benjamin") for b in gk] == [("L", 8.5), ("W", None)]
+    assert ["extra_bout" in b["flags"] for b in gk] == [False, True]
+    assert result_for(gk[1], res, "Kramer Lario") == ("L", 8.75)
+    (tp,) = bouts_between(res, "Tuscher Esteban", "Perroud Florian")
+    assert result_for(tp, res, "Tuscher Esteban") == ("L", None)
+
+
+def test_extra_bout_vs_genuine_forfeit() -> None:
+    """0.00 in a regular Gang stays a forfeit; on a surplus line it is an extra bout."""
+    lines = ["1 Alpha Anton 58.00"] + [f"+ Opp{i} Otto 10.00" for i in range(5)] + \
+        ["o Beta Bruno 0.00"]                                   # Gang 6: injured
+    lines += ["2 Beta Bruno 60.00", "+ Alpha Anton 10.00"] + \
+        [f"+ Opp{i} Otto 10.00" for i in range(5)] + ["+ Gamma Gustav 10.00"]
+    lines += ["3 Gamma Gustav 50.00"] + [f"o Opp{i} Otto 8.50" for i in range(6)] + \
+        ["o Beta Bruno 0.25"]                                   # surplus 7th: extra bout
+    for i in range(5):
+        lines += [f"{i + 4} Opp{i} Otto 26.00", "o Alpha Anton 8.50", "o Beta Bruno 8.50",
+                  "+ Gamma Gustav 9.75"]
+    lines += ["9 Opp5 Otto 9.75", "+ Gamma Gustav 9.75"]
+    res = bp.build_festival(_sheet(lines), 3)
+    assert res.gang_count == 6
+    assert reasons(res) == Counter({"forfeit_injury": 1})  # Alpha's 0.00 in Gang 6
+    extra = [b for b in res.bouts if "extra_bout" in b["flags"]]
+    # Beta's 7th line is graded; Gamma's surplus 0.25 line is the placeholder
+    assert [(b["athlete_a_id"], b["athlete_b_id"], b["outcome"], b["grade_a"], b["grade_b"],
+             b["gang_nr"]) for b in extra] == [("3-001", "3-002", "WIN_A", 10.0, None, 6)]
+
+
+def test_missing_grade_line_paired_with_mirror() -> None:
+    """Stoos 2013: Schuler's surplus line "0 Laimbacher Philipp S***" has no grade."""
+    res = parsed(25977)
+    (b,) = bouts_between(res, "Laimbacher Philipp", "Schuler Christian")
+    assert "extra_bout" in b["flags"] and b["schlussgang"]
+    assert result_for(b, res, "Laimbacher Philipp") == ("W", 10.0)
+    assert result_for(b, res, "Schuler Christian") == ("L", None)
+    # in a regular Gang a no-grade line with a consistent mirror is a 'grade_missing' bout
+    res2 = bp.build_festival(_sheet([
+        "1 Alpha Anton 20.00", "+ Beta Bruno 10.00", "+ Gamma Gustav 10.00",
+        "2 Beta Bruno 18.50", "o Alpha Anton", "+ Gamma Gustav 10.00",
+        "3 Gamma Gustav 17.00", "o Alpha Anton 8.50", "o Beta Bruno 8.50",
+    ]), 4)
+    (g,) = [x for x in res2.bouts if x["grade_b"] is None]
+    assert g["flags"] == "grade_missing" and g["outcome"] == "WIN_A"
+
+
+def test_wrapped_entry_lines_are_joined() -> None:
+    """Kiental 2012: "0 Urfer Simon *" with its grade "8.75" on the next line."""
+    res = parsed(26200)
+    assert res.status == "ok" and reasons(res) == Counter()
+    assert athlete(res, "Urfer Simon")["grade_sum"] == athlete(res, "Urfer Simon")["points"]
 
 
 def test_block_layout_schlussgang_marker() -> None:
@@ -186,29 +296,32 @@ def test_notenblatt_layout_assigns_blocks_correctly() -> None:
 def test_garbled_sheet_fails_with_reason() -> None:
     res = parsed(24038)
     assert res.status == "failed" and res.bouts == []
-    assert reasons(res) == Counter({"no_athletes_found": 1})
+    assert reasons(res)["no_athletes_found"] == 1
+    assert set(reasons(res)) <= {"no_athletes_found", "unparsed_bout_line"}  # garbled glyphs
 
 
 def test_pdf_extraction_matches_text_fixture() -> None:
     for fid in (46055, 45965):
-        t = pdf_to_text((FIX / f"{fid}.pdf").read_bytes())
+        t = pdf_to_text(sheet_file(f"{fid}.pdf").read_bytes())
         assert bp.normalize_text(t) == bp.normalize_text(text(fid))
 
 
 def test_parse_from_real_pdf() -> None:
     m = META["45965"]
-    res = bp.parse_festival(pdf_to_text((FIX / "45965.pdf").read_bytes()), 45965,
+    res = bp.parse_festival(pdf_to_text(sheet_file("45965.pdf").read_bytes()), 45965,
                             m["date"], m["name"])
-    assert len(res.bouts) == 196
+    assert len(res.bouts) == 198
 
 
 def test_frames_have_spec_columns() -> None:
     bouts, athletes, rejects = bp.to_frames([parsed(46055), parsed(24110)])
     assert {"bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
             "grade_a", "grade_b"} <= set(bouts.columns)
-    assert bouts["bout_id"].is_unique and len(bouts) == 274 + 908
+    assert bouts["bout_id"].is_unique and len(bouts) == 274 + 909
     assert set(bouts["outcome"]) <= set(bp.OUTCOMES)
-    assert bouts["grade_a"].between(8.25, 10).all() and bouts["grade_b"].between(8.25, 10).all()
+    graded = bouts[bouts["grade_a"].notna() & bouts["grade_b"].notna()]
+    assert graded["grade_a"].between(8.25, 10).all() and graded["grade_b"].between(8.25, 10).all()
+    assert bouts[~bouts.index.isin(graded.index)]["flags"].str.contains("extra_bout").all()
     assert athletes["athlete_raw_id"].is_unique
     assert set(bouts["athlete_a_id"]) | set(bouts["athlete_b_id"]) <= set(athletes["athlete_raw_id"])
     assert list(rejects.columns) == ["fest_id", "stage", "reason", "detail", "line"]
@@ -323,14 +436,39 @@ def test_one_sided_entry_is_rejected() -> None:
     assert len(res.bouts) == 1 and r["unmatched_entry"] == 1 and r["opponent_not_found"] == 1
 
 
+def _round_robin(n: int) -> list[str]:
+    """n athletes, everyone fights everyone (n-1 graded entries each)."""
+    names = [f"Ath{i} Otto" for i in range(n)]
+    lines: list[str] = []
+    for i, me in enumerate(names):
+        lines.append(f"{i + 1} {me} 50.00")
+        for j, opp in enumerate(names):
+            if i != j:
+                lines.append(f"{'+' if i < j else 'o'} {opp} {'10.00' if i < j else '8.50'}")
+    return lines
+
+
 def test_gang_count_limit() -> None:
-    lines = ["1 Alpha Anton 70.00"] + [f"+ Opp{i} Otto 10.00" for i in range(7)]
-    for i in range(7):
-        lines += [f"{i + 2} Opp{i} Otto 8.50", "o Alpha Anton 8.50"]
+    lines = _round_robin(8)  # 7 graded entries per athlete
     res = bp.build_festival(_sheet(lines), 7, max_gang=6)
-    assert max(b["gang_nr"] for b in res.bouts) == 6
-    assert reasons(res)["gang_out_of_range"] == 1
-    assert len(bp.build_festival(_sheet(lines), 7, max_gang=8).bouts) == 7
+    assert res.gang_count == 6 and max(b["gang_nr"] for b in res.bouts) == 6
+    assert reasons(res)["gang_out_of_range"] > 0
+    res8 = bp.build_festival(_sheet(lines), 7, max_gang=8)
+    assert res8.gang_count == 7 and len(res8.bouts) == 28 and not res8.rejects
+
+
+@pytest.mark.parametrize(("lengths", "max_gang", "expected"), [
+    ([6] * 40 + [4] * 40 + [7], 6, 6),   # one athlete with an extra bout
+    ([5] * 60 + [6] * 2, 6, 5),          # 5-Gang festival (Abendschwinget)
+    ([8] * 140 + [6] * 130 + [9], 8, 8), # ESAF
+    ([6] * 50 + [10] * 6, 6, 6),         # misparsed lists never exceed the category max
+    ([], 6, 6),                          # no evidence -> category max
+])
+def test_festival_gang_count(lengths: list[int], max_gang: int, expected: int) -> None:
+    blocks = [bp.Block("1", f"A{i} B", None, 0,
+                       entries=[bp.Entry("+", "X Y", 10.0, 0) for _ in range(n)])
+              for i, n in enumerate(lengths)]
+    assert bp.festival_gang_count(blocks, max_gang) == expected
 
 
 @pytest.mark.parametrize(("category", "eidg", "n"), [

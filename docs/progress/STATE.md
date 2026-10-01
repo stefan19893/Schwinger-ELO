@@ -1,15 +1,15 @@
 # Project State
 
-**Last updated:** 2026-09-30
-**Current phase:** 2 — Bout parser (in review, branch `phase-2-parser`)
-**Next action:** Phase 2 in review — run the `phase-reviewer` agent against the Phase 2 exit criteria, then ask the user before starting Phase 3. User to confirm: borderline-event ELO defaults (`elo_exclude_flags = team,ausland`), `forfeit_injury` exclusion, `parse_min_pair_rate = 0.5`.
+**Last updated:** 2026-10-01
+**Current phase:** 2 — Bout parser (review fixes in progress, branch `phase-2-parser`)
+**Next action:** Phase 2 review fixes in progress (see `phase-2-parser.md` → Review fixes): R3 should-fix items (header timestamps, schlussgang column) next, then R4 old layouts, R5 full re-parse + report.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | in review |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | in progress |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
@@ -76,6 +76,11 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — **User decision: `parse_min_pair_rate = 0.5` confirmed** — sheets with a pair rate below 0.5 import no bouts.
 - 2026-10-01 — **User decision: rescue old layouts** (6 failed Kantonalfeste 2011–2015, weak 2012–2014 multicol/blocks/notenblatt sheets, ESAF 2013), prioritised by K-factor and timeboxed; truncated source sheets (e.g. Klewenalp 2013) are documented, not chased.
 - 2026-10-01 — **User decision: nothing bout-like may vanish** — wrapped and missing-grade lines are parsed where the mirror exists; every other bout-like line is stored as a `parse_rejects` row.
+- 2026-10-01 — Extra-bout detection rule: placeholder (0.00 / 0.25), no-grade or `z` entry of an athlete with more entries than the festival's Gang count → paired with its mirror, outcome from complementary symbols, NULL grade, flag `extra_bout`, Gang = opponent's position; the same entry types in a regular Gang stay `forfeit_injury` — corpus survey separates both cleanly (details: phase-2 handoff R1/R2).
+- 2026-10-01 — **Extension of the user decision (please confirm):** a no-grade line in a *regular* Gang whose mirror is complete and consistent is kept as a bout with NULL grade and flag `grade_missing` (2 bouts in the corpus); the bouts CHECK therefore allows NULL grades with `extra_bout` **or** `grade_missing` — the user asked to parse missing-grade lines whose mirror exists, and fabricating a grade is not an option.
+- 2026-10-01 — Schema v4: nullable `bouts.grade_a/grade_b` (CHECK above), `festival_parse.n_gaenge`; migration rebuilds the v3 `bouts` table. `PARSER_VERSION` 2.
+- 2026-10-01 — Festival Gang count derived per sheet (`festival_gang_count`: ≥ 10 % of athletes, min. 2, clamped to 8 ESAF / 6 else) — recognises 5-Gang festivals; no genuine 7/8-Gang festival besides the ESAF exists in the corpus, so the category cap stays.
+- 2026-10-01 — Sheets shared by the `--sample` dataset and parser tests are stored once, in `tests/fixtures/sample/statistic/` (`tests/fixture_paths.py` resolves both directories) — review should-fix (duplicate fixtures).
 
 ## Open questions
 - Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang?

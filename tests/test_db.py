@@ -166,3 +166,59 @@ def test_bouts_table_constraints(tmp_path: Path) -> None:
                 ("x4", 1, "WIN_A", 10.5, 8.5), ("x5", 1, "WIN_A", 10.0, 8.0)):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(ok, bad)
+
+
+def test_null_grades_only_with_explaining_flag(tmp_path: Path) -> None:
+    """Schema v4: a NULL grade needs the 'extra_bout' (or 'grade_missing') flag."""
+    conn = connect(tmp_path / "s.db")
+    upsert_festivals(conn, [F])
+    conn.execute("INSERT INTO athletes_raw (athlete_raw_id, fest_id, idx, name_raw, name, "
+                 "name_key, name_base_key) VALUES ('a', 26400, 0, 'A', 'A', 'a', 'a'), "
+                 "('b', 26400, 1, 'B', 'B', 'b', 'b')")
+    ins = ("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, outcome, "
+           "grade_a, grade_b, flags) VALUES (?, 26400, 6, 'a', 'b', 'WIN_A', ?, ?, ?)")
+    conn.execute(ins, ("x1", 10.0, None, "extra_bout"))
+    conn.execute(ins, ("x2", 10.0, None, "gang_inferred:7/6,extra_bout"))
+    conn.execute(ins, ("x3", None, 8.5, "grade_missing"))
+    for bad in (("y1", 10.0, None, ""), ("y2", None, 8.5, "gang_collision"),
+                ("y3", 10.0, None, "extra_bouts"), ("y4", 10.0, 0.0, "extra_bout")):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(ins, bad)
+
+
+def test_migrates_v3_bouts_to_nullable_grades(tmp_path: Path) -> None:
+    """v3 bouts (NOT NULL grades) are rebuilt with the v4 CHECKs; rows are kept."""
+    path = tmp_path / "v3.db"
+    conn = connect(path)
+    upsert_festivals(conn, [F])
+    conn.execute("INSERT INTO athletes_raw (athlete_raw_id, fest_id, idx, name_raw, name, "
+                 "name_key, name_base_key) VALUES ('a', 26400, 0, 'A', 'A', 'a', 'a'), "
+                 "('b', 26400, 1, 'B', 'B', 'b', 'b')")
+    conn.execute("DROP TABLE bouts")
+    conn.execute("""CREATE TABLE bouts (
+        bout_id TEXT PRIMARY KEY, fest_id INTEGER NOT NULL REFERENCES festivals(fest_id),
+        gang_nr INTEGER NOT NULL CHECK (gang_nr BETWEEN 1 AND 8),
+        athlete_a_id TEXT NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+        athlete_b_id TEXT NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+        outcome TEXT NOT NULL CHECK (outcome IN ('WIN_A', 'WIN_B', 'DRAW')),
+        grade_a REAL NOT NULL CHECK (grade_a BETWEEN 8.25 AND 10.0),
+        grade_b REAL NOT NULL CHECK (grade_b BETWEEN 8.25 AND 10.0),
+        schlussgang INTEGER NOT NULL DEFAULT 0, flags TEXT NOT NULL DEFAULT '',
+        CHECK (athlete_a_id <> athlete_b_id))""")
+    conn.execute("CREATE INDEX idx_bouts_fest ON bouts(fest_id)")
+    conn.execute("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, "
+                 "outcome, grade_a, grade_b) VALUES ('x', 26400, 1, 'a', 'b', 'DRAW', 9.0, 9.0)")
+    conn.execute("ALTER TABLE festival_parse DROP COLUMN n_gaenge")
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
+    assert [tuple(r) for r in conn.execute("SELECT bout_id, grade_a FROM bouts")] == [("x", 9.0)]
+    notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
+    assert notnull["grade_a"] == 0 and notnull["grade_b"] == 0
+    assert "n_gaenge" in {r[1] for r in conn.execute("PRAGMA table_info(festival_parse)")}
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name='idx_bouts_fest'").fetchone()
+    conn.execute("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, "
+                 "outcome, grade_a, grade_b, flags) VALUES "
+                 "('y', 26400, 6, 'a', 'b', 'WIN_A', 10.0, NULL, 'extra_bout')")

@@ -41,6 +41,8 @@ class Entry:
     line: int
     gang: int | None = None    # explicit gang number (rang layout) else position
     extra: bool = False        # 'z' line (extra bout, no grade)
+    placeholder: bool = False  # grade printed as 0.00 / 0.25 (extra bout or forfeit)
+    missing_grade: bool = False  # no grade printed at all ("0 Laimbacher Philipp S***")
     forfeit: bool = False      # 'u' / '> unfall': decided by injury, not a real result
     schlussgang: bool = False  # 's+' marker in block layouts
     ambiguous: bool = False    # multicol: column assignment uncertain
@@ -66,7 +68,12 @@ class Sheet:
     youth_names: set[str] = field(default_factory=set)  # base name keys in youth sections
     has_active_section: bool | None = None      # None: sheet has no sections at all
     suspicious: list[tuple[int, str, str]] = field(default_factory=list)  # (line, text, reason)
-    noise_lines: int = 0
+    noise: list[tuple[int, str]] = field(default_factory=list)  # ignored lines (titles, footers…)
+    youth_lines: set[int] = field(default_factory=set)  # entry lines skipped in youth sections
+
+    @property
+    def noise_lines(self) -> int:
+        return len(self.noise)
 
 
 @dataclass(frozen=True)
@@ -89,10 +96,12 @@ class FestivalParse:
     header_check: str = ""
     youth_blocks: int = 0
     entries_total: int = 0
+    gang_count: int | None = None    # Gänge derived from the sheet (festival_gang_count)
 
 
 # ----------------------------------------------------------------------------- text utils
 _GRADE = r"(?:[89]|10)[.,]\d{2}"
+_PH = r"0[.,](?:00|25)"  # placeholder grade of an extra bout / forfeit
 _NUM = r"\d{1,2}[.,]\d{2}"
 GRADE_TOKEN_RE = re.compile(rf"(?<![\d.,]){_GRADE}(?![\d.,])")
 
@@ -102,7 +111,12 @@ def normalize_text(text: str) -> list[str]:
     text = unicodedata.normalize("NFKC", text).replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\f", "\n").replace("\u00a0", " ").replace("\u2019", "'")
     text = text.replace("\u00ad", "").replace("\u2010", "-").replace("\u2013", "-")
-    return [re.sub(r"[ \t]+", " ", ln).strip() for ln in text.split("\n")]
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in text.split("\n")]
+    # page footer glued to an entry: "o Häller Nick 8,50 Seite 2/3"
+    return [_GLUED_PAGE_RE.sub(r"\1", ln) for ln in lines]
+
+
+_GLUED_PAGE_RE = re.compile(r"(\d[.,]\d{2})\s+Seite\s+\d+\s*/\s*\d+$")
 
 
 def to_float(s: str) -> float:
@@ -205,7 +219,17 @@ def name_details(name: str) -> dict[str, str | None]:
 
 # ----------------------------------------------------------------------------- layouts
 _SYM = r"(?P<sym>s?[+\-o0])"
-BOUT_LINE_RE = re.compile(rf"^(?P<z>z\s+)?{_SYM}\s+(?P<name>\D.*?)(?:\s+(?P<grade>{_GRADE}))?$")
+BOUT_LINE_RE = re.compile(rf"^(?P<z>z\s+)?{_SYM}\s+(?P<name>\D.*?)"
+                          rf"(?:\s+(?:(?P<grade>{_GRADE})|(?P<ph>{_PH})))?$")
+# anything that looks like a bout entry (symbol + capitalised name); such a line
+# must never be ignored silently
+_NAME_START = r"(?:[A-ZÄÖÜÉÈÀÂÇ]|(?:von|van|de|di|da|del|della|la|le|du|dos)\s+[A-ZÄÖÜÉÈÀÂÇ])"
+BOUT_LIKE_RE = re.compile(rf"^(?:z\s+)?(?:s?[+\-]\s*|s?[o0u]\s+){_NAME_START}[\w'\-]")
+# a printed opponent name: capitalised words, optional stars/status letters,
+# "(2001)" / "(SWS)" / "(Bonaduz)", suffix " 1"/" 2"; no other digits
+_NAME_LIKE_RE = re.compile(
+    rf"^{_NAME_START}[\w'\-.]*(?:\s+(?:[^\W\d][\w'\-.]*\**|[ST]?\*+|\((?:\d{2}|\d{4}|[^\d()]+)\)))+"
+    r"(?:\s+[12])?(?:\s+[ST]?\*+)?$")
 # Names may contain "(2002)" birth years, "(SWS)" and a " 1"/" 2" suffix.
 # rank "1", "1.", "2.a", "26aa", "1 a", bare "b"; mark '*'/'°' may be glued ("3a*");
 # points may be glued to stars or name ("*54,25", "Martin54.25")
@@ -228,6 +252,7 @@ BOUT_REVERSED_RE = re.compile(rf"^{_SYM}\s+(?P<grade>{_GRADE})\s+(?P<name>\D+)$"
 NAME_ONLY_HEADER_RE = re.compile(rf"^(?P<name>[A-ZÄÖÜÉÀ][^\d+]*?)\s+(?P<points>{_NUM})$")
 SYM_ONLY_RE = re.compile(r"^(?P<s>s)?(?P<sym>[+\-o0])$")
 GRADE_ONLY_RE = re.compile(rf"^(?P<grade>{_GRADE})$")
+GRADE_OR_PH_ONLY_RE = re.compile(rf"^(?:(?P<grade>{_GRADE})|(?P<ph>{_PH}))$")
 POINTS_ONLY_RE = re.compile(rf"^(?P<points>{_NUM})$")
 RANG_LINE_RE = re.compile(r"^Rang:\s*(?P<rank>\d+[a-z]?)\b(?P<rest>.*)$")
 RANG_ENTRY_RE = re.compile(
@@ -297,23 +322,34 @@ class _Collector:
         if self.current is None:
             self.suspicious(entry.line, text, "entry_without_athlete")
             return
-        if not getattr(self, "current_is_youth", False):
+        if getattr(self, "current_is_youth", False):
+            self.sheet.youth_lines.add(entry.line)
+        else:
             self.current.entries.append(entry)
 
     def suspicious(self, line: int, text: str, reason: str) -> None:
-        if self.section == "youth":
+        if self.section == "youth":  # youth categories are skipped on purpose
+            self.sheet.youth_lines.add(line)
             return
         self.sheet.suspicious.append((line, text, reason))
 
     def other(self, i: int, ln: str) -> None:
-        if not self.sheet.blocks and self.current is None and not self.seen_section:
+        if not self.sheet.blocks and self.current is None and not self.seen_section \
+                and not BOUT_LIKE_RE.match(ln):
             if len(self.sheet.header) < 8:
                 self.sheet.header.append(ln)
             return
-        if GRADE_TOKEN_RE.search(ln) and not _is_footer(ln):
+        self.unparsed(i, ln)
+
+    def unparsed(self, i: int, ln: str) -> None:
+        """A line no layout rule consumed: bout-like and graded lines become
+        rejects; the rest (titles, footers, 'ausgeschieden'/'Unfall' fillers) is noise."""
+        if BOUT_LIKE_RE.match(ln) and len(GRADE_TOKEN_RE.findall(ln)) <= 1:
+            self.suspicious(i, ln, "unparsed_bout_line")
+        elif GRADE_TOKEN_RE.search(ln) and not _is_footer(ln):
             self.suspicious(i, ln, "unparsed_line_with_grade")
-        else:
-            self.sheet.noise_lines += 1
+        elif self.section != "youth":
+            self.sheet.noise.append((i, ln))
 
     def finish(self) -> Sheet:
         if self.seen_section and self.sheet.has_active_section is None:
@@ -331,8 +367,6 @@ def _is_footer(ln: str) -> bool:
 # first line of a broken header: a rank, optionally a mark and name text, no numbers
 _HEADER_START_RE = re.compile(
     r"^(?:[1-9]\d*\s*\.?\s*[a-z]{0,2}\.?|[a-z]{1,2})(?:\s*[*°])?(?:\s+\D*)?$")
-# "o Thöni Pius 0.00": bout not fought (withdrawn opponent)
-ZERO_BOUT_RE = re.compile(r"^(?P<sym>s?[+\-o0])\s+(?P<name>\D.*?)\s+0[.,]00$")
 
 
 def _join_header(lines: list[str], i: int, max_lines: int = 5) -> tuple[re.Match[str], int] | None:
@@ -370,6 +404,31 @@ def _join_header(lines: list[str], i: int, max_lines: int = 5) -> tuple[re.Match
     return None
 
 
+def _bout_entry(m: re.Match[str], lines: list[str], i: int,
+                injury: bool = False) -> tuple[Entry, int] | None:
+    """Entry for a matched bout line plus the index of the next unread line.
+
+    Handles graded lines, placeholder grades (0.00 / 0.25), 'z' lines, lines whose
+    grade wrapped onto the next line ("0 Urfer Simon *" / "8.75") and lines with
+    no grade at all ("0 Laimbacher Philipp S***"). None if it is not a bout line."""
+    sym, name = _sym(m.group("sym")), m.group("name").strip()
+    sg = m.group("sym").startswith("s")
+    if m.group("grade") or m.group("ph") or m.group("z"):
+        g = m.group("grade") or m.group("ph")
+        return Entry(sym, name, to_float(g) if g else None, i, extra=bool(m.group("z")),
+                     placeholder=bool(m.group("ph")), forfeit=injury, schlussgang=sg), i + 1
+    if not _NAME_LIKE_RE.match(name):
+        return None
+    j = i + 1
+    while j < len(lines) and not lines[j]:
+        j += 1
+    w = GRADE_OR_PH_ONLY_RE.match(lines[j]) if j < len(lines) else None
+    if w:  # wrapped: the grade is on the next line
+        return Entry(sym, name, to_float(w.group(0)), i, placeholder=bool(w.group("ph")),
+                     forfeit=injury, schlussgang=sg), j + 1
+    return Entry(sym, name, None, i, missing_grade=True, forfeit=injury, schlussgang=sg), i + 1
+
+
 def parse_standard(lines: list[str], fest_year: int | None = None) -> Sheet:
     c = _Collector("standard", fest_year)
     last_rank_num: str | None = None
@@ -387,19 +446,12 @@ def parse_standard(lines: list[str], fest_year: int | None = None) -> Sheet:
         injury = bool(_INJURY_NOTE_RE.search(ln))
         ln = _INJURY_NOTE_RE.sub("", ln)
         m = BOUT_LINE_RE.match(ln)
-        if m and (m.group("grade") or m.group("z")) and len(GRADE_TOKEN_RE.findall(ln)) <= 1:
-            grade = to_float(m.group("grade")) if m.group("grade") else None
-            c.add_entry(Entry(_sym(m.group("sym")), m.group("name").strip(), grade, i,
-                              extra=bool(m.group("z")), forfeit=injury,
-                              schlussgang=m.group("sym").startswith("s")), ln)
-            i += 1
-            continue
-        zb = ZERO_BOUT_RE.match(ln)
-        if zb:
-            c.add_entry(Entry(_sym(zb.group("sym")), zb.group("name").strip(), 0.0, i,
-                              forfeit=True), ln)
-            i += 1
-            continue
+        if m and len(GRADE_TOKEN_RE.findall(ln)) <= 1:
+            got = _bout_entry(m, lines, i, injury)
+            if got is not None:
+                c.add_entry(got[0], ln)
+                i = got[1]
+                continue
         rv = BOUT_REVERSED_RE.match(ln)
         if rv:
             c.add_entry(Entry(_sym(rv.group("sym")), rv.group("name").strip(),
@@ -516,6 +568,14 @@ def parse_blocks(lines: list[str], fest_year: int | None = None) -> Sheet:
                     c.add_entry(Entry(_sym(sm.group("sym")), nm, to_float(gr), li,
                                       schlussgang=bool(sm.group("s"))), nm)
                 i = j + k
+                # further entries printed as normal lines after the runs, e.g. the
+                # Schlussgang loser's "0 Laimbacher Philipp S***" (no grade)
+                while i < n and (bm := BOUT_LINE_RE.match(lines[i])):
+                    got = _bout_entry(bm, lines, i)
+                    if got is None:
+                        break
+                    c.add_entry(got[0], lines[i])
+                    i = got[1]
             else:
                 if syms or names:
                     c.suspicious(i, ln, "block_structure_broken")
@@ -650,6 +710,7 @@ def parse_multicol(lines: list[str], fest_year: int | None = None) -> Sheet:
             ambiguous = len(bouts) != len(columns)
             for n_cell, (col, b) in enumerate(zip(columns, bouts)):
                 if col is None:
+                    c.sheet.youth_lines.add(i)
                     continue
                 col.entries.append(Entry(_sym(b.group("sym")), b.group("name").strip(),
                                          to_float(b.group("grade")), i, ambiguous=ambiguous,
@@ -671,28 +732,39 @@ def parse_notenblatt(lines: list[str], fest_year: int | None = None) -> Sheet:
     entries(k), then 'rank name(k)' with points(k+1) glued to the end."""
     c = _Collector("notenblatt", fest_year)
     pending: Block | None = None
+
+    def orphan(block: Block | None) -> None:
+        """Entries of a block whose name line never came are rejected one by one."""
+        if block is not None and block.entries and not block.name_raw:
+            for e in block.entries:
+                c.suspicious(e.line, f"{e.sym} {e.opponent} {e.grade}", "block_without_name")
     for i, ln in enumerate(lines):
         if not ln:
             continue
         sec = section_of(ln, c.fest_year)
         if sec:
             c.set_section(sec, ln)
+            orphan(pending)
             pending = None
             continue
         if POINTS_ONLY_RE.match(ln) and not GRADE_ONLY_RE.match(ln) or \
                 (POINTS_ONLY_RE.match(ln) and (pending is None or pending.entries)):
+            orphan(pending)
             pending = Block(None, "", to_float(ln), i)
             c.current = pending
             c.current_is_youth = False
             continue
         m = BOUT_LINE_RE.match(ln)
-        if m and m.group("grade") and len(GRADE_TOKEN_RE.findall(ln)) == 1:
-            entry = Entry(_sym(m.group("sym")), m.group("name").strip(),
-                          to_float(m.group("grade")), i)
+        if m and (m.group("grade") or m.group("ph")) and len(GRADE_TOKEN_RE.findall(ln)) <= 1:
+            g = m.group("grade") or m.group("ph")
+            entry = Entry(_sym(m.group("sym")), m.group("name").strip(), to_float(g), i,
+                          placeholder=bool(m.group("ph")))
             if pending is None:
                 c.suspicious(i, ln, "entry_without_athlete")
             elif c.section != "youth":
                 pending.entries.append(entry)
+            else:
+                c.sheet.youth_lines.add(i)
             continue
         nm = NB_NAME_RE.match(ln)
         if nm and pending is not None and not pending.name_raw:
@@ -709,12 +781,9 @@ def parse_notenblatt(lines: list[str], fest_year: int | None = None) -> Sheet:
             continue
         if not c.sheet.blocks and pending is None:
             c.other(i, ln)
-        elif GRADE_TOKEN_RE.search(ln) and not _is_footer(ln):
-            c.suspicious(i, ln, "unparsed_line_with_grade")
         else:
-            c.sheet.noise_lines += 1
-    if pending is not None and pending.entries and not pending.name_raw:
-        c.suspicious(pending.line, f"{len(pending.entries)} entries", "block_without_name")
+            c.unparsed(i, ln)
+    orphan(pending)
     return c.finish()
 
 
@@ -811,25 +880,52 @@ def _soft_flags(outcome: str, ga: float, gb: float) -> list[str]:
     return [] if win >= 9.25 and lose <= 8.75 else ["unusual_win_grades"]
 
 
-def _assign_gaenge(pending: list[dict[str, object]], n_entries: list[int]) -> None:
+def festival_gang_count(blocks: list[Block], max_gang: int) -> int:
+    """The festival's real number of Gänge, derived from the sheet.
+
+    The largest L such that at least 10 % of the athletes (min. 2) have L or more
+    regularly graded entries, clamped to ``max_gang`` (8 at the ESAF, else 6).
+    Placeholder / no-grade / 'z' entries are ignored, so an extra bout
+    (Zusatzgang) never raises the count; 5-Gang festivals are recognised.
+    Falls back to ``max_gang`` when the sheet gives no evidence."""
+    lens = [sum(1 for e in b.entries if not (e.placeholder or e.missing_grade or e.extra))
+            for b in blocks]
+    need = max(2.0, 0.1 * len(lens))
+    best = 0
+    for n in range(1, max_gang + 1):
+        if sum(1 for x in lens if x >= n) >= need:
+            best = n
+    return best or max_gang
+
+
+def _assign_gaenge(pending: list[dict[str, object]], complete: list[bool]) -> None:
     """Gang numbers from list positions (sets ``gang_nr`` and flags).
 
     Athletes who miss a Gang have shorter lists, so a position is only a lower
-    bound for the real Gang: the position from a *complete* list (as many
-    entries as the festival has Gänge) is trusted, otherwise the larger
-    position wins (``gang_inferred``). Complete lists occasionally disagree
-    (entries not strictly in Gang order on the sheet) -> ``gang_uncertain``.
+    bound for the real Gang: the position from a *complete* list (at least as
+    many regular entries as the festival has Gänge, see
+    :func:`festival_gang_count`) is trusted, otherwise the larger position wins
+    (``gang_inferred``). Complete lists occasionally disagree (entries not
+    strictly in Gang order on the sheet) -> ``gang_uncertain``. An extra bout
+    takes the position from the opponent's list (its own entry is surplus).
     Gang numbers only order bouts within a festival.
     """
-    full = max(n_entries) if n_entries else 0
     for p in pending:
-        pa, pb = int(p["pos_a"]), int(p["pos_b"])  # type: ignore[call-overload]
+        pa, pb = p["pos_a"], p["pos_b"]
         flags: list[str] = p["flags"]  # type: ignore[assignment]
+        if pa is None or pb is None:  # extra bout: the surplus side has no position
+            other = pb if pa is None else pa
+            n = int(p["gang_count"])  # type: ignore[call-overload]
+            p["gang_nr"] = n if other is None else min(int(other), n)  # type: ignore[call-overload]
+            if other is None or int(other) > n:  # type: ignore[call-overload]
+                flags.append(f"gang_inferred:{other}/{n}")
+            continue
+        pa, pb = int(pa), int(pb)  # type: ignore[call-overload]
         if pa == pb:
             p["gang_nr"] = pa
             continue
-        a_full = n_entries[int(p["a"])] == full  # type: ignore[call-overload]
-        b_full = n_entries[int(p["b"])] == full  # type: ignore[call-overload]
+        a_full = complete[int(p["a"])]  # type: ignore[call-overload]
+        b_full = complete[int(p["b"])]  # type: ignore[call-overload]
         if a_full and b_full:
             p["gang_nr"] = max(pa, pb)
             flags.append(f"gang_uncertain:{pa}/{pb}")
@@ -839,6 +935,14 @@ def _assign_gaenge(pending: list[dict[str, object]], n_entries: list[int]) -> No
         else:
             p["gang_nr"] = max(pa, pb)
             flags.append(f"gang_inferred:{pa}/{pb}")
+
+
+def _special(e: Entry) -> bool:
+    """Entry without a real grade: placeholder 0.00/0.25, no grade, or a 'z' line."""
+    return e.placeholder or e.missing_grade or e.extra
+
+
+_COMPLEMENTARY = {("+", "o"): "WIN_A", ("o", "+"): "WIN_B", ("-", "-"): "DRAW"}
 
 
 def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> FestivalParse:
@@ -908,31 +1012,43 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
                 return mirrored[0], True
         return None, len(cands) > 1
 
+    # extra bouts (Zusatzgang): with an odd field one athlete fights one bout more
+    # than the festival has Gänge. His line for it shows 0.00 / 0.25 / no grade
+    # ('z' on youth sheets); the opponent's line is normal. A special entry is an
+    # extra-bout candidate if it is a 'z' line or its athlete has more entries
+    # than Gänge; special entries in a regular Gang are forfeits / injuries.
+    gang_count = res.gang_count = festival_gang_count(blocks, max_gang)
+    surplus = [len(b.entries) > gang_count for b in blocks]
+
+    def extra_cand(e: Entry, who: int) -> bool:
+        return _special(e) and (e.extra or surplus[who])
+
     # entries -> (a, b) occurrences -------------------------------------------------------
-    occ: dict[tuple[int, int], list[tuple[int, Entry, int]]] = defaultdict(list)
+    occ: dict[tuple[int, int], list[tuple[int | None, Entry, int, str]]] = defaultdict(list)
     for idx, b in enumerate(blocks):
         pos = 0
         for e in b.entries:
             res.entries_total += 1
-            if e.extra:
-                rej(Reject(fest_id, "entry", "extra_bout_without_grade",
-                           f"{b.name_raw}: z {e.sym} {e.opponent}", e.line))
-                continue
-            pos += 1
-            gang = e.gang or pos
+            if extra_cand(e, idx):
+                epos: int | None = None   # surplus entry: Gang comes from the opponent
+                label = "extra"
+            else:
+                pos += 1
+                epos = e.gang or pos
+                label = f"G{epos}"
             opp, ambiguous_name = resolve(e.opponent, idx)
             if opp is None:
                 in_youth = name_keys(clean_name(e.opponent))[1] in sheet.youth_names
                 reason = ("ambiguous_opponent" if ambiguous_name else
                           "opponent_in_youth_section" if in_youth else "opponent_not_found")
                 rej(Reject(fest_id, "entry", reason,
-                           f"{b.name_raw} G{gang}: {e.sym} {e.opponent} {e.grade}", e.line))
+                           f"{b.name_raw} {label}: {e.sym} {e.opponent} {e.grade}", e.line))
                 continue
             if opp == idx:
                 rej(Reject(fest_id, "entry", "self_bout",
-                           f"{b.name_raw} G{gang}: {e.opponent}", e.line))
+                           f"{b.name_raw} {label}: {e.opponent}", e.line))
                 continue
-            occ[(idx, opp)].append((gang, e, idx))
+            occ[(idx, opp)].append((epos, e, idx, label))
 
     seen: set[tuple[int, int]] = set()
     pending: list[dict[str, object]] = []
@@ -946,45 +1062,74 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
         a, b = min(i, j), max(i, j)
         for k in range(max(len(a_side), len(b_side))):
             if k >= len(a_side) or k >= len(b_side):
-                gang, e, who = a_side[k] if k < len(a_side) else b_side[k]
+                _, e, who, label = a_side[k] if k < len(a_side) else b_side[k]
                 rej(Reject(fest_id, "entry", "unmatched_entry",
-                           f"{blocks[who].name_raw} G{gang}: {e.sym} {e.opponent} {e.grade} "
+                           f"{blocks[who].name_raw} {label}: {e.sym} {e.opponent} {e.grade} "
                            f"(no mirror entry)", e.line))
                 continue
-            (ga_n, ea, _), (gb_n, eb, _) = a_side[k], b_side[k]
+            (ga_n, ea, _, la), (gb_n, eb, _, lb) = a_side[k], b_side[k]
+            desc = (f"{blocks[a].name_raw} {la} {ea.sym}{ea.grade} vs "
+                    f"{blocks[b].name_raw} {lb} {eb.sym}{eb.grade}")
             flags: list[str] = []
+            grade_a: float | None = ea.grade
+            grade_b: float | None = eb.grade
             if ea.forfeit or eb.forfeit:
-                rej(Reject(fest_id, "bout", "forfeit_injury",
-                           f"G{ga_n} {blocks[a].name_raw} {ea.sym}{ea.grade} vs "
-                           f"{blocks[b].name_raw} {eb.sym}{eb.grade}", ea.line))
+                rej(Reject(fest_id, "bout", "forfeit_injury", desc, ea.line))
                 continue
-            if not (_grade_ok(ea.grade) and _grade_ok(eb.grade)):
-                rej(Reject(fest_id, "bout", "grade_out_of_range",
-                           f"{blocks[a].name_raw} {ea.grade} vs {blocks[b].name_raw} {eb.grade}",
-                           ea.line))
-                continue
-            assert ea.grade is not None and eb.grade is not None
-            outcome, oflags = _outcome(ea.sym, eb.sym, ea.grade, eb.grade)
-            if outcome is None:
-                rej(Reject(fest_id, "bout", "inconsistent_outcome",
-                           f"{blocks[a].name_raw} {ea.sym}{ea.grade} vs "
-                           f"{blocks[b].name_raw} {eb.sym}{eb.grade}", ea.line))
-                continue
-            flags += oflags + _soft_flags(outcome, ea.grade, eb.grade)
+            if _special(ea) or _special(eb):
+                regular_special = [e for e, who in ((ea, a), (eb, b))
+                                   if _special(e) and not extra_cand(e, who)]
+                if any(e.placeholder or e.extra for e in regular_special):
+                    # 0.00 / 0.25 in a regular Gang: not fought / injury
+                    rej(Reject(fest_id, "bout", "forfeit_injury", desc, ea.line))
+                    continue
+                outcome = _COMPLEMENTARY.get((ea.sym, eb.sym))
+                others_ok = all(_grade_ok(e.grade) for e in (ea, eb) if not _special(e))
+                if outcome is None or not others_ok:
+                    rej(Reject(fest_id, "bout", "inconsistent_outcome" if outcome is None
+                               else "grade_out_of_range", desc, ea.line))
+                    continue
+                if regular_special:  # no grade printed in a regular Gang
+                    flags.append("grade_missing")
+                if ga_n is None or gb_n is None:
+                    flags.append("extra_bout")
+                grade_a = None if _special(ea) else ea.grade
+                grade_b = None if _special(eb) else eb.grade
+            else:
+                if not (_grade_ok(ea.grade) and _grade_ok(eb.grade)):
+                    rej(Reject(fest_id, "bout", "grade_out_of_range", desc, ea.line))
+                    continue
+                assert ea.grade is not None and eb.grade is not None
+                outcome, oflags = _outcome(ea.sym, eb.sym, ea.grade, eb.grade)
+                if outcome is None:
+                    rej(Reject(fest_id, "bout", "inconsistent_outcome", desc, ea.line))
+                    continue
+                flags += oflags + _soft_flags(outcome, ea.grade, eb.grade)
+                # a normally graded surplus bout beyond the Gang count (one side
+                # lists it after its regular Gänge): extra bout with both grades
+                for side, mine_pos, other_pos, who in (("a", ga_n, gb_n, a), ("b", gb_n, ga_n, b)):
+                    if (surplus[who] and mine_pos is not None and other_pos is not None
+                            and mine_pos > gang_count >= other_pos and ea.gang is None):
+                        flags.append("extra_bout")
+                        if side == "a":
+                            ga_n = None
+                        else:
+                            gb_n = None
+                        break
             if ea.gang is not None and eb.gang is not None and ea.gang != eb.gang:
-                flags.append(f"gang_mismatch:{ga_n}/{gb_n}")
+                flags.append(f"gang_mismatch:{ea.gang}/{eb.gang}")
             if ea.ambiguous or eb.ambiguous:
                 flags.append("column_ambiguous")
             pending.append({
                 "fest_id": fest_id, "a": a, "b": b, "pos_a": ga_n, "pos_b": gb_n, "k": k,
-                "athlete_a_id": ids[a], "athlete_b_id": ids[b],
-                "outcome": outcome, "grade_a": ea.grade, "grade_b": eb.grade,
+                "athlete_a_id": ids[a], "athlete_b_id": ids[b], "gang_count": gang_count,
+                "outcome": outcome, "grade_a": grade_a, "grade_b": grade_b,
                 "schlussgang": bool(ea.schlussgang or eb.schlussgang),
                 "flags": flags, "line": ea.line,
             })
-    _assign_gaenge(pending, [sum(1 for e in b.entries if not e.extra) for b in blocks])
+    _assign_gaenge(pending, [len(b.entries) >= gang_count for b in blocks])
     for p in pending:
-        gang = p["gang_nr"]
+        gang = int(p["gang_nr"])  # type: ignore[call-overload]
         if gang > max_gang:
             rej(Reject(fest_id, "bout", "gang_out_of_range",
                        f"G{gang} > {max_gang}: {blocks[p['a']].name_raw} vs "
@@ -1030,11 +1175,14 @@ def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> Fest
         res.bouts = []
         res.status = "failed"
         return res
+    # extra bouts share a Gang with a regular bout of the surplus athlete by
+    # construction; they are left out so the flag keeps meaning "ordering conflict"
+    regular = [b for b in res.bouts if "extra_bout" not in str(b["flags"]).split(",")]
     slots: Counter[tuple[object, object]] = Counter()
-    for b in res.bouts:
+    for b in regular:
         slots[(b["athlete_a_id"], b["gang_nr"])] += 1
         slots[(b["athlete_b_id"], b["gang_nr"])] += 1
-    for b in res.bouts:
+    for b in regular:
         if slots[(b["athlete_a_id"], b["gang_nr"])] > 1 or slots[(b["athlete_b_id"], b["gang_nr"])] > 1:
             b["flags"] = ",".join(filter(None, [b["flags"], "gang_collision"]))
     for a in res.athletes:

@@ -15,7 +15,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 3  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables
+SCHEMA_VERSION = 4  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
+                    # v4: nullable bout grades (extra bouts), festival_parse.n_gaenge
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
@@ -31,6 +32,27 @@ _EIDG_COLUMN = (f"eidg_type TEXT CHECK (eidg_type IS NULL OR "
 _FLAGS_COLUMN = "event_flags TEXT NOT NULL DEFAULT ''"
 _ELIGIBLE_COLUMN = "elo_eligible INTEGER NOT NULL DEFAULT 1 CHECK (elo_eligible IN (0, 1))"
 EVENT_FLAGS = ("team", "jungaktive", "ausland", "hallenschwinget")
+# Gänge of the festival as derived from the sheet (bouts_parser.festival_gang_count)
+_N_GAENGE_COLUMN = "n_gaenge INTEGER"
+# Bout flags that allow a NULL grade: an extra bout's placeholder line (0.00 / 0.25 /
+# none) and an entry printed without grade whose mirror entry is complete.
+NULL_GRADE_FLAGS = ("extra_bout", "grade_missing")
+_null_ok = " OR ".join(f"(',' || flags || ',') LIKE '%,{f},%'" for f in NULL_GRADE_FLAGS)
+_BOUTS_TABLE = f"""-- spec Bout (athlete ids are athletes_raw ids until Phase 3 resolves identities)
+CREATE TABLE IF NOT EXISTS bouts (
+    bout_id         TEXT PRIMARY KEY,
+    fest_id         INTEGER NOT NULL REFERENCES festivals(fest_id),
+    gang_nr         INTEGER NOT NULL CHECK (gang_nr BETWEEN 1 AND 8),
+    athlete_a_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+    athlete_b_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
+    outcome         TEXT    NOT NULL CHECK (outcome IN ('WIN_A', 'WIN_B', 'DRAW')),
+    grade_a         REAL    CHECK (grade_a BETWEEN 8.25 AND 10.0),  -- NULL: see flags
+    grade_b         REAL    CHECK (grade_b BETWEEN 8.25 AND 10.0),
+    schlussgang     INTEGER NOT NULL DEFAULT 0,
+    flags           TEXT    NOT NULL DEFAULT '',
+    CHECK (athlete_a_id <> athlete_b_id),
+    CHECK ((grade_a IS NOT NULL AND grade_b IS NOT NULL) OR {_null_ok})
+);"""
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS festivals (
@@ -74,7 +96,8 @@ CREATE TABLE IF NOT EXISTS festival_parse (
     n_bouts         INTEGER NOT NULL DEFAULT 0,
     n_rejects       INTEGER NOT NULL DEFAULT 0,
     youth_blocks    INTEGER NOT NULL DEFAULT 0,
-    parsed_at       TEXT    NOT NULL
+    parsed_at       TEXT    NOT NULL,
+    {_N_GAENGE_COLUMN}
 );
 
 -- raw athletes as printed on one sheet (identity resolution in Phase 3)
@@ -102,20 +125,7 @@ CREATE TABLE IF NOT EXISTS athletes_raw (
 CREATE INDEX IF NOT EXISTS idx_athletes_raw_fest ON athletes_raw(fest_id);
 CREATE INDEX IF NOT EXISTS idx_athletes_raw_key ON athletes_raw(name_base_key);
 
--- spec Bout (athlete ids are athletes_raw ids until Phase 3 resolves identities)
-CREATE TABLE IF NOT EXISTS bouts (
-    bout_id         TEXT PRIMARY KEY,
-    fest_id         INTEGER NOT NULL REFERENCES festivals(fest_id),
-    gang_nr         INTEGER NOT NULL CHECK (gang_nr BETWEEN 1 AND 8),
-    athlete_a_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
-    athlete_b_id    TEXT    NOT NULL REFERENCES athletes_raw(athlete_raw_id),
-    outcome         TEXT    NOT NULL CHECK (outcome IN ('WIN_A', 'WIN_B', 'DRAW')),
-    grade_a         REAL    NOT NULL CHECK (grade_a BETWEEN 8.25 AND 10.0),
-    grade_b         REAL    NOT NULL CHECK (grade_b BETWEEN 8.25 AND 10.0),
-    schlussgang     INTEGER NOT NULL DEFAULT 0,
-    flags           TEXT    NOT NULL DEFAULT '',
-    CHECK (athlete_a_id <> athlete_b_id)
-);
+{_BOUTS_TABLE}
 CREATE INDEX IF NOT EXISTS idx_bouts_fest ON bouts(fest_id);
 
 -- everything that did not become a bout, with a reason (never dropped silently)
@@ -214,6 +224,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "event_flags" not in cols:  # v2 -> v3 (values re-derived by the next crawl)
         conn.execute(f"ALTER TABLE festivals ADD COLUMN {_FLAGS_COLUMN}")
         conn.execute(f"ALTER TABLE festivals ADD COLUMN {_ELIGIBLE_COLUMN}")
+    # v3 -> v4: nullable bout grades (rebuild: SQLite cannot alter constraints) and
+    # festival_parse.n_gaenge. Old rows are copied; the bumped PARSER_VERSION makes
+    # the next `parse` replace them anyway.
+    if "n_gaenge" not in {r[1] for r in conn.execute("PRAGMA table_info(festival_parse)")}:
+        conn.execute(f"ALTER TABLE festival_parse ADD COLUMN {_N_GAENGE_COLUMN}")
+    grade_a = [r for r in conn.execute("PRAGMA table_info(bouts)") if r[1] == "grade_a"]
+    if grade_a and grade_a[0][3]:  # notnull -> v3 table
+        cols_b = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(bouts)"))
+        conn.execute("ALTER TABLE bouts RENAME TO bouts_v3")
+        conn.execute("DROP INDEX IF EXISTS idx_bouts_fest")
+        conn.executescript(_BOUTS_TABLE)
+        conn.execute(f"INSERT INTO bouts ({cols_b}) SELECT {cols_b} FROM bouts_v3")
+        conn.execute("DROP TABLE bouts_v3")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bouts_fest ON bouts(fest_id)")
 
 
 def _row_to_festival(row: sqlite3.Row) -> Festival:

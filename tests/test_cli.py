@@ -309,10 +309,12 @@ def test_parse_sample_offline(tmp_path: Path) -> None:
     conn = sqlite3.connect(tmp_path / "d" / "schwingen.db")
     q = lambda s: conn.execute(s).fetchall()  # noqa: E731
     assert dict(q("SELECT fest_id, status FROM festival_parse")) == {
-        24110: "partial", 26400: "ok", 37052: "partial", 45965: "partial", 46055: "ok"}
+        24110: "ok", 26400: "ok", 37052: "partial", 45965: "ok", 46055: "ok"}
     n_bouts, max_gang = q("SELECT COUNT(*), MAX(gang_nr) FROM bouts")[0]
     assert n_bouts > 1500 and max_gang == 8  # includes the ESAF (8 Gänge)
     assert q("SELECT COUNT(*) FROM bouts WHERE fest_id = 46055") == [(274,)]
+    # extra bouts (ESAF 2019, Kirchberg, Scheidegg) are stored with a NULL grade
+    assert q("SELECT COUNT(*) FROM bouts WHERE flags LIKE '%extra_bout%'") == [(4,)]
     assert not (tmp_path / "d" / "raw").exists()
     # incremental: nothing re-parsed, --force re-parses everything
     assert cli.main(["parse", "--sample", "--data-dir", d]) == 0

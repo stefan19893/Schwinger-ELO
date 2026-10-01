@@ -29,7 +29,7 @@ from src.scraper.statistic_pdfs import fetch_statistic_pdf, pdf_to_text
 log = logging.getLogger("schwingen.parse")
 
 # Bump whenever parsing rules change so cached sheets are re-parsed.
-PARSER_VERSION = 1
+PARSER_VERSION = 2  # v2: extra bouts, wrapped / no-grade lines, Gang count (review fixes)
 
 _ATHLETE_COLS = ["athlete_raw_id", "fest_id", "idx", "rank", "name_raw", "name", "name_key",
                  "name_base_key", "status", "mark", "sennen_turner", "withdrawn", "points",
@@ -88,11 +88,12 @@ def store_result(conn: sqlite3.Connection, fest: Festival, res: bp.FestivalParse
         conn.execute(
             "INSERT OR REPLACE INTO festival_parse (fest_id, pdf_url, pdf_sha256, parser_version, "
             "layout, status, header_check, n_athletes, n_entries, n_bouts, n_rejects, "
-            "youth_blocks, parsed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "youth_blocks, parsed_at, n_gaenge) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (fest.fest_id, fest.statistic_pdf_url, sha, PARSER_VERSION,
              res.layout if res else None, status, res.header_check if res else None,
              len(res.athletes) if res else 0, res.entries_total if res else 0,
-             len(res.bouts) if res else 0, len(rejects), res.youth_blocks if res else 0, now))
+             len(res.bouts) if res else 0, len(rejects), res.youth_blocks if res else 0, now,
+             res.gang_count if res else None))
 
 
 def _sql(v: object) -> object:
