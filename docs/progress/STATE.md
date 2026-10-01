@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-01
 **Current phase:** 2 — Bout parser (in review — review fixes done, branch `phase-2-parser`)
-**Next action:** Phase 2 review fixes R1–R5 done (parser v2, schema v4, real DB re-parsed: 491,669 bouts). Re-run the `phase-reviewer` against the Phase 2 exit criteria + review findings, then ask the user before Phase 3. User to decide: `grade_missing` extension of the NULL-grade rule, fetching the ESAF 2013 "Statistik nach 4 Gängen" PDF, one-sided Schlussgang entries (see Open questions).
+**Next action:** Phase 2 post-review follow-ups (R6 in `phase-2-parser.md`): one-sided Schlussgang, ESAF 2013 supplement, schlussgang NULL fix, entries_overflow, duplicate-content check; then re-parse.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -77,7 +77,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — **User decision: rescue old layouts** (6 failed Kantonalfeste 2011–2015, weak 2012–2014 multicol/blocks/notenblatt sheets, ESAF 2013), prioritised by K-factor and timeboxed; truncated source sheets (e.g. Klewenalp 2013) are documented, not chased.
 - 2026-10-01 — **User decision: nothing bout-like may vanish** — wrapped and missing-grade lines are parsed where the mirror exists; every other bout-like line is stored as a `parse_rejects` row.
 - 2026-10-01 — Extra-bout detection rule: placeholder (0.00 / 0.25), no-grade or `z` entry of an athlete with more entries than the festival's Gang count → paired with its mirror, outcome from complementary symbols, NULL grade, flag `extra_bout`, Gang = opponent's position; the same entry types in a regular Gang stay `forfeit_injury` — corpus survey separates both cleanly (details: phase-2 handoff R1/R2).
-- 2026-10-01 — **Extension of the user decision (please confirm):** a no-grade line in a *regular* Gang whose mirror is complete and consistent is kept as a bout with NULL grade and flag `grade_missing` (2 bouts in the corpus); the bouts CHECK therefore allows NULL grades with `extra_bout` **or** `grade_missing` — the user asked to parse missing-grade lines whose mirror exists, and fabricating a grade is not an option.
+- 2026-10-01 — **Extension of the user decision (confirmed by user 2026-10-01, see below):** a no-grade line in a *regular* Gang whose mirror is complete and consistent is kept as a bout with NULL grade and flag `grade_missing` (2 bouts in the corpus); the bouts CHECK therefore allows NULL grades with `extra_bout` **or** `grade_missing` — the user asked to parse missing-grade lines whose mirror exists, and fabricating a grade is not an option.
 - 2026-10-01 — Schema v4: nullable `bouts.grade_a/grade_b` (CHECK above), `festival_parse.n_gaenge`; migration rebuilds the v3 `bouts` table. `PARSER_VERSION` 2.
 - 2026-10-01 — Festival Gang count derived per sheet (`festival_gang_count`: ≥ 10 % of athletes, min. 2, clamped to 8 ESAF / 6 else) — recognises 5-Gang festivals; no genuine 7/8-Gang festival besides the ESAF exists in the corpus, so the category cap stays.
 - 2026-10-01 — Sheets shared by the `--sample` dataset and parser tests are stored once, in `tests/fixtures/sample/statistic/` (`tests/fixture_paths.py` resolves both directories) — review should-fix (duplicate fixtures).
@@ -85,10 +85,13 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — `bouts.schlussgang` is NULL (unknown) unless the sheet marks the Schlussgang explicitly (`s+` in block layouts, 13 sheets) — no reliable marker exists elsewhere; a NULL is better than a misleading 0 (review should-fix).
 - 2026-10-01 — Glyph-id text layers are decoded (`decode_glyph_ids`: standard Macintosh glyph order exact; per-document non-ASCII glyphs → `?`, informational reject `glyph_ids_decoded_lossy`) — rescues Thurgau 2015 and 9 Regional sheets; lossy names need fuzzy matching in Phase 3.
 - 2026-10-01 — R4 timebox stopped with all Kranzfeste parsed except Freiburg 2012 and Genf 2013 (source limitations); remaining loss is mostly truncated source sheets (top ranks only) and one-off Regional layouts.
+- 2026-10-01 — **User decision: `grade_missing` confirmed** — no-grade lines in a regular Gang with a consistent mirror stay bouts with a NULL grade; Phase 4 treats them like extra bouts (outcome only, no MoV).
+- 2026-10-01 — **User decision: ESAF 2013 supplement** — fetch the "Statistik nach 4 Gängen" PDF (exactly the needed request, via HttpClient, cached) and merge it so the 77 athletes eliminated after Gang 4 get their Gänge 1–4; de-duplicate against the final sheet. Other truncated festivals with interim sheets are only listed, not fetched.
+- 2026-10-01 — **User decision: one-sided Schlussgang bouts** — where a sheet omits the Schlussgang loser's line entirely, keep the bout from the winner's entry alone, only if the opponent resolves to exactly one athlete and the entry is the athlete's final Gang; loser grade NULL, flag `one_sided`, Phase 4 outcome-only. Narrow rule — other unmatched entries stay rejects.
 
 ## Open questions
-- **ESAF 2013 (25862) completeness:** the final "Statistik" sheet omits the 77 athletes eliminated after Gang 4 (198 one-sided entries, 636 bouts vs ~905 at other ESAFs). The node also links "Statistik nach 4 Gängen" (`stat_burgdorf13-gang4_0.pdf`), not cached. Fetch it (1 request) and merge the Gänge 1–4 of the eliminated athletes? → user decision (Phase 2 follow-up).
-- **One-sided Schlussgang entries:** some sheets omit the Schlussgang loser's line entirely (e.g. Engstligenalp 2023 Gobeli–Rolli); 23 festival winners since 2016 lose their Schlussgang this way. Keep such entries as bouts (outcome from the winner's symbol, loser grade NULL, flag e.g. `mirror_missing`), or keep rejecting one-sided entries (current rule)? → user decision.
+- ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
+- ~~One-sided Schlussgang entries~~ — resolved 2026-10-01 by user decision (keep, flag `one_sided`).
 - Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang? (Phase 2 review recommends once per festival or per Ausstich phase; see `phase-4-elo.md`.)
 - ~~Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse~~ — resolved 2026-10-01 (4 rescued; Freiburg 2012 and Genf 2013 are source limitations).
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.

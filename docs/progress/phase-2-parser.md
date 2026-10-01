@@ -27,6 +27,7 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 - [x] R3. Should-fix: header print timestamps + date tolerance, real Gang count in `_assign_gaenge`, `schlussgang` column, duplicate fixtures
 - [x] R4. Rescue old layouts (6 failed Kantonalfeste, multicol/blocks/notenblatt loss, ESAF 2013) — timeboxed
 - [x] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
+- [~] R6. Post-review follow-ups (re-review passed 2026-10-01): one-sided Schlussgang (`one_sided`), ESAF 2013 interim-sheet merge (1 request), schlussgang NULL when no marked bout imported, `entries_overflow`, cross-festival duplicate check; parser v3 re-parse
 
 ## Known risks from Phase 1 review
 Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.md` (task 1 + task 7 notes). Not yet addressed.
