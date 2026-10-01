@@ -264,8 +264,40 @@ def _parse_sample(cfg: Config, force: bool = False) -> int:
 
 
 def cmd_clean(cfg: Config) -> int:
-    log.warning("clean: not implemented yet (Phase 3) - out=%s", cfg.processed_dir)
+    """Identity resolution: SQLite (read-only) -> data/processed/*.parquet (idempotent)."""
+    import time
+
+    from src.pipeline.cleaner import run_clean
+
+    if cfg.sample and not _sample_db_ready(cfg):
+        log.info("clean: --sample db at %s is empty, building it first (crawl + parse --sample)",
+                 cfg.db_path)
+        rc = _crawl_sample(cfg) or _parse_sample(cfg)
+        if rc:
+            return rc
+    if not cfg.db_path.is_file():
+        log.error("clean: %s not found - run `crawl` and `parse` first", cfg.db_path)
+        return 1
+    t0 = time.perf_counter()
+    result = run_clean(cfg.db_path, cfg.processed_dir)
+    log.info("clean: done in %.1f s -> %s (%s)", time.perf_counter() - t0, cfg.processed_dir,
+             ", ".join(f"{k}={v}" for k, v in result.counts.items()))
     return 0
+
+
+def _sample_db_ready(cfg: Config) -> bool:
+    """The --sample db exists and holds parsed sheets (read-only check)."""
+    import sqlite3
+
+    if not cfg.db_path.is_file():
+        return False
+    conn = sqlite3.connect(f"file:{cfg.db_path.resolve()}?mode=ro", uri=True)
+    try:
+        return bool(conn.execute("SELECT EXISTS (SELECT 1 FROM sqlite_master "
+                                 "WHERE name = 'bouts')").fetchone()[0]
+                    and conn.execute("SELECT EXISTS (SELECT 1 FROM bouts)").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def cmd_elo(cfg: Config) -> int:
@@ -359,7 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("parse", "parse cached statistic PDFs into SQLite (offline)")
     sp.add_argument("--force", action="store_true", default=False,
                     help="re-parse festivals even if PDF and parser version are unchanged")
-    add("clean", "identity resolution -> data/processed/*.parquet")
+    add("clean", "identity resolution -> data/processed/{bouts,athletes,festivals,"
+                 "identity_map,bout_rejects}.parquet (reads SQLite read-only)")
     add("elo", "compute ratings -> data/processed/ratings.parquet")
     add("build", "write the static site to dist/")
     sp = add("serve", "serve dist/ over HTTP")
