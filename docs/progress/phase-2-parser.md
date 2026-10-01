@@ -1,5 +1,5 @@
 # Phase 2 — Bout parser (Milestone 2)
-**Status:** in review (all tasks done 2026-09-30; phase-reviewer not yet run)
+**Status:** in progress — review fixes (phase-reviewer verdict "needs fixes", user decisions 2026-10-01)
 **Agent:** data-engineer
 
 ## Goal
@@ -20,6 +20,13 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 - [x] 4. Batch-parse all crawled festivals into SQLite `bouts` / `athletes_raw`
 - [x] 5. Wire `cli parse`; create `tests/fixtures/sample/` and `--sample` support for crawl/parse
 - [x] 6. Report data quality (bouts per year, draw rate, parse failures) in handoff notes
+
+### Review fixes (phase-reviewer 2026-10-01, user decisions 2026-10-01)
+- [~] R1. Extra bouts (Zusatzgang, 0.00/0.25/no-grade lines) kept as `extra_bout` with NULL grade; schema v4 (nullable grades + CHECK); real forfeits stay `forfeit_injury`
+- [ ] R2. Bout-like lines never vanish: wrapped lines, missing-grade lines parsed; the rest -> `parse_rejects`; line accounting test
+- [ ] R3. Should-fix: header print timestamps + date tolerance, real Gang count in `_assign_gaenge`, `schlussgang` column, duplicate fixtures
+- [ ] R4. Rescue old layouts (6 failed Kantonalfeste, multicol/blocks/notenblatt loss, ESAF 2013) — timeboxed
+- [ ] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
 
 ## Known risks from Phase 1 review
 Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.md` (task 1 + task 7 notes). Not yet addressed.
