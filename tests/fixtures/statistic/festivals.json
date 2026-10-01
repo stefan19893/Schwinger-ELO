@@ -297,7 +297,7 @@
   "url": "https://www.schlussgang.ch/event/basellandschaftlicher-saisoneroeffnungsschwingfest-arlesheim-u20-2021",
   "statistic_pdf_url": "https://www.schlussgang.ch/sites/default/files/public%3A//schlussrangliste-pdfs/stat_arlesheim_aktive.pdf.pdf",
   "ranking_pdf_url": "https://www.schlussgang.ch/sites/default/files/public%3A//schlussrangliste-pdfs/rl_arlesheim_aktive.pdf.pdf",
-  "fixture_note": "garbled font (Caesar-shifted glyphs, no digits) - must be rejected"
+  "fixture_note": "glyph-id text layer (font without Unicode map, 2021): ASCII decodes as id+29, non-ASCII ids are per document -> '?'; trimmed"
  },
  "23796": {
   "fest_id": 23796,

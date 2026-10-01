@@ -70,6 +70,7 @@ class Sheet:
     suspicious: list[tuple[int, str, str]] = field(default_factory=list)  # (line, text, reason)
     noise: list[tuple[int, str]] = field(default_factory=list)  # ignored lines (titles, footers…)
     youth_lines: set[int] = field(default_factory=set)  # entry lines skipped in youth sections
+    glyph_ids: str | None = None  # text layer decoded from glyph ids ('mac' | 'lossy')
 
     @property
     def noise_lines(self) -> int:
@@ -106,9 +107,63 @@ _NUM = r"\d{1,2}[.,]\d{2}"
 GRADE_TOKEN_RE = re.compile(rf"(?<![\d.,]){_GRADE}(?![\d.,])")
 
 
+# ------------------------------------------------------------- glyph-id text layers
+# Some PDFs (Thurgau 2015, Genf 2013, several 2021 sheets) embed TrueType subsets
+# without a Unicode map; PDFium then returns glyph ids instead of characters.
+# In the standard Macintosh glyph order id = ASCII - 29 (3 = space … 93 = 'z') and
+# ids 98+ follow Mac Roman from 0x80 (108 = 'ä', 124 = 'ö', 129 = 'ü', 112 = 'é').
+_PLAUSIBLE_NON_ASCII = set("äöüéèêëàâáçïîôûÄÖÜÉ©ß")
+
+
+def glyph_id_encoding(text: str) -> str | None:
+    """'mac' (standard glyph order, exact), 'lossy' (ASCII exact, other glyphs
+    unknown) or None (normal text layer)."""
+    ctrl = sum(1 for c in text if ord(c) < 0x20 and c not in "\n\r\t\f")
+    if ctrl < 20 or ctrl < 0.05 * len(text):
+        return None
+    ascii_ = "".join(chr(ord(c) + 29) if ord(c) < 98 and c not in "\n\r\t\f " else c
+                     for c in text)
+    if len(GRADE_TOKEN_RE.findall(ascii_)) < 10:  # another (unknown) glyph order: give up
+        return None
+    high = {_mac_glyph(c) for c in text if 98 <= ord(c) < 226}
+    return "mac" if high <= _PLAUSIBLE_NON_ASCII else "lossy"
+
+
+def _mac_glyph(c: str) -> str:
+    return bytes([ord(c) + 30]).decode("mac_roman")
+
+
+def decode_glyph_ids(text: str) -> str:
+    """Decode a glyph-id text layer (see :func:`glyph_id_encoding`); names lose
+    their inner spaces in these PDFs, so "BöschDaniel" -> "Bösch Daniel"."""
+    enc = glyph_id_encoding(text)
+    if enc is None:
+        return text
+    out: list[str] = []
+    open_paren = False
+    for ch in text:
+        o = ord(ch)
+        if ch == "\f" and open_paren:            # id 12 = ')' (not a page break)
+            ch, o = ")", -1
+        if o == -1 or ch in "\n\r\t\f ":
+            out.append(ch)
+        elif o < 98:
+            out.append(chr(o + 29))
+        elif o < 226:
+            out.append(_mac_glyph(ch) if enc == "mac" else "?")
+        else:
+            out.append(ch)
+        if out[-1] in "\n\f":
+            open_paren = False
+        elif out[-1] in "()":
+            open_paren = out[-1] == "("
+    return "\n".join(re.sub(r"(?<=[a-zß-ÿ?])(?=[A-ZÀ-Þ])", " ", ln)
+                     for ln in "".join(out).split("\n"))
+
+
 def normalize_text(text: str) -> list[str]:
     """NFKC (ligatures), unify newlines/whitespace; returns stripped lines (keeps blanks out)."""
-    text = unicodedata.normalize("NFKC", text).replace("\r\n", "\n").replace("\r", "\n")
+    text = unicodedata.normalize("NFKC", decode_glyph_ids(text)).replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\f", "\n").replace("\u00a0", " ").replace("\u2019", "'")
     text = text.replace("\u00ad", "").replace("\u2010", "-").replace("\u2013", "-")
     lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in text.split("\n")]
@@ -369,6 +424,13 @@ _HEADER_START_RE = re.compile(
     r"^(?:[1-9]\d*\s*\.?\s*[a-z]{0,2}\.?|[a-z]{1,2})(?:\s*[*°])?(?:\s+\D*)?$")
 
 
+def _bout_line_at(lines: list[str], k: int) -> bool:
+    """Is line ``k`` a bout entry (graded, placeholder, 'z', wrapped or no-grade)?"""
+    m = BOUT_LINE_RE.match(lines[k]) if 0 <= k < len(lines) else None
+    return bool(m and (m.group("grade") or m.group("ph") or m.group("z")
+                       or _NAME_LIKE_RE.match(m.group("name").strip())))
+
+
 def _join_header(lines: list[str], i: int, max_lines: int = 5) -> tuple[re.Match[str], int] | None:
     """Header broken over several lines ("10" / "e" / "Name, S" / "*" / "56.25").
 
@@ -385,8 +447,7 @@ def _join_header(lines: list[str], i: int, max_lines: int = 5) -> tuple[re.Match
         j += 1
         if not ln:
             continue
-        bm = BOUT_LINE_RE.match(ln)
-        if (bm and bm.group("grade")) or section_of(ln) or \
+        if _bout_line_at(lines, j - 1) or section_of(ln) or \
                 (parts and re.search(r"\d", ln) and not STARS_POINTS_RE.match(ln)
                  and not HEADER_RE.match(" ".join(parts + [ln]))):
             return None
@@ -398,8 +459,7 @@ def _join_header(lines: list[str], i: int, max_lines: int = 5) -> tuple[re.Match
             k = j
             while k < len(lines) and not lines[k]:
                 k += 1
-            nb = BOUT_LINE_RE.match(lines[k]) if k < len(lines) else None
-            if nb and nb.group("grade"):
+            if _bout_line_at(lines, k):
                 return h, j
     return None
 
@@ -475,7 +535,9 @@ def parse_standard(lines: list[str], fest_year: int | None = None) -> Sheet:
         if rn and i + 1 < len(lines) and not BOUT_LINE_RE.match(ln):
             # "4 Schuler Christian, S" [+ "***"] + "77.00"  or  + "*** * 78.25"
             j, star_lines = i + 1, []
-            while j < min(i + 3, len(lines)) and STARS_ONLY_RE.match(lines[j]):
+            while j < len(lines) - 1 and not lines[j] and j < i + 4:  # blank lines
+                j += 1
+            while j < min(i + 6, len(lines)) and STARS_ONLY_RE.match(lines[j]):
                 star_lines.append(lines[j])
                 j += 1
             sp = STARS_POINTS_RE.match(lines[j]) if j < len(lines) else None
@@ -493,8 +555,7 @@ def parse_standard(lines: list[str], fest_year: int | None = None) -> Sheet:
                 continue
         nh = NAME_ONLY_HEADER_RE.match(ln)
         if nh and i + 1 < len(lines) and to_float(nh.group("points")) > 10:
-            nxt_bout = BOUT_LINE_RE.match(lines[i + 1])
-            if nxt_bout and nxt_bout.group("grade"):
+            if _bout_line_at(lines, i + 1):
                 c.new_block(Block(None, nh.group("name").strip(), to_float(nh.group("points")), i))
                 i += 1
                 continue
@@ -648,11 +709,15 @@ def _rang_entry(c: _Collector, text: str, i: int) -> bool:
 _MC_TAIL = r"(?:\s+(?P<tail>SK|EK|TK|K|E|U)(?=\s|$))?"
 # number preceded by whitespace or glued to an upper-case code ("ET58.00")
 _MC_SEP = r"(?:\s+|(?<=[A-Z]))"
+# name text may contain a " 1"/" 2" suffix or a 2-digit birth year in the middle
+# ("Wicki Jonas S 94 (ISV)", "Röthlisberger Marcel, 94 ET")
+_MC_NAME = r"[^\d\s+][^+\d]*?(?:(?:\s\d|,?\s\d{2})(?=\s)[^+\d]*?)?"
+# rank "1", "1a", "1 a", "1.", "4. c"; an award '*' may follow the points
 _MC_HEADER_CELL = re.compile(
-    rf"(?P<rank>[1-9]\d*(?:\s?[a-z](?=\s))?)\s+(?P<name>[^\d\s+][^+\d]*?(?:\s\d(?=\s))?)"
-    rf"{_MC_SEP}(?P<points>{_NUM})(?=\s|$){_MC_TAIL}")
+    rf"(?P<rank>[1-9]\d*\.?(?:\s?[a-z](?=\s))?)\s+(?P<name>{_MC_NAME})"
+    rf"{_MC_SEP}(?P<points>{_NUM})(?=\s|$){_MC_TAIL}(?P<award>\s+\*(?=\s|$))?")
 _MC_BOUT_CELL = re.compile(
-    rf"(?P<sym>[+\-o0])\s+(?P<name>[^\d\s+][^+\d]*?(?:\s\d(?=\s))?){_MC_SEP}(?P<grade>{_GRADE})"
+    rf"(?P<sym>s?[+\-o0])\s+(?P<name>{_MC_NAME}){_MC_SEP}(?P<grade>{_GRADE})"
     rf"(?=\s|$){_MC_TAIL}")
 
 
@@ -701,9 +766,10 @@ def parse_multicol(lines: list[str], fest_year: int | None = None) -> Sheet:
         if heads and not bouts:
             columns = []
             for h in heads:
-                c.new_block(Block(h.group("rank").replace(" ", ""), h.group("name").strip(),
+                c.new_block(Block(re.sub(r"[\s.]", "", h.group("rank")), h.group("name").strip(),
                                   to_float(h.group("points")), i,
-                                  mark="°" if h.group("tail") == "U" else ""))
+                                  mark="°" if h.group("tail") == "U" else
+                                  "*" if h.group("award") else ""))
                 columns.append(c.current if not getattr(c, "current_is_youth", False) else None)
             continue
         if bouts and columns:
@@ -714,7 +780,8 @@ def parse_multicol(lines: list[str], fest_year: int | None = None) -> Sheet:
                     continue
                 col.entries.append(Entry(_sym(b.group("sym")), b.group("name").strip(),
                                          to_float(b.group("grade")), i, ambiguous=ambiguous,
-                                         forfeit=injury and n_cell == len(bouts) - 1))
+                                         forfeit=injury and n_cell == len(bouts) - 1,
+                                         schlussgang=b.group("sym").startswith("s")))
             if len(bouts) > len(columns):
                 c.suspicious(i, ln, "more_cells_than_columns")
             continue
@@ -795,8 +862,11 @@ def parse_sheet(text: str, fest_year: int | None = None) -> Sheet:
     lines = normalize_text(text)
     layout = detect_layout(lines)
     if layout in PARSERS:
-        return PARSERS[layout](lines, fest_year)
-    return Sheet(layout=layout, header=[ln for ln in lines if ln][:8], blocks=[])
+        sheet = PARSERS[layout](lines, fest_year)
+    else:
+        sheet = Sheet(layout=layout, header=[ln for ln in lines if ln][:8], blocks=[])
+    sheet.glyph_ids = glyph_id_encoding(text)
+    return sheet
 
 
 # ----------------------------------------------------------------------------- header check
@@ -962,6 +1032,11 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
     rej = res.rejects.append
     for line, text, reason in sheet.suspicious:
         rej(Reject(fest_id, "line", reason, text, line))
+    if sheet.glyph_ids:  # informational, like duplicate_name_in_sheet
+        rej(Reject(fest_id, "athlete", f"glyph_ids_decoded_{sheet.glyph_ids}",
+                   "text layer decoded from TrueType glyph ids" +
+                   ("; non-ASCII letters unknown ('?') - names need fuzzy matching"
+                    if sheet.glyph_ids == "lossy" else "")))
     if sheet.layout in ("empty", "garbled"):
         rej(Reject(fest_id, "festival", f"layout_{sheet.layout}", "no usable text layer"))
         res.status = "failed"

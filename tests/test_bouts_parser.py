@@ -300,11 +300,37 @@ def test_notenblatt_layout_assigns_blocks_correctly() -> None:
     assert athlete(res, "Mahrer Jürg")["rank"] == "1" and athlete(res, "Mahrer Jürg")["points"] == 59.5
 
 
-def test_garbled_sheet_fails_with_reason() -> None:
+def test_glyph_id_sheet_is_decoded() -> None:
+    """24038 (2021) embeds a font without Unicode map: PDFium returns glyph ids.
+    ASCII decodes exactly (id + 29); its non-ASCII ids are per document -> '?'."""
     res = parsed(24038)
+    assert reasons(res)["glyph_ids_decoded_lossy"] == 1
+    assert res.status == "ok" and len(res.bouts) == 22
+    assert athlete(res, "Streich Sascha")["points"] == 59.75
+    assert "Ny?enegger Florian" in {a["name"] for a in res.athletes}  # "ff" glyph unknown
+
+
+def _encode_mac(s: str) -> str:
+    """Inverse of the standard Macintosh glyph order (test helper)."""
+    return "".join(c if c in "\n " else chr(ord(c) - 29) if ord(c) < 127
+                   else chr(c.encode("mac_roman")[0] - 30) for c in s)
+
+
+def test_decode_standard_mac_glyph_order() -> None:
+    lines = ["Statistische Tabelle", "1", "BöschDaniel", "59.00"] + \
+        [f"+ MüllerJosé{i} 9.75" for i in range(12)]
+    raw = "\n".join(_encode_mac(ln) for ln in lines)
+    assert bp.glyph_id_encoding(raw) == "mac"
+    out = bp.decode_glyph_ids(raw).split("\n")
+    assert out[2] == "Bösch Daniel" and out[4] == "+ Müller José0 9.75"
+    assert bp.glyph_id_encoding("normal text 9.75\n" * 30) is None
+    # an unknown glyph order (no grades after decoding) is left alone
+    assert bp.glyph_id_encoding("\x01\x02\x03\x04 \x05\x06" * 40) is None
+
+
+def test_undecodable_sheet_fails_with_reason() -> None:
+    res = bp.parse_festival("\x01\x02\x03 \x04\x05" * 40, 1, "2013-04-21", "x")
     assert res.status == "failed" and res.bouts == []
-    assert reasons(res)["no_athletes_found"] == 1
-    assert set(reasons(res)) <= {"no_athletes_found", "unparsed_bout_line"}  # garbled glyphs
 
 
 def test_pdf_extraction_matches_text_fixture() -> None:
