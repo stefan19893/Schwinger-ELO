@@ -1,16 +1,16 @@
 # Project State
 
 **Last updated:** 2026-10-01
-**Current phase:** 2 — Bout parser (in review — re-review passed, follow-ups done, branch `phase-2-parser`)
-**Next action:** push + PR, then ask the user before Phase 3. (Phase 2 re-review passed 2026-10-01; post-review follow-ups R6 done, parser v3 / schema v5, real DB re-parsed: 491,676 bouts.)
+**Current phase:** 3 — Identity cleaning (in progress, branch `phase-3-cleaning`)
+**Next action:** Phase 3 — parallel work packages A (analysis + name normalisation), B (schlussgang athlete source + club/association normalisation), C (bout remapping + Parquet export + `cli clean`); then task 2 identity resolution.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
 |---|---|---|---|---|
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
-| 2 | Bout parser | M2 | `phase-2-parser.md` | in review |
-| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | not started |
+| 2 | Bout parser | M2 | `phase-2-parser.md` | done |
+| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | in progress |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
@@ -92,6 +92,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — Interim sheets only via the explicit registry `supplements.INTERIM_SHEETS` (ESAF 2013 only; 1 request made). The fetched sheet is itself truncated (+3 bouts); further ESAF 2013 interim sheets ("nach 2/3 Gängen") would need a new user OK.
 - 2026-10-01 — One-sided rule narrowed further than the user's wording: the winner must be rank 1, the entry a graded `+`, the opponent's list complete and without any entry against him — keeps it to the Schlussgang (16 bouts).
 - 2026-10-01 — Reviewer suggestions applied: `schlussgang` NULL for a festival whose marked bout isn't imported; `entries_overflow` (> Gänge + 1 entries) disables extra-bout logic and flags the athlete; permanent duplicate-content check (`flag_duplicate_sheets`: same sha256 or ≥ 80 % identical bouts → status `duplicate_sheet`, verified header / earlier festival keeps the bouts).
+- 2026-10-01 — `one_sided` rule kept strict (winner rank 1, graded final-Gang win, loser list complete without that bout) — default taken, user did not object when merging PR #3.
+- 2026-10-01 — ESAF 2013 `nach 2/3 Gängen` interim sheets not fetched — no user OK for extra requests; ESAF 2013 stays incomplete (640 bouts).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
