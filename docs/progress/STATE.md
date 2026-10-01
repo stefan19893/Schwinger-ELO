@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-01
 **Current phase:** 2 — Bout parser (review fixes in progress, branch `phase-2-parser`)
-**Next action:** Phase 2 review fixes in progress (see `phase-2-parser.md` → Review fixes): R3 should-fix items (header timestamps, schlussgang column) next, then R4 old layouts, R5 full re-parse + report.
+**Next action:** Phase 2 review fixes in progress (see `phase-2-parser.md` → Review fixes): R4 old layouts (timeboxed), then R5 full re-parse + report.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -81,6 +81,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — Schema v4: nullable `bouts.grade_a/grade_b` (CHECK above), `festival_parse.n_gaenge`; migration rebuilds the v3 `bouts` table. `PARSER_VERSION` 2.
 - 2026-10-01 — Festival Gang count derived per sheet (`festival_gang_count`: ≥ 10 % of athletes, min. 2, clamped to 8 ESAF / 6 else) — recognises 5-Gang festivals; no genuine 7/8-Gang festival besides the ESAF exists in the corpus, so the category cap stays.
 - 2026-10-01 — Sheets shared by the `--sample` dataset and parser tests are stored once, in `tests/fixtures/sample/statistic/` (`tests/fixture_paths.py` resolves both directories) — review should-fix (duplicate fixtures).
+- 2026-10-01 — Header check ignores print timestamps (date + clock time) and allows ±3 days — review should-fix; Krummenau 2015 (sheet 06.09., schlussgang 13.09.) stays `header_mismatch` as probable wrong schlussgang metadata.
+- 2026-10-01 — `bouts.schlussgang` is NULL (unknown) unless the sheet marks the Schlussgang explicitly (`s+` in block layouts, 13 sheets) — no reliable marker exists elsewhere; a NULL is better than a misleading 0 (review should-fix).
 
 ## Open questions
 - Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang?

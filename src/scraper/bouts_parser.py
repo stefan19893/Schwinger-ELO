@@ -811,10 +811,20 @@ _NUM_DATE_RE = re.compile(r"(\d{1,2})\.(?:\s*-\s*(\d{1,2})\.)?\s*(\d{1,2})\.(\d{
 _WORD_DATE_RE = re.compile(r"(\d{1,2})\.?\s*(?:-\s*\d{1,2}\.?\s*)?([A-Za-zäéû]+)\s+(\d{4})")
 
 
+# a date followed by a clock time is the print timestamp ("01.01.2000 - 01:41",
+# "…Schwingerverband 10.04.2022 17:10 Seite 1/2"), not the festival date
+_PRINT_TIME_RE = re.compile(r"\s*-?\s*\d{1,2}:\d{2}")
+# sheets are sometimes printed / dated a few days off (Bolligen 2019: 15.04 vs 13.04)
+HEADER_DATE_TOLERANCE_DAYS = 3
+
+
 def header_dates(lines: Iterable[str]) -> list[_dt.date]:
+    """Festival dates printed in the sheet header (print timestamps ignored)."""
     out: list[_dt.date] = []
     for ln in lines:
         for m in _NUM_DATE_RE.finditer(ln):
+            if _PRINT_TIME_RE.match(ln, m.end()):
+                continue
             y = int(m.group(4))
             y = y + 2000 if y < 100 else y
             for d in filter(None, (m.group(1), m.group(2))):
@@ -842,7 +852,7 @@ def verify_header(header: list[str], fest_date: str, fest_name: str) -> tuple[st
     target = _dt.date.fromisoformat(fest_date)
     dates = header_dates(header)
     if dates:
-        if any(abs((d - target).days) <= 1 for d in dates):
+        if any(abs((d - target).days) <= HEADER_DATE_TOLERANCE_DAYS for d in dates):
             return "ok", "date"
         return "mismatch", f"sheet dates {sorted({d.isoformat() for d in dates})} != {fest_date}"
     words = {w.casefold() for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", fest_name)} - _GENERIC_WORDS
@@ -1128,6 +1138,9 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
                 "flags": flags, "line": ea.line,
             })
     _assign_gaenge(pending, [len(b.entries) >= gang_count for b in blocks])
+    # Schlussgang: only known where the sheet marks it ('s+' / 's-' / 'so' entries in
+    # block layouts); everywhere else it is unknown (None), never a misleading 0
+    marked = any(e.schlussgang for b in blocks for e in b.entries)
     for p in pending:
         gang = int(p["gang_nr"])  # type: ignore[call-overload]
         if gang > max_gang:
@@ -1140,7 +1153,7 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             "fest_id": fest_id, "gang_nr": gang,
             "athlete_a_id": p["athlete_a_id"], "athlete_b_id": p["athlete_b_id"],
             "outcome": p["outcome"], "grade_a": p["grade_a"], "grade_b": p["grade_b"],
-            "schlussgang": p["schlussgang"], "flags": ",".join(p["flags"]),
+            "schlussgang": p["schlussgang"] if marked else None, "flags": ",".join(p["flags"]),
         })
     n_entry_rejects = sum(1 for r in res.rejects if r.stage in ("entry", "bout"))
     if not res.bouts:

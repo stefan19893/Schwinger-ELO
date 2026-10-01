@@ -268,7 +268,14 @@ def test_wrapped_entry_lines_are_joined() -> None:
 
 def test_block_layout_schlussgang_marker() -> None:
     res = parsed(26414)
-    assert any(b["schlussgang"] for b in res.bouts)
+    assert sum(b["schlussgang"] is True for b in res.bouts) == 1
+    assert {b["schlussgang"] for b in res.bouts} == {True, False}
+
+
+def test_schlussgang_unknown_without_marker() -> None:
+    """Sheets without an explicit marker (all modern ESV sheets): NULL, not False."""
+    assert {b["schlussgang"] for b in parsed(24110).bouts} == {None}
+    assert {b["schlussgang"] for b in parsed(46055).bouts} == {None}
 
 
 def test_shared_pdf_is_only_imported_for_its_festival() -> None:
@@ -369,6 +376,15 @@ def test_section_of(line: str, year: int, expected: str | None) -> None:
     (["Villars-le-Terroir, le 7 juillet 2013"], "2013-07-07", "ok"),
     (["Statistische Tabelle Klewenalp-Schwinget"], "2025-08-02", "ok"),  # name token
     (["Statistische Tabelle"], "2025-08-02", "unverified"),
+    # print timestamps are not festival dates (Lueg 2018/2019, Bözingenberg 2015)
+    (["Statistische Tabelle nach 6 Gängen", "01.01.2000 - 01:41"], "2019-09-08", "unverified"),
+    (["Oberarth, 10.04.2022", "Rigiverband ©2022 Eidgenössischer Schwingerverband "
+      "10.04.2022 17:24 Seite 1/3"], "2022-04-10", "ok"),
+    (["Thörigen, Reithalle, 10.04.2022", "Herzogenbuchsee ©2022 Eidgenössischer "
+      "Schwingerverband 04.09.2022 17:10 Seite 1/2"], "2022-09-04", "mismatch"),
+    (["Statistische Tabelle", "15.04.2019"], "2019-04-13", "ok"),  # a few days' tolerance
+    # Krummenau 2015: sheet 06.09., schlussgang 13.09. (wrong metadata) stays flagged
+    (["Wolzenalp ob Krummenau, 06. September 2015"], "2015-09-13", "mismatch"),
 ])
 def test_verify_header(header: list[str], date: str, expected: str) -> None:
     assert bp.verify_header(header, date, "Klewenalp-Schwinget 2025")[0] == expected

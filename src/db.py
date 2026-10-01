@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = 4  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
-                    # v4: nullable bout grades (extra bouts), festival_parse.n_gaenge
+                    # v4: nullable bout grades (extra bouts) + schlussgang, festival_parse.n_gaenge
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS bouts (
     outcome         TEXT    NOT NULL CHECK (outcome IN ('WIN_A', 'WIN_B', 'DRAW')),
     grade_a         REAL    CHECK (grade_a BETWEEN 8.25 AND 10.0),  -- NULL: see flags
     grade_b         REAL    CHECK (grade_b BETWEEN 8.25 AND 10.0),
-    schlussgang     INTEGER NOT NULL DEFAULT 0,
+    -- 1/0 only where the sheet marks the Schlussgang explicitly ('s+' in block layouts);
+    -- NULL = unknown (most sheets, incl. all modern ESV sheets, have no marker)
+    schlussgang     INTEGER CHECK (schlussgang IN (0, 1)),
     flags           TEXT    NOT NULL DEFAULT '',
     CHECK (athlete_a_id <> athlete_b_id),
     CHECK ((grade_a IS NOT NULL AND grade_b IS NOT NULL) OR {_null_ok})
