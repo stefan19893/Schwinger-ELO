@@ -202,7 +202,8 @@ def section_of(line: str, fest_year: int | None = None) -> str | None:
 
 
 # names -------------------------------------------------------------------------------
-_STATUS_TAIL_RE = re.compile(r"(?:\s+(?:[ST]?\*+|\*+|EK|TK|E|K|[ST]))+$")
+# status letters: E/K/EK/TK (Kranz), N (Neukranzer, Heller), S/T (Sennen/Turner)
+_STATUS_TAIL_RE = re.compile(r"(?:\s+(?:[ST]?\*+|\*+|EK|TK|E|K|N|[ST]))+$")
 _PAREN_RE = re.compile(r"\s*\(([^)]*)\)")
 
 
@@ -236,7 +237,7 @@ def status_of(raw: str) -> str:
     stars = raw.count("*")
     if stars:
         return "*" * min(stars, 3)
-    m = re.search(r"\s(EK|TK|E|K)$", raw.strip())
+    m = re.search(r"\s(EK|TK|E|K|N)$", raw.strip())
     return m.group(1) if m else ""
 
 
@@ -737,6 +738,10 @@ def _cells(pattern: re.Pattern[str], line: str) -> list[re.Match[str]] | None:
 _INJURY_NOTE_RE = re.compile(r"\s*>\s*unfall\b.*$", re.I)
 
 
+# header row whose last cell wrapped after its rank: "... 57.75 3 a" / "Moser Michael ... 57.50"
+_DANGLING_RANK_RE = re.compile(rf"{_NUM}(?:\s+\S+)?\s+[1-9]\d*\.?(?:\s?[a-z])?$")
+
+
 def parse_multicol(lines: list[str], fest_year: int | None = None) -> Sheet:
     """Rows with up to ~3 athletes side by side; columns assigned by order in the row."""
     c = _Collector("multicol", fest_year)
@@ -750,6 +755,9 @@ def parse_multicol(lines: list[str], fest_year: int | None = None) -> Sheet:
         if merged and (re.fullmatch(r"\([A-Z]{2,4}\)|[EK]|" + _GRADE, ln)) \
                 and not GRADE_TOKEN_RE.search(merged[-1][1].split("  ")[-1][-6:]):
             merged[-1] = (merged[-1][0], merged[-1][1] + " " + ln)  # wrapped cell
+            continue
+        if merged and _DANGLING_RANK_RE.search(merged[-1][1]) and not ln[:1].isdigit():
+            merged[-1] = (merged[-1][0], merged[-1][1] + " " + ln)  # "... 3 a" / "Name 57.50"
             continue
         merged.append((i, ln))
     columns: list[Block | None] = []

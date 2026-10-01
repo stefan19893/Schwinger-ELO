@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-01
 **Current phase:** 2 — Bout parser (review fixes in progress, branch `phase-2-parser`)
-**Next action:** Phase 2 review fixes in progress (see `phase-2-parser.md` → Review fixes): R4 old layouts (timeboxed), then R5 full re-parse + report.
+**Next action:** Phase 2 review fixes: R5 — full re-parse of the real cache (`python -m src.cli parse --force`), before/after report, notes in phase-3/phase-4 files.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -83,10 +83,14 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — Sheets shared by the `--sample` dataset and parser tests are stored once, in `tests/fixtures/sample/statistic/` (`tests/fixture_paths.py` resolves both directories) — review should-fix (duplicate fixtures).
 - 2026-10-01 — Header check ignores print timestamps (date + clock time) and allows ±3 days — review should-fix; Krummenau 2015 (sheet 06.09., schlussgang 13.09.) stays `header_mismatch` as probable wrong schlussgang metadata.
 - 2026-10-01 — `bouts.schlussgang` is NULL (unknown) unless the sheet marks the Schlussgang explicitly (`s+` in block layouts, 13 sheets) — no reliable marker exists elsewhere; a NULL is better than a misleading 0 (review should-fix).
+- 2026-10-01 — Glyph-id text layers are decoded (`decode_glyph_ids`: standard Macintosh glyph order exact; per-document non-ASCII glyphs → `?`, informational reject `glyph_ids_decoded_lossy`) — rescues Thurgau 2015 and 9 Regional sheets; lossy names need fuzzy matching in Phase 3.
+- 2026-10-01 — R4 timebox stopped with all Kranzfeste parsed except Freiburg 2012 and Genf 2013 (source limitations); remaining loss is mostly truncated source sheets (top ranks only) and one-off Regional layouts.
 
 ## Open questions
+- **ESAF 2013 (25862) completeness:** the final "Statistik" sheet omits the 77 athletes eliminated after Gang 4 (198 one-sided entries, 636 bouts vs ~905 at other ESAFs). The node also links "Statistik nach 4 Gängen" (`stat_burgdorf13-gang4_0.pdf`), not cached. Fetch it (1 request) and merge the Gänge 1–4 of the eliminated athletes? → user decision (Phase 2 follow-up).
+- **One-sided Schlussgang entries:** some sheets omit the Schlussgang loser's line entirely (e.g. Engstligenalp 2023 Gobeli–Rolli); 23 festival winners since 2016 lose their Schlussgang this way. Keep such entries as bouts (outcome from the winner's symbol, loser grade NULL, flag e.g. `mirror_missing`), or keep rejecting one-sided entries (current rule)? → user decision.
 - Phase 4: ~2 % of bouts carry `gang_collision` / `gang_uncertain` (Gang order within a festival not fully reliable) — rate festival-wise (simultaneous updates) or sequentially by Gang?
-- Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse (multicol/blocks variants) and ~1 % of entries have unresolved opponents — worth a parser v2 pass?
+- ~~Phase 2 follow-up (optional): 6 Kantonalfeste 2011–2015 failed to parse~~ — resolved 2026-10-01 (4 rescued; Freiburg 2012 and Genf 2013 are source limitations).
 - Phase 2: statistic PDFs for 13 Regional festivals 2012–2015 include youth categories ("inkl. Nachwuchs") — parser must keep only the active category.
 - schlussgang lists only 3 Regional festivals for 2011 (vs ~100/year later) — accept the gap, or start ratings with a 2011 burn-in season? → decide in Phase 4.
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.

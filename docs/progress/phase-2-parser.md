@@ -25,8 +25,8 @@ Extract every bout (Gang) with outcome and grades, plus raw athlete metadata.
 - [x] R1. Extra bouts (Zusatzgang, 0.00/0.25/no-grade lines) kept as `extra_bout` with NULL grade; schema v4 (nullable grades + CHECK); real forfeits stay `forfeit_injury`
 - [x] R2. Bout-like lines never vanish: wrapped lines, missing-grade lines parsed; the rest -> `parse_rejects`; line accounting test
 - [x] R3. Should-fix: header print timestamps + date tolerance, real Gang count in `_assign_gaenge`, `schlussgang` column, duplicate fixtures
-- [~] R4. Rescue old layouts (6 failed Kantonalfeste, multicol/blocks/notenblatt loss, ESAF 2013) — timeboxed
-- [ ] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
+- [x] R4. Rescue old layouts (6 failed Kantonalfeste, multicol/blocks/notenblatt loss, ESAF 2013) — timeboxed
+- [~] R5. Full re-parse (parser v2), before/after report, notes for phase 3/4, STATE decisions
 
 ## Known risks from Phase 1 review
 Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.md` (task 1 + task 7 notes). Not yet addressed.
@@ -110,3 +110,8 @@ Logged 2026-09-29 from the Phase 1 phase-reviewer; details in `phase-1-crawler.m
   - **Freiburg 2012 (26233): source limitation** — about half of all names are missing from the text layer ("+ 10.00", "3a 57.50"); even a partial salvage would fall below the confirmed 0.5 pair-rate floor.
   - Mels 2012 (26360): 159 → 462 bouts; Schaffhausen 2011 (26397): 158 → 418 (ok) — both from the wrapped-line fix in R2.
   - Corpus now: 491,506 bouts; status ok 1,298 / partial 513 / failed 62 / header_mismatch 6. Next: blocks layout (10.7 % entry loss), remaining multicol loss, notenblatt.
+- 2026-10-01 — **R4 done (timeboxed).** Additional fixes after the WIP note: Heller status letter `N` (Neukranzer) stripped from names (`_STATUS_TAIL_RE`, `status_of`) → **Neuenburg 2013 (25982): 191 → 267 bouts, 2 unmatched left**; multicol header rows whose last cell wraps after its rank ("… 57.75 3 a" / "Moser Michael SK Oberdiessbach 57.50") are joined.
+  - **Kranzfeste:** all six formerly failed Kantonalfeste checked — Zug 2011, Zug 2013, Luzern 2011, Thurgau 2015 rescued; **Freiburg 2012 (names missing from the text layer) and Genf 2013 (unknown glyph encoding) remain failed = source limitations**. No other ESAF/Bergkranz/Teilverband/Kantonal/Gau festival is failed.
+  - **Remaining entry loss is mostly truncated source sheets** (the sheet lists only the top ranks; the missing athletes occur in the text exactly as often as they are referenced as opponents): blocks — Stoos 2011/2013/2014, Ibach 2012–2015, Schwyzer Kantonal 2013 (to rank 23); notenblatt — NWS Teilverband 2011/2013 (to rank 19), Solothurn 2012, Basel-Stadt 2011/2014, BL 2013; multicol — St. Gallen 2011 (to rank 24), plus Klewenalp 2013 and ESAF 2013 (standard). Waadt 2012 (26314) has the same missing-names problem as Freiburg 2012. Not chased (user decision).
+  - **Left (small, Regional K=16 only):** 60 failed Regional sheets in one-off layouts (NWSV start-number lists "2 31 Thoenen Henryc -K 8.75", column-scrambled multicol such as Oberdiessbach 2014 / Bolligen 2013–2014, scanned PDFs, youth-only sheets), Thörigen + Altstätten 2023 (opponent names don't belong to the listed athletes — corrupt source), Riggisberg 2021 (27 names listed twice).
+  - **`unmatched_entry` composition (corrects the task-6 wording "mostly opponent withdrew"):** of 1,615 in imported sheets, 69 % are one-sided entries whose opponent's list is complete but does not mention the athlete (one side prints a wrong opponent, or the sheet omits the Schlussgang loser's line — 23 of them are festival winners' Schlussgang entries, e.g. Engstligenalp 2023 Gobeli–Rolli), 18 % have an opponent with a short list (withdrawal/injury possible), 13 % are rematch-count differences. → open question whether one-sided Schlussgang entries should be kept (outcome known, loser grade NULL).
