@@ -27,6 +27,7 @@ from src.config import Config, load_config
 if TYPE_CHECKING:
     import sqlite3
 
+    from src.db import Festival
     from src.scraper.client import HttpClient
     from src.scraper.fests_crawler import CrawlReport
 
@@ -113,10 +114,35 @@ def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> in
              f" (HTTP {rep.status_counts})" if rep.status_counts else "", len(rep.missing))
     for fid, err in rep.failed:
         log.warning("crawl: PDF of festival %d failed: %s", fid, err)
+    rep.missing += _crawl_interim_sheets(client, todo, cfg)
     if rep.missing:
         log.error("crawl: --offline: %d statistic PDFs not in cache", len(rep.missing))
         return 1
     return 0
+
+
+def _crawl_interim_sheets(client: HttpClient, fests: list[Festival], cfg: Config) -> list[int]:
+    """Interim statistic sheets registered in ``supplements.INTERIM_SHEETS`` (cached
+    after the first download). Returns festivals whose sheet is missing offline."""
+    import datetime as dt
+
+    from src.scraper.client import CacheMiss, FetchError
+    from src.scraper.supplements import INTERIM_SHEETS, fetch_interim_sheet
+
+    missing: list[int] = []
+    for f in fests:
+        if f.fest_id not in INTERIM_SHEETS:
+            continue
+        try:
+            res = fetch_interim_sheet(client, f, dt.date.today(), cfg.pdf_max_age_hours,
+                                      cfg.pdf_final_grace_days)
+            log.info("crawl: interim sheet of festival %d %s", f.fest_id,
+                     "cached" if res is not None and res.from_cache else "downloaded")
+        except CacheMiss:
+            missing.append(f.fest_id)
+        except FetchError as exc:
+            log.warning("crawl: interim sheet of festival %d failed: %s", f.fest_id, exc)
+    return missing
 
 
 def _exclude_flags(cfg: Config) -> tuple[str, ...]:

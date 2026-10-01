@@ -180,6 +180,7 @@ def test_null_grades_only_with_explaining_flag(tmp_path: Path) -> None:
     conn.execute(ins, ("x1", 10.0, None, "extra_bout"))
     conn.execute(ins, ("x2", 10.0, None, "gang_inferred:7/6,extra_bout"))
     conn.execute(ins, ("x3", None, 8.5, "grade_missing"))
+    conn.execute(ins, ("x4", 10.0, None, "one_sided"))
     for bad in (("y1", 10.0, None, ""), ("y2", None, 8.5, "gang_collision"),
                 ("y3", 10.0, None, "extra_bouts"), ("y4", 10.0, 0.0, "extra_bout")):
         with pytest.raises(sqlite3.IntegrityError):
@@ -213,7 +214,7 @@ def test_migrates_v3_bouts_to_nullable_grades(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
     assert [tuple(r) for r in conn.execute("SELECT bout_id, grade_a FROM bouts")] == [("x", 9.0)]
     notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
     assert notnull["grade_a"] == notnull["grade_b"] == notnull["schlussgang"] == 0
@@ -222,3 +223,21 @@ def test_migrates_v3_bouts_to_nullable_grades(tmp_path: Path) -> None:
     conn.execute("INSERT INTO bouts (bout_id, fest_id, gang_nr, athlete_a_id, athlete_b_id, "
                  "outcome, grade_a, grade_b, flags) VALUES "
                  "('y', 26400, 6, 'a', 'b', 'WIN_A', 10.0, NULL, 'extra_bout')")
+
+
+def test_migrates_v4_to_v5(tmp_path: Path) -> None:
+    """v4: bouts CHECK without 'one_sided', athletes_raw without flags -> rebuilt/added."""
+    path = tmp_path / "v4.db"
+    conn = connect(path)
+    upsert_festivals(conn, [F])
+    conn.execute("ALTER TABLE athletes_raw DROP COLUMN flags")
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name='bouts'").fetchone()[0]
+    conn.execute("DROP TABLE bouts")
+    conn.execute(sql.replace(" OR (',' || flags || ',') LIKE '%,one_sided,%'", ""))
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+    conn = connect(path)
+    assert "one_sided" in conn.execute("SELECT sql FROM sqlite_master WHERE name='bouts'").fetchone()[0]
+    assert "flags" in {r[1] for r in conn.execute("PRAGMA table_info(athletes_raw)")}
+

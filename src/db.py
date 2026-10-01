@@ -15,8 +15,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 4  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
-                    # v4: nullable bout grades (extra bouts) + schlussgang, festival_parse.n_gaenge
+SCHEMA_VERSION = 5  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
+                    # v4: nullable bout grades (extra bouts) + schlussgang, festival_parse.n_gaenge;
+                    # v5: 'one_sided' NULL-grade flag, athletes_raw.flags
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
@@ -34,9 +35,11 @@ _ELIGIBLE_COLUMN = "elo_eligible INTEGER NOT NULL DEFAULT 1 CHECK (elo_eligible 
 EVENT_FLAGS = ("team", "jungaktive", "ausland", "hallenschwinget")
 # Gänge of the festival as derived from the sheet (bouts_parser.festival_gang_count)
 _N_GAENGE_COLUMN = "n_gaenge INTEGER"
+_ATHLETE_FLAGS_COLUMN = "flags TEXT NOT NULL DEFAULT ''"
 # Bout flags that allow a NULL grade: an extra bout's placeholder line (0.00 / 0.25 /
-# none) and an entry printed without grade whose mirror entry is complete.
-NULL_GRADE_FLAGS = ("extra_bout", "grade_missing")
+# none), an entry printed without grade whose mirror entry is complete, and a
+# Schlussgang whose loser's line the sheet omits (bout from the winner's entry).
+NULL_GRADE_FLAGS = ("extra_bout", "grade_missing", "one_sided")
 _null_ok = " OR ".join(f"(',' || flags || ',') LIKE '%,{f},%'" for f in NULL_GRADE_FLAGS)
 _BOUTS_TABLE = f"""-- spec Bout (athlete ids are athletes_raw ids until Phase 3 resolves identities)
 CREATE TABLE IF NOT EXISTS bouts (
@@ -122,7 +125,8 @@ CREATE TABLE IF NOT EXISTS athletes_raw (
     grade_sum       REAL,
     birth_year      TEXT,
     association     TEXT,
-    place           TEXT
+    place           TEXT,
+    {_ATHLETE_FLAGS_COLUMN}  -- e.g. entries_overflow, interim_sheet
 );
 CREATE INDEX IF NOT EXISTS idx_athletes_raw_fest ON athletes_raw(fest_id);
 CREATE INDEX IF NOT EXISTS idx_athletes_raw_key ON athletes_raw(name_base_key);
@@ -231,8 +235,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # the next `parse` replace them anyway.
     if "n_gaenge" not in {r[1] for r in conn.execute("PRAGMA table_info(festival_parse)")}:
         conn.execute(f"ALTER TABLE festival_parse ADD COLUMN {_N_GAENGE_COLUMN}")
+    if "flags" not in {r[1] for r in conn.execute("PRAGMA table_info(athletes_raw)")}:
+        conn.execute(f"ALTER TABLE athletes_raw ADD COLUMN {_ATHLETE_FLAGS_COLUMN}")
     notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
-    if any(notnull.get(c) for c in ("grade_a", "grade_b", "schlussgang")):  # v3 table
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'bouts'").fetchone()
+    outdated_check = bool(sql) and any(f not in sql[0] for f in NULL_GRADE_FLAGS)
+    if any(notnull.get(c) for c in ("grade_a", "grade_b", "schlussgang")) or outdated_check:
         cols_b = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(bouts)"))
         conn.execute("ALTER TABLE bouts RENAME TO bouts_v3")
         conn.execute("DROP INDEX IF EXISTS idx_bouts_fest")

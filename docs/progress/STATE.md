@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-01
-**Current phase:** 2 — Bout parser (in review — review fixes done, branch `phase-2-parser`)
-**Next action:** Phase 2 post-review follow-ups (R6 in `phase-2-parser.md`): one-sided Schlussgang, ESAF 2013 supplement, schlussgang NULL fix, entries_overflow, duplicate-content check; then re-parse.
+**Current phase:** 2 — Bout parser (in review — re-review passed, follow-ups done, branch `phase-2-parser`)
+**Next action:** push + PR, then ask the user before Phase 3. (Phase 2 re-review passed 2026-10-01; post-review follow-ups R6 done, parser v3 / schema v5, real DB re-parsed: 491,676 bouts.)
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -88,6 +88,10 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — **User decision: `grade_missing` confirmed** — no-grade lines in a regular Gang with a consistent mirror stay bouts with a NULL grade; Phase 4 treats them like extra bouts (outcome only, no MoV).
 - 2026-10-01 — **User decision: ESAF 2013 supplement** — fetch the "Statistik nach 4 Gängen" PDF (exactly the needed request, via HttpClient, cached) and merge it so the 77 athletes eliminated after Gang 4 get their Gänge 1–4; de-duplicate against the final sheet. Other truncated festivals with interim sheets are only listed, not fetched.
 - 2026-10-01 — **User decision: one-sided Schlussgang bouts** — where a sheet omits the Schlussgang loser's line entirely, keep the bout from the winner's entry alone, only if the opponent resolves to exactly one athlete and the entry is the athlete's final Gang; loser grade NULL, flag `one_sided`, Phase 4 outcome-only. Narrow rule — other unmatched entries stay rejects.
+- 2026-10-01 — Schema v5 / parser v3: `one_sided` allowed in the NULL-grade CHECK, `athletes_raw.flags` (`entries_overflow`, `interim_sheet`); migration rebuilds `bouts` when its CHECK lacks a NULL-grade flag.
+- 2026-10-01 — Interim sheets only via the explicit registry `supplements.INTERIM_SHEETS` (ESAF 2013 only; 1 request made). The fetched sheet is itself truncated (+3 bouts); further ESAF 2013 interim sheets ("nach 2/3 Gängen") would need a new user OK.
+- 2026-10-01 — One-sided rule narrowed further than the user's wording: the winner must be rank 1, the entry a graded `+`, the opponent's list complete and without any entry against him — keeps it to the Schlussgang (16 bouts).
+- 2026-10-01 — Reviewer suggestions applied: `schlussgang` NULL for a festival whose marked bout isn't imported; `entries_overflow` (> Gänge + 1 entries) disables extra-bout logic and flags the athlete; permanent duplicate-content check (`flag_duplicate_sheets`: same sha256 or ≥ 80 % identical bouts → status `duplicate_sheet`, verified header / earlier festival keeps the bouts).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).

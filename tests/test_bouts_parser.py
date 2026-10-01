@@ -71,7 +71,7 @@ def test_every_entry_is_accounted_for(fid: int) -> None:
         return
     entry = sum(1 for r in res.rejects if r.stage == "entry")
     bout = sum(1 for r in res.rejects if r.stage == "bout")
-    assert res.entries_total == 2 * len(res.bouts) + entry + 2 * bout
+    assert res.entries_total == bp.paired_entries(res) + entry + 2 * bout
 
 
 @pytest.mark.parametrize("fid", [int(k) for k in META])
@@ -550,3 +550,97 @@ def test_points_mismatch_flag() -> None:
         "1 Alpha Anton 25.00", "+ Beta Bruno 10.00", "2 Beta Bruno 8.50", "o Alpha Anton 8.50",
     ]), 9, "2025-01-01", "Test 2025")
     assert [a["points_mismatch"] for a in bad.athletes] == [True, False]
+
+
+# ------------------------------------------------------------------ post-review follow-ups
+def _six_gang_sheet(winner_last: str = "+ Loser Lukas 10.00", winner_rank: str = "1",
+                    loser_lists_winner: bool = False) -> list[str]:
+    """Winner (6 Gänge, last = Schlussgang vs Loser) and Loser (6 Gänge, complete list
+    that omits the Schlussgang, as some sheets print it); 10 fillers make it 6-Gang."""
+    fill = [f"Fill{i} Otto" for i in range(10)]
+    lines = [f"{winner_rank} Winner Willi 59.50"] + [f"+ {f} 10.00" for f in fill[:5]] + \
+        [winner_last]
+    lines += ["2 Loser Lukas 57.00"] + [f"+ {f} 9.50" for f in fill[5:10]] + \
+        (["o Winner Willi 8.75"] if loser_lists_winner else ["+ Fill0 Otto 9.50"])
+    for i, f in enumerate(fill):
+        opp = ["o Winner Willi 8.50"] if i < 5 else []
+        opp += ["o Loser Lukas 8.50"] if i >= 5 or (i == 0 and not loser_lists_winner) else []
+        lines += [f"{i + 3} {f} 40.00"] + opp + [f"+ {g} 9.00" for g in fill if g != f][:6 - len(opp)]
+    return lines
+
+
+def test_one_sided_schlussgang_kept_from_winner_entry() -> None:
+    """User decision 2026-10-01: the loser's line is omitted entirely -> bout from the
+    winner's final-Gang entry, loser grade NULL, flag one_sided."""
+    res = bp.build_festival(_sheet(_six_gang_sheet()), 5)
+    assert res.gang_count == 6
+    (b,) = [x for x in res.bouts if "one_sided" in x["flags"]]
+    assert (b["athlete_a_id"], b["athlete_b_id"], b["outcome"], b["grade_a"], b["grade_b"],
+            b["gang_nr"]) == ("5-000", "5-001", "WIN_A", 10.0, None, 6)
+    entry = sum(1 for r in res.rejects if r.stage == "entry")
+    bout = sum(1 for r in res.rejects if r.stage == "bout")
+    assert res.entries_total == bp.paired_entries(res) + entry + 2 * bout
+
+
+@pytest.mark.parametrize("kw", [
+    {"winner_rank": "3"},                              # not the festival winner
+    {"winner_last": "o Loser Lukas 8.75"},             # not a win
+    {"winner_last": "+ Nobody Known 10.00"},           # opponent does not resolve
+])
+def test_one_sided_rule_stays_narrow(kw: dict[str, str]) -> None:
+    res = bp.build_festival(_sheet(_six_gang_sheet(**kw)), 5)
+    assert not any("one_sided" in b["flags"] for b in res.bouts)
+
+
+def test_one_sided_needs_final_gang() -> None:
+    lines = _six_gang_sheet()
+    lines[1], lines[6] = lines[6], lines[1]  # the unmatched win is now Gang 1
+    res = bp.build_festival(_sheet(lines), 5)
+    assert not any("one_sided" in b["flags"] for b in res.bouts)
+    assert reasons(res)["unmatched_entry"] >= 1
+
+
+def test_schlussgang_null_when_marked_bout_not_imported() -> None:
+    lines = _six_gang_sheet(winner_last="s+ Ghost Gustav 10.00")  # marker, no such athlete
+    res = bp.build_festival(_sheet(lines), 5)
+    assert res.bouts and {b["schlussgang"] for b in res.bouts} == {None}
+    res2 = bp.build_festival(_sheet(_six_gang_sheet(winner_last="s+ Loser Lukas 10.00",
+                                                    loser_lists_winner=True)), 5)
+    assert sorted(b["schlussgang"] for b in res2.bouts).count(True) == 1
+
+
+def test_entries_overflow_is_not_an_extra_bout() -> None:
+    """Merged blocks (more than Gänge + 1 entries): no extra_bout, athlete flagged."""
+    lines = _six_gang_sheet(loser_lists_winner=True)
+    i = lines.index("2 Loser Lukas 57.00")
+    lines[i:i] = ["+ Fill1 Otto 0.00", "+ Fill2 Otto 9.00"]  # Winner now has 8 entries
+    j = lines.index("4 Fill1 Otto 40.00")
+    lines.insert(j + 1, "o Winner Willi 8.50")                # mirror of the 0.00 line
+    res = bp.build_festival(_sheet(lines), 5)
+    assert "entries_overflow" in athlete(res, "Winner Willi")["flags"]
+    assert not any("extra_bout" in b["flags"] for b in res.bouts)
+    assert reasons(res)["entries_overflow"] == 1
+
+
+def test_interim_sheet_adds_only_missing_athletes() -> None:
+    """ESAF 2013: athletes only on the interim sheet are merged; no bout twice."""
+    final = ["Statistische Tabelle", "1 Alpha Anton 20.00", "+ Beta Bruno 10.00",
+             "+ Gamma Gustav 10.00", "2 Beta Bruno 18.50", "o Alpha Anton 8.50",
+             "+ Gamma Gustav 10.00"]
+    interim = ["Statistische Tabelle nach 2 Gängen", "1 Alpha Anton 20.00",
+               "+ Beta Bruno 10.00", "+ Gamma Gustav 10.00",
+               "3 Gamma Gustav 17.00", "o Alpha Anton 8.50", "o Beta Bruno 8.50"]
+    before = bp.parse_festival("\n".join(final), 9, "2013-09-01", "x")
+    after = bp.parse_festival("\n".join(final), 9, "2013-09-01", "x",
+                              interim_text="\n".join(interim))
+    assert (len(before.bouts), len(after.bouts)) == (1, 3)
+    assert reasons(after)["interim_sheet_merged"] == 1
+    gamma = athlete(after, "Gamma Gustav")
+    assert gamma["flags"] == "interim_sheet" and gamma["rank"] is None
+    assert len({frozenset((b["athlete_a_id"], b["athlete_b_id"])) for b in after.bouts}) == 3
+
+
+def test_glued_letter_rank_is_split() -> None:
+    assert bp.normalize_text("12zaBieri Marcel * 36.75") == ["12za Bieri Marcel * 36.75"]
+    assert bp.normalize_text("+ Bieri Marcel 9.75") == ["+ Bieri Marcel 9.75"]
+

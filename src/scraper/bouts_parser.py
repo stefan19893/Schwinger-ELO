@@ -55,6 +55,7 @@ class Block:
     points: float | None
     line: int
     mark: str = ""             # '*' (Kranz/award) or '°' (withdrawn) before the name
+    interim: bool = False      # block taken from an interim sheet (see merge_interim_sheet)
     entries: list[Entry] = field(default_factory=list)
 
 
@@ -167,11 +168,13 @@ def normalize_text(text: str) -> list[str]:
     text = text.replace("\f", "\n").replace("\u00a0", " ").replace("\u2019", "'")
     text = text.replace("\u00ad", "").replace("\u2010", "-").replace("\u2013", "-")
     lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in text.split("\n")]
-    # page footer glued to an entry: "o Häller Nick 8,50 Seite 2/3"
-    return [_GLUED_PAGE_RE.sub(r"\1", ln) for ln in lines]
+    # page footer glued to an entry: "o Häller Nick 8,50 Seite 2/3"; letter rank glued
+    # to the name: "12zaBieri Marcel * 36.75" (ESAF 2013 interim sheet)
+    return [_GLUED_RANK_RE.sub(r"\1 \2", _GLUED_PAGE_RE.sub(r"\1", ln)) for ln in lines]
 
 
 _GLUED_PAGE_RE = re.compile(r"(\d[.,]\d{2})\s+Seite\s+\d+\s*/\s*\d+$")
+_GLUED_RANK_RE = re.compile(r"^(\d+[a-z]{1,2})([A-ZÄÖÜ][a-zäöüéè]+\s.*\d[.,]\d{2}\s*\*?)$")
 
 
 def to_float(s: str) -> float:
@@ -1033,6 +1036,35 @@ def _special(e: Entry) -> bool:
 _COMPLEMENTARY = {("+", "o"): "WIN_A", ("o", "+"): "WIN_B", ("-", "-"): "DRAW"}
 
 
+def _is_one_sided_schlussgang(e: Entry, pos: int | None, owner: Block, opp: Block,
+                              owner_last: int, gang_count: int) -> bool:
+    """Schlussgang whose loser's line the sheet omits entirely (user decision
+    2026-10-01): a graded win of the festival winner (rank 1) in his final Gang,
+    against an athlete whose own list is complete but never mentions him. The
+    caller also requires that the opponent resolved to exactly one athlete."""
+    rank = re.match(r"\d*", owner.rank or "")
+    return (e.sym == "+" and not _special(e) and not e.forfeit and _grade_ok(e.grade)
+            and pos is not None and pos == owner_last == gang_count
+            and rank is not None and rank.group(0) == "1"
+            and len(opp.entries) >= gang_count)
+
+
+def merge_interim_sheet(sheet: Sheet, interim: Sheet) -> int:
+    """Add athletes that only an interim sheet lists ("Statistik nach 4 Gängen":
+    athletes eliminated before the final sheet's cut). Athletes already on the
+    final sheet are skipped, so every bout is still built from its two entries
+    exactly once. Returns the number of added blocks."""
+    known = {name_keys(clean_name(b.name_raw))[1] for b in sheet.blocks}
+    added = 0
+    for b in interim.blocks:
+        if name_keys(clean_name(b.name_raw))[1] in known:
+            continue
+        b.rank, b.interim = None, True
+        sheet.blocks.append(b)
+        added += 1
+    return added
+
+
 def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> FestivalParse:
     """Pair entries into bouts; everything that cannot be paired becomes a Reject."""
     res = FestivalParse(fest_id=fest_id, layout=sheet.layout, status="ok",
@@ -1079,6 +1111,7 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             "status": status_of(b.name_raw), "mark": b.mark or None,
             "sennen_turner": _st_marker(b.name_raw),
             "withdrawn": b.mark == "°", "points": b.points, "points_mismatch": False,
+            "flags": "interim_sheet" if b.interim else "",
             "n_entries": len(b.entries), "grade_sum": round(sum(grades), 2) if grades else 0.0,
             **details,
         })
@@ -1111,13 +1144,23 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
     # extra-bout candidate if it is a 'z' line or its athlete has more entries
     # than Gänge; special entries in a regular Gang are forfeits / injuries.
     gang_count = res.gang_count = festival_gang_count(blocks, max_gang)
-    surplus = [len(b.entries) > gang_count for b in blocks]
+    # more than one surplus entry: blocks merged by a wrapped name / page footer, the
+    # list is not one athlete's -> no extra-bout logic, athlete flagged
+    overflow = [len(b.entries) > gang_count + 1 for b in blocks]
+    for idx, over in enumerate(overflow):
+        if over:
+            fl = res.athletes[idx]["flags"]
+            res.athletes[idx]["flags"] = ",".join(filter(None, [str(fl), "entries_overflow"]))
+    surplus = [len(b.entries) > gang_count and not overflow[i] for i, b in enumerate(blocks)]
+    last_pos = [sum(1 for e in b.entries if not (_special(e) and (e.extra or surplus[i])))
+                for i, b in enumerate(blocks)]
 
     def extra_cand(e: Entry, who: int) -> bool:
         return _special(e) and (e.extra or surplus[who])
 
     # entries -> (a, b) occurrences -------------------------------------------------------
     occ: dict[tuple[int, int], list[tuple[int | None, Entry, int, str]]] = defaultdict(list)
+    exact: set[int] = set()  # id() of entries whose opponent resolved to exactly one athlete
     for idx, b in enumerate(blocks):
         pos = 0
         for e in b.entries:
@@ -1141,6 +1184,8 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
                 rej(Reject(fest_id, "entry", "self_bout",
                            f"{b.name_raw} {label}: {e.opponent}", e.line))
                 continue
+            if not ambiguous_name:
+                exact.add(id(e))
             occ[(idx, opp)].append((epos, e, idx, label))
 
     seen: set[tuple[int, int]] = set()
@@ -1155,7 +1200,22 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
         a, b = min(i, j), max(i, j)
         for k in range(max(len(a_side), len(b_side))):
             if k >= len(a_side) or k >= len(b_side):
-                _, e, who, label = a_side[k] if k < len(a_side) else b_side[k]
+                epos, e, who, label = a_side[k] if k < len(a_side) else b_side[k]
+                other = b if who == a else a
+                if (not (b_side if who == a else a_side)          # loser lists no line at all
+                        and _is_one_sided_schlussgang(e, epos, blocks[who], blocks[other],
+                                                      last_pos[who], gang_count)
+                        and id(e) in exact):
+                    win_a = who == a
+                    pending.append({
+                        "fest_id": fest_id, "a": a, "b": b, "pos_a": epos, "pos_b": epos,
+                        "k": k, "athlete_a_id": ids[a], "athlete_b_id": ids[b],
+                        "gang_count": gang_count, "outcome": "WIN_A" if win_a else "WIN_B",
+                        "grade_a": e.grade if win_a else None,
+                        "grade_b": None if win_a else e.grade,
+                        "schlussgang": e.schlussgang, "flags": ["one_sided"], "line": e.line,
+                    })
+                    continue
                 rej(Reject(fest_id, "entry", "unmatched_entry",
                            f"{blocks[who].name_raw} {label}: {e.sym} {e.opponent} {e.grade} "
                            f"(no mirror entry)", e.line))
@@ -1168,6 +1228,9 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             grade_b: float | None = eb.grade
             if ea.forfeit or eb.forfeit:
                 rej(Reject(fest_id, "bout", "forfeit_injury", desc, ea.line))
+                continue
+            if any(_special(e) and overflow[who] for e, who in ((ea, a), (eb, b))):
+                rej(Reject(fest_id, "bout", "entries_overflow", desc, ea.line))
                 continue
             if _special(ea) or _special(eb):
                 regular_special = [e for e, who in ((ea, a), (eb, b))
@@ -1238,6 +1301,9 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             "outcome": p["outcome"], "grade_a": p["grade_a"], "grade_b": p["grade_b"],
             "schlussgang": p["schlussgang"] if marked else None, "flags": ",".join(p["flags"]),
         })
+    if marked and not any(b["schlussgang"] for b in res.bouts):
+        for bt in res.bouts:  # marker on the sheet, but the marked bout was not imported
+            bt["schlussgang"] = None
     n_entry_rejects = sum(1 for r in res.rejects if r.stage in ("entry", "bout"))
     if not res.bouts:
         res.status = "failed"
@@ -1252,6 +1318,11 @@ def max_gaenge(category: str | None, eidg_type: str | None) -> int:
     return 8 if category == "ESAF" and eidg_type == "ESAF" else 6
 
 
+def paired_entries(res: FestivalParse) -> int:
+    """Sheet entries that ended up in bouts (a ``one_sided`` bout uses one entry)."""
+    return 2 * len(res.bouts) - sum("one_sided" in str(b["flags"]).split(",") for b in res.bouts)
+
+
 def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> FestivalParse:
     """Festival-level validation on top of the pairing checks (in place).
 
@@ -1263,7 +1334,7 @@ def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> Fest
     """
     if not res.entries_total or not res.bouts:
         return res
-    rate = 2 * len(res.bouts) / res.entries_total
+    rate = paired_entries(res) / res.entries_total
     if rate < min_pair_rate:
         res.rejects.append(Reject(res.fest_id, "festival", "low_pair_rate",
                                   f"{rate:.0%} of {res.entries_total} entries paired; "
@@ -1289,8 +1360,12 @@ def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> Fest
 
 
 def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
-                   max_gang: int = 6, min_pair_rate: float = 0.5) -> FestivalParse:
-    """Full pipeline for one sheet: layout -> blocks -> header check -> bouts -> validation."""
+                   max_gang: int = 6, min_pair_rate: float = 0.5,
+                   interim_text: str | None = None) -> FestivalParse:
+    """Full pipeline for one sheet: layout -> blocks -> header check -> bouts -> validation.
+
+    ``interim_text``: an interim statistic sheet of the same festival whose extra
+    athletes are merged in (see :func:`merge_interim_sheet`)."""
     sheet = parse_sheet(text, int(fest_date[:4]))
     check, detail = verify_header(sheet.header, fest_date, fest_name)
     if check == "mismatch":
@@ -1298,7 +1373,19 @@ def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
                             header_check=check)
         res.rejects.append(Reject(fest_id, "festival", "header_mismatch", detail))
         return res
+    interim_note: Reject | None = None
+    if interim_text is not None:
+        interim = parse_sheet(interim_text, int(fest_date[:4]))
+        i_check, i_detail = verify_header(interim.header, fest_date, fest_name)
+        if i_check == "mismatch":
+            interim_note = Reject(fest_id, "festival", "interim_sheet_header_mismatch", i_detail)
+        else:
+            n = merge_interim_sheet(sheet, interim)
+            interim_note = Reject(fest_id, "athlete", "interim_sheet_merged",
+                                  f"{n} athletes added from the interim sheet")
     res = build_festival(sheet, fest_id, max_gang=max_gang)
+    if interim_note:
+        res.rejects.append(interim_note)
     res.header_check = check if check == "ok" else f"{check}: {detail}"
     return validate_festival(res, min_pair_rate=min_pair_rate)
 
@@ -1309,7 +1396,7 @@ BOUT_COLUMNS = ["bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id",
 ATHLETE_COLUMNS = ["athlete_raw_id", "fest_id", "idx", "rank", "name_raw", "name", "name_key",
                    "name_base_key", "status", "mark", "sennen_turner", "withdrawn", "points",
                    "points_mismatch", "n_entries",
-                   "grade_sum", "birth_year", "association", "place"]
+                   "grade_sum", "birth_year", "association", "place", "flags"]
 
 
 def to_frames(parses: Iterable[FestivalParse]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
