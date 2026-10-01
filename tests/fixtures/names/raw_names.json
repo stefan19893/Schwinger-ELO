@@ -1,0 +1,387 @@
+[
+ {
+  "raw": "Forrer Arnold ***",
+  "fest_year": 2011,
+  "clean": "Forrer Arnold",
+  "extras": {
+   "stars": 3
+  }
+ },
+ {
+  "raw": "Roth Jakob (NOS) , S ***",
+  "fest_year": 2011,
+  "clean": "Roth Jakob",
+  "extras": {
+   "stars": 3,
+   "st_marker": "S",
+   "association": "NOS"
+  }
+ },
+ {
+  "raw": "Fankhauser Reto S 94 (ISV)",
+  "fest_year": 2011,
+  "clean": "Fankhauser Reto",
+  "extras": {
+   "birth_year": 1994,
+   "st_marker": "S",
+   "association": "ISV"
+  }
+ },
+ {
+  "raw": "Sch?nenberger Tobias(2004)",
+  "fest_year": 2021,
+  "clean": "Sch?nenberger Tobias",
+  "extras": {
+   "birth_year": 2004,
+   "flags": [
+    "wildcard"
+   ]
+  }
+ },
+ {
+  "raw": "NYDEGGER Michael (SW",
+  "fest_year": 2014,
+  "clean": "Nydegger Michael",
+  "extras": {
+   "association": "SW",
+   "flags": [
+    "truncated"
+   ]
+  }
+ },
+ {
+  "raw": "Wenger Kilian SK Niedersimmental",
+  "fest_year": 2013,
+  "clean": "Wenger Kilian",
+  "extras": {
+   "club": "Niedersimmental"
+  }
+ },
+ {
+  "raw": "a 83 Kennel Stefan, S* Oberarth",
+  "fest_year": 2012,
+  "clean": "Kennel Stefan",
+  "extras": {
+   "stars": 1,
+   "st_marker": "S",
+   "place": "Oberarth",
+   "number": 83,
+   "flags": [
+    "rank_prefix"
+   ]
+  }
+ },
+ {
+  "raw": "Thurgauer Kantonal Schwingfest Statistische Tabelle Roggwil 1 Forrer Arnold ***",
+  "fest_year": 2012,
+  "clean": "Forrer Arnold",
+  "extras": {
+   "stars": 3,
+   "flags": [
+    "title_prefix"
+   ]
+  }
+ },
+ {
+  "raw": "ZÃ1⁄4rcher Remo",
+  "fest_year": 2015,
+  "clean": "Zürcher Remo",
+  "extras": {
+   "flags": [
+    "mojibake"
+   ]
+  }
+ },
+ {
+  "raw": "KÃ¤ser Remo **",
+  "fest_year": 2015,
+  "clean": "Käser Remo",
+  "extras": {
+   "stars": 2,
+   "flags": [
+    "mojibake"
+   ]
+  }
+ },
+ {
+  "raw": "mNietlispach Pascal S*",
+  "fest_year": 2012,
+  "clean": "Nietlispach Pascal",
+  "extras": {
+   "stars": 1,
+   "st_marker": "S"
+  }
+ },
+ {
+  "raw": "SuterJosef (ISV)",
+  "fest_year": 2011,
+  "clean": "Suter Josef",
+  "extras": {
+   "association": "ISV",
+   "flags": [
+    "glued_words"
+   ]
+  }
+ },
+ {
+  "raw": "Baumann jun. Walter",
+  "fest_year": 2012,
+  "clean": "Baumann Walter",
+  "extras": {
+   "generation": "jun"
+  }
+ },
+ {
+  "raw": "Gut Koni Jun.",
+  "fest_year": 2013,
+  "clean": "Gut Koni",
+  "extras": {
+   "generation": "jun"
+  }
+ },
+ {
+  "raw": "Imfeld Christian I, S *",
+  "fest_year": 2014,
+  "clean": "Imfeld Christian",
+  "extras": {
+   "stars": 1,
+   "ordinal": "I",
+   "st_marker": "S"
+  }
+ },
+ {
+  "raw": "Rohrer Marco 1 *",
+  "fest_year": 2011,
+  "clean": "Rohrer Marco",
+  "extras": {
+   "suffix": 1,
+   "stars": 1
+  }
+ },
+ {
+  "raw": "Wiedmer Michael (1)",
+  "fest_year": 2023,
+  "clean": "Wiedmer Michael",
+  "extras": {
+   "suffix": 1
+  }
+ },
+ {
+  "raw": "Ducrest Etienne, B",
+  "fest_year": 2015,
+  "clean": "Ducrest Etienne",
+  "extras": {
+   "st_marker": "S"
+  }
+ },
+ {
+  "raw": "Joliat Léo, G (99)",
+  "fest_year": 2015,
+  "clean": "Joliat Léo",
+  "extras": {
+   "birth_year": 1999,
+   "st_marker": "T"
+  }
+ },
+ {
+  "raw": "Goy Rowan, B (07)",
+  "fest_year": 2015,
+  "clean": "Goy Rowan",
+  "extras": {
+   "birth_year": 2007,
+   "st_marker": "S",
+   "flags": [
+    "implausible_birth_year"
+   ]
+  }
+ },
+ {
+  "raw": "Clopath Beat (EK)",
+  "fest_year": 2012,
+  "clean": "Clopath Beat",
+  "extras": {
+   "status": "EK"
+  }
+ },
+ {
+  "raw": "NYDEGGER Michael (SWS) *F",
+  "fest_year": 2012,
+  "clean": "Nydegger Michael",
+  "extras": {
+   "stars": 1,
+   "status": "F",
+   "association": "SWS"
+  }
+ },
+ {
+  "raw": "Ott Andrè (NOS) , S ",
+  "fest_year": 2011,
+  "clean": "Ott Andrè",
+  "extras": {
+   "st_marker": "S",
+   "association": "NOS"
+  }
+ },
+ {
+  "raw": "Rüegg Roman * +",
+  "fest_year": 2013,
+  "clean": "Rüegg Roman",
+  "extras": {
+   "stars": 1
+  }
+ },
+ {
+  "raw": "Zimmermann",
+  "fest_year": 2026,
+  "clean": "Zimmermann",
+  "extras": {
+   "flags": [
+    "surname_only"
+   ]
+  }
+ },
+ {
+  "raw": "b",
+  "fest_year": 2016,
+  "clean": "b",
+  "extras": {
+   "flags": [
+    "not_a_name"
+   ]
+  }
+ },
+ {
+  "raw": "von Büren Stephan",
+  "fest_year": 2015,
+  "clean": "von Büren Stephan",
+  "extras": {}
+ },
+ {
+  "raw": "Auf der Maur Alex",
+  "fest_year": 2016,
+  "clean": "Auf der Maur Alex",
+  "extras": {}
+ },
+ {
+  "raw": "Z'Rotz Roman",
+  "fest_year": 2016,
+  "clean": "Z'Rotz Roman",
+  "extras": {}
+ },
+ {
+  "raw": "Sempach Matthias 58.50 2 Gerber Christian",
+  "fest_year": 2014,
+  "clean": "Sempach Matthias",
+  "extras": {
+   "flags": [
+    "glued_bout_line"
+   ]
+  }
+ },
+ {
+  "raw": "a Zaugg Thomas 58.50 + Kläy Jean-Philippe 10.00 + Krienbühl Manuel 10.00 + Müllestein Mike 10.00 - Graber Willy 8.75 + Staub Mael 9.75 + Graber Willy",
+  "fest_year": 2014,
+  "clean": "Zaugg Thomas",
+  "extras": {
+   "flags": [
+    "glued_bout_line",
+    "rank_prefix"
+   ]
+  }
+ },
+ {
+  "raw": "Glarner Matthias OB",
+  "fest_year": 2012,
+  "clean": "Glarner Matthias",
+  "extras": {
+   "code": "OB"
+  }
+ },
+ {
+  "raw": "Haenni Stéphane (SWS) *",
+  "fest_year": 2012,
+  "clean": "Haenni Stéphane",
+  "extras": {
+   "stars": 1,
+   "association": "SWS"
+  }
+ },
+ {
+  "raw": "Gasser Dominik 1",
+  "fest_year": 2014,
+  "clean": "Gasser Dominik",
+  "extras": {
+   "suffix": 1
+  }
+ },
+ {
+  "raw": "Wicki Joel 97",
+  "fest_year": 2013,
+  "clean": "Wicki Joel",
+  "extras": {
+   "birth_year": 1997
+  }
+ },
+ {
+  "raw": "Rychen Ueli, Mollis K",
+  "fest_year": 2011,
+  "clean": "Rychen Ueli",
+  "extras": {
+   "status": "K",
+   "place": "Mollis"
+  }
+ },
+ {
+  "raw": "Bühler Peter, Weesen TK",
+  "fest_year": 2011,
+  "clean": "Bühler Peter",
+  "extras": {
+   "status": "TK",
+   "place": "Weesen"
+  }
+ },
+ {
+  "raw": "Gwerder Andreas (NOS) , S",
+  "fest_year": 2012,
+  "clean": "Gwerder Andreas",
+  "extras": {
+   "st_marker": "S",
+   "association": "NOS"
+  }
+ },
+ {
+  "raw": "Sch?pfer Marco(2003)",
+  "fest_year": 2021,
+  "clean": "Sch?pfer Marco",
+  "extras": {
+   "birth_year": 2003,
+   "flags": [
+    "wildcard"
+   ]
+  }
+ },
+ {
+  "raw": "Neyroud Geo?rey",
+  "fest_year": 2021,
+  "clean": "Neyroud Geo?rey",
+  "extras": {
+   "flags": [
+    "wildcard"
+   ]
+  }
+ },
+ {
+  "raw": "Gothuey Jean- Pierre",
+  "fest_year": 2012,
+  "clean": "Gothuey Jean-Pierre",
+  "extras": {}
+ },
+ {
+  "raw": "Vogel Manuel 9",
+  "fest_year": 2014,
+  "clean": "Vogel Manuel",
+  "extras": {
+   "number": 9
+  }
+ }
+]
