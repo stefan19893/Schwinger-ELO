@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 5 — Exporter & frontend, in review (branch `phase-5-web`, local commits only); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
-**Next action:** WAITING FOR THE USER — sign-off on Phase 5 and the open publication decisions before Phase 6 (phase-reviewer: ready for next phase; the six should-fixes are applied on branch `phase-5-web`, not pushed; open decisions listed in `phase-6-deploy.md`, "Known inputs from Phase 5 review").
+**Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
+**Next action:** Phase 6 task 1 (web-builder) — see `phase-6-deploy.md` incl. "Known inputs" and the publication defaults in Decisions (2026-10-03). Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user. At the end: phase-reviewer, then stop and ask the user for the publication go-ahead.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -13,7 +13,7 @@
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
-| 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
+| 6 | CI & deployment | M5 | `phase-6-deploy.md` | in progress |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
@@ -153,6 +153,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 5 review fix: athletes without rated bouts are listed by name in a festival** (name only; no id, club, Teilverband, profile or search entry; label "ohne Wertung") — narrows "only athletes with rated bouts are exported": 9 athletes of the unrated festival 46111 were shown as "Name nicht lesbar". `not_a_name` rows stay nameless. Schema unchanged (`SCHEMA_VERSION` 1): `name` may be set while `id` is null; `namesakes[]` and `seasons[].peak` gained `unc`.
 - 2026-10-03 — **Phase 5 review fix: day counts are worded relative to the data date** ("N Tage vor dem Datenstand"), not computed in the browser — rank, the inactive rule and the 180-day highlight are computed at the data date, so the page stays consistent with itself when it is not rebuilt.
 - 2026-10-03 — **User sign-off on Phase 5** ("merge everything on main … then go on"): Phase 5 closed after the review fixes and merged to `main` by PR. `gh` installed in `~/.local/bin` (no sudo), authenticated per command through the existing git credential.
+- 2026-10-03 — **Publication defaults chosen by the main session** (the user was asked twice, did not answer the individual questions and said "go on"; earlier: "decide what is best") — conservative, each a config switch, **owner may overrule**: (a) names of athletes younger than 18 at the data date are not published (`publish_min_age = 18`; they still count in the ratings; athletes without a birth year cannot be filtered and stay); (b) pages carry `noindex` and a `robots.txt` disallowing crawlers (`site_noindex = true`); (c) objection route stays GitHub issues, plus an optional e-mail shown only when `contact_email` is configured (none invented); (d) athlete URLs: no id registry for now, outdated links fall back to the not-found page with suggestions; (e) **the publication itself (ESV-derived data) is NOT decided by the main session**: workflows are gated on the repository variable `PUBLISH_ENABLED == 'true'` and GitHub Pages is not enabled until the user says so.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
