@@ -319,13 +319,18 @@ def validate_resolution(res: Resolution, raw: pd.DataFrame) -> Resolution:
     if ath["full_name"].isna().any():
         raise ValueError("resolver athletes need a full_name")
     undefined = set(ident["athlete_id"]) - set(ath["athlete_id"])
+    # Athlete ids are name slugs and the logs of a workflow run in a public repository
+    # are world-readable: ids of athletes who may be withheld from the site (minors) are
+    # logged at DEBUG only (`-v`, never used in a workflow).
     if undefined:
-        raise ValueError(f"{len(undefined)} athlete ids in identity without attributes, "
-                         f"e.g. {sorted(undefined)[:5]}")
+        log.debug("clean: athlete ids without attributes: %s", sorted(undefined)[:5])
+        raise ValueError(f"{len(undefined)} athlete ids in identity without attributes "
+                         f"(run with -v for examples)")
     orphans = set(ath["athlete_id"]) - set(ident["athlete_id"])
     if orphans:
-        log.warning("clean: %d athletes without any raw row dropped (e.g. %s)",
-                    len(orphans), sorted(orphans)[:5])
+        log.warning("clean: %d athletes without any raw row dropped (-v lists examples)",
+                    len(orphans))
+        log.debug("clean: dropped athletes: %s", sorted(orphans)[:5])
         ath = ath[~ath["athlete_id"].isin(orphans)]
     return Resolution(identity=ident.reset_index(drop=True), athletes=ath.reset_index(drop=True))
 
@@ -483,5 +488,7 @@ def report(result: CleanResult) -> None:
         sample = result.bout_rejects.loc[result.bout_rejects["reason"] == "self_bout",
                                          "athlete_a_id"].value_counts().head(5)
         log.warning("clean: %d self-bouts (over-merged identities?) -> bout_rejects; "
-                    "top: %s", c["self_bouts"],
-                    ", ".join(f"{k}={v}" for k, v in sample.items()))
+                    "at most %d for one athlete (-v lists them)", c["self_bouts"],
+                    int(sample.max()))
+        log.debug("clean: self-bouts, top: %s",          # ids are names: not in CI logs
+                  ", ".join(f"{k}={v}" for k, v in sample.items()))

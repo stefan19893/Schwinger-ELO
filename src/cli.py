@@ -1,6 +1,7 @@
 """Single entry point for every pipeline stage (spec §5).
 
-    python -m src.cli {crawl|parse|clean|elo|build|all|serve} [options]
+    python -m src.cli {crawl|parse|clean|elo|build|check-site|all|serve|state-export|state-import}
+                      [options]
 
 Global options (``--sample``, ``--data-dir``, ``--skip-crawl``, ``--refresh``,
 ``-v``) are accepted before or after the subcommand. Local runs
@@ -42,6 +43,8 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
     ``portraits_only`` skips the listings and PDFs (no festival request at all)."""
     if cfg.sample:
         return _crawl_sample(cfg)
+    if not _state_ok(cfg, "crawl"):
+        return 1
     from src.db import connect
     from src.scraper import fests_crawler as fc
     from src.scraper.client import FetchError, client_from_config
@@ -93,6 +96,70 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
                   + (" ..." if len(report.cache_misses) > 10 else ""))
         return 1
     return pdf_rc
+
+
+def _state_ok(cfg: Config, stage: str) -> bool:
+    """``--require-state``: refuse to run on a cold data directory. Checked before the
+    first request - a runner that lost its state must fail, not re-crawl the archive."""
+    if not cfg.require_state or cfg.sample:
+        return True
+    from src.state_bundle import state_problems
+
+    problems = state_problems(cfg)
+    for line in problems:
+        log.error("%s: --require-state: %s", stage, line)
+    if problems:
+        log.error("%s: no usable pipeline state in %s - nothing was requested. Restore it "
+                  "with `state-import` (README, \"Hosted setup\")", stage, cfg.data_dir)
+    return not problems
+
+
+def cmd_state_export(cfg: Config, output: str) -> int:
+    """Bundle data/raw, the database, the Parquet files and the guard baseline."""
+    import time
+    from pathlib import Path
+
+    from src.state_bundle import StateError, export_state
+
+    if cfg.sample:
+        log.error("state-export: not for --sample data")
+        return 1
+    t0 = time.perf_counter()
+    try:
+        info = export_state(cfg, Path(output).expanduser())
+    except StateError as exc:
+        log.error("state-export: %s", exc)
+        return 1
+    log.info("state-export: %s (%.0f MB; %d files, %.0f MB unpacked; %s; %.0f s) - not for "
+             "publication: it holds birthdays, licence numbers and third-party PDFs",
+             info.path, info.path.stat().st_size / 1e6, info.n_files, info.n_bytes / 1e6,
+             ", ".join(f"{k}={v}" for k, v in info.counts.items()), time.perf_counter() - t0)
+    return 0
+
+
+def cmd_state_import(cfg: Config, source: str, force: bool = False) -> int:
+    """Unpack a state bundle (a file, or the newest bundle of a directory)."""
+    import time
+    from pathlib import Path
+
+    from src.state_bundle import StateError, import_state, state_problems
+
+    if cfg.sample:
+        log.error("state-import: not for --sample data")
+        return 1
+    t0 = time.perf_counter()
+    try:
+        info = import_state(cfg, Path(source).expanduser(), force=force)
+    except StateError as exc:
+        log.error("state-import: %s", exc)
+        return 1
+    log.info("state-import: %s from %s -> %s (%d files, %.0f MB; %s; %.0f s)", info.path.name,
+             info.created_at, cfg.data_dir, info.n_files, info.n_bytes / 1e6,
+             ", ".join(f"{k}={v}" for k, v in info.counts.items()), time.perf_counter() - t0)
+    problems = state_problems(cfg)
+    for line in problems:
+        log.error("state-import: imported state is not usable: %s", line)
+    return 1 if problems else 0
 
 
 def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> int:
@@ -481,8 +548,12 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
              int(table["provisional_reason"].str.contains("few_bouts").sum()),
              int(table["provisional_reason"].str.contains("inactive").sum()),
              int((table["ranked"] & table["identity_uncertain"]).sum()))
+    # Names only for a person at a terminal: `elo` ranks everyone, so the top of this
+    # table can hold an athlete the site withholds (minors), and the logs of a workflow
+    # run in a public repository are world-readable. Elsewhere: DEBUG (`-v`).
+    names = log.info if sys.stderr.isatty() else log.debug
     for line in top_table(table, 10):
-        log.info("elo:   %s", line)
+        names("elo:   %s", line)
     if evaluate:
         from src.pipeline.elo_eval import evaluation_report
         from src.pipeline.elo_runner import load_inputs
@@ -517,7 +588,51 @@ def cmd_build(cfg: Config, allow_empty: bool = False) -> int:
         log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files",
                  summary.get("athletes", 0), summary.get("ranked", 0),
                  summary.get("history_files", 0), summary.get("fest_files", 0))
+        log.info("build: publish_min_age=%d, publish_unknown_recent_seasons=%d: %d athletes "
+                 "(%d of them ranked; %d without a birth year) are not published by name; "
+                 "noindex=%s; contact e-mail %s", cfg.publish_min_age,
+                 cfg.publish_unknown_recent_seasons, summary.get("withheld", 0),
+                 summary.get("withheld_ranked", 0), summary.get("withheld_unknown", 0),
+                 cfg.site_noindex, "set" if cfg.contact_email else "not set")
     log.info("build: wrote %s (%d files, %.1f MB)", dist, n_files, n_bytes / 1e6)
+    return 0
+
+
+def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = False,
+                   baseline: str | None = None) -> int:
+    """Deploy guard: fail on an empty, incomplete or shrunken site in ``cfg.dist_dir``
+    (see :mod:`src.exporter.deploy_guard`). ``record`` makes a site that passed the new
+    baseline; ``accept_changes`` lets intended drops and a missing baseline pass."""
+    from pathlib import Path
+
+    from src.exporter import deploy_guard as dg
+
+    path = Path(baseline).expanduser() if baseline else dg.baseline_path(cfg)
+    base = dg.read_meta(path)
+    if base is None and path.exists():
+        log.error("check-site: baseline %s is not readable JSON", path)
+        return 1
+    rep = dg.check_site(cfg, cfg.dist_dir, base, accept_changes=accept_changes)
+    log.info("check-site: site %s, baseline %s", cfg.dist_dir,
+             path if base is not None else f"none ({path} does not exist)")
+    for line in rep.notes:
+        log.info("check-site: %s", line)
+    for line in rep.fatal:
+        log.error("check-site: %s", line)
+    for line in rep.changes:
+        (log.warning if rep.accepted else log.error)(
+            "check-site: %s%s", line, " - accepted (--accept-changes)" if rep.accepted else "")
+    if not rep.ok:
+        if rep.changes and not rep.fatal:
+            log.error("check-site: FAILED - if this is intended, run once with "
+                      "--accept-changes (workflow input `accept_changes`)")
+        else:
+            log.error("check-site: FAILED - this site must not be deployed")
+        return 1
+    if record and not cfg.sample:
+        dg.record_baseline(cfg.dist_dir, path, dg.db_inputs(cfg))
+        log.info("check-site: baseline recorded in %s", path)
+    log.info("check-site: ok")
     return 0
 
 
@@ -529,6 +644,8 @@ def cmd_all(cfg: Config, skip_crawl: bool = False, portraits: bool = True) -> in
         ("elo", cmd_elo),
         ("build", cmd_build),
     ]
+    if not _state_ok(cfg, "all"):
+        return 1
     for name, fn in stages:
         if name == "crawl" and skip_crawl:
             log.info("crawl: skipped (--skip-crawl)")
@@ -575,6 +692,9 @@ def _add_global_options(p: argparse.ArgumentParser, suppress: bool) -> None:
                    help="re-fetch pages even if cached")
     p.add_argument("--offline", action="store_true", default=d(False),
                    help="crawl from the data/raw cache only; report cache misses, never fetch")
+    p.add_argument("--require-state", action="store_true", default=d(False),
+                   help="crawl / all: fail before the first request unless the data directory "
+                        "holds the state of earlier runs (used in CI; see state-import)")
     p.add_argument("-v", "--verbose", action="store_true", default=d(False),
                    help="debug logging")
 
@@ -616,6 +736,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--allow-empty", action="store_true", default=False,
                     help="without rating data, write a site without content (pages and "
                          "empty data files) instead of failing; never use for a deployment")
+    sp = add("check-site", "deploy guard: fail on an empty or shrunken site in dist/ "
+                           "(compared with the last accepted meta.json)")
+    sp.add_argument("--accept-changes", action="store_true", default=False,
+                    help="let intended changes pass: a smaller site, an older data date, "
+                         "looser publication settings, more published or fewer withheld "
+                         "athletes, or no baseline yet (first deployment)")
+    sp.add_argument("--record", action="store_true", default=False,
+                    help="after a passed check, store the site's meta.json as the new "
+                         "baseline (<data-dir>/published_meta.json)")
+    sp.add_argument("--baseline", default=None,
+                    help="baseline file (default: <data-dir>/published_meta.json)")
+    sp = add("state-export", "bundle the pipeline state (data/raw, database, Parquet files, "
+                             "guard baseline) into one file - not for publication")
+    sp.add_argument("output", help="a *.tar.gz file to write, or a directory (created if "
+                                   "missing; a time-stamped schwingen-state-*.tar.gz is "
+                                   "written into it). The bundle is readable by the owner "
+                                   "only")
+    sp = add("state-import", "unpack a state bundle into the data directory")
+    sp.add_argument("source", help="bundle file, or a directory (its newest bundle is used)")
+    sp.add_argument("--force", action="store_true", default=False,
+                    help="replace existing state in the data directory")
     sp = add("serve", "serve dist/ over HTTP")
     sp.add_argument("--port", type=int, default=None, help="port (default 8000)")
     sp.add_argument("--host", default=None, help="bind address (default 127.0.0.1)")
@@ -633,6 +774,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "sample": True if args.sample else None,
         "refresh": True if args.refresh else None,
         "offline": True if args.offline else None,
+        "require_state": True if args.require_state else None,
         "crawl_pdfs": False if getattr(args, "no_pdfs", False) else None,
     }
     return load_config(overrides)
@@ -653,6 +795,7 @@ _OPTION_SCOPE: dict[str, frozenset[str]] = {
     "skip_crawl": frozenset({"all"}),
     "refresh": frozenset({"crawl", "all"}),
     "offline": frozenset({"crawl", "all"}),
+    "require_state": frozenset({"crawl", "all"}),
 }
 
 
@@ -688,6 +831,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_elo(cfg, evaluate=args.evaluate)
         if args.command == "build":
             return cmd_build(cfg, allow_empty=args.allow_empty)
+        if args.command == "state-export":
+            return cmd_state_export(cfg, args.output)
+        if args.command == "state-import":
+            return cmd_state_import(cfg, args.source, force=args.force)
+        if args.command == "check-site":
+            return cmd_check_site(cfg, accept_changes=args.accept_changes, record=args.record,
+                                  baseline=args.baseline)
         if args.command == "crawl":
             if args.portraits_only and args.no_portraits:
                 raise ValueError("--portraits-only and --no-portraits exclude each other")

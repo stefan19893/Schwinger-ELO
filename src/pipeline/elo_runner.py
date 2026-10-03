@@ -235,8 +235,9 @@ def compute(bouts: pd.DataFrame, athletes: pd.DataFrame, identity_map: pd.DataFr
     known = set(athletes["athlete_id"])
     unknown = sorted(set(result.ratings) - known)
     if unknown:
+        log.debug("elo: athletes missing from athletes.parquet: %s", unknown[:3])  # names
         raise ValueError(f"bouts reference {len(unknown)} athletes missing from "
-                         f"athletes.parquet (e.g. {unknown[:3]}) - re-run `clean`")
+                         f"athletes.parquet (-v lists examples) - re-run `clean`")
     identity = identity_uncertainty(
         athletes, identity_map, cfg.identity_low_confidence,
         cfg.identity_uncertain_min_rows, cfg.identity_uncertain_min_share)

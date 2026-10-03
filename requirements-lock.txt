@@ -1,0 +1,60 @@
+# Exact versions and wheel hashes for the workflows that publish (deploy_pages.yml,
+# scrape_and_update.yml) - installed there with `pip install --require-hashes`.
+# Made by scripts/make_lock.py on CPython 3.14, linux x86_64, from the
+# wheels in pip's cache, each verified file by file against the installation.
+# Binary wheels are platform-specific: a runner that is offered another file fails
+# the install (it never installs something unpinned). requirements.txt stays the
+# source of the version ranges and is what scripts/deploy_local.sh installs.
+
+anyio==4.15.1 \
+    --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101  # py3-none-any
+beautifulsoup4==4.15.0 \
+    --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9  # py3-none-any
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775  # py3-none-any
+h11==0.16.0 \
+    --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86  # py3-none-any
+httpcore==1.0.9 \
+    --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55  # py3-none-any
+httpx==0.28.1 \
+    --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad  # py3-none-any
+idna==3.20 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c  # py3-none-any
+iniconfig==2.3.0 \
+    --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12  # py3-none-any
+numpy==2.5.3 \
+    --hash=sha256:b0521d0f4aebb6e06189451025fa17a913287b13c03d5fe05c017333b654ea5b  # cp314-cp314-manylinux_2_27_x86_64, cp314-cp314-manylinux_2_28_x86_64
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c  # py3-none-any
+pandas==2.3.3 \
+    --hash=sha256:ee67acbbf05014ea6c763beb097e03cd629961c8a632075eeb34247120abcb4b  # cp314-cp314-manylinux_2_24_x86_64, cp314-cp314-manylinux_2_28_x86_64
+pluggy==1.6.0 \
+    --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746  # py3-none-any
+pyarrow==22.0.0 \
+    --hash=sha256:6dda1ddac033d27421c20d7a7943eec60be44e0db4e079f33cc5af3b8280ccde  # cp314-cp314-manylinux_2_28_x86_64
+pygments==2.21.0 \
+    --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9  # py3-none-any
+pypdfium2==5.13.0 \
+    --hash=sha256:81df25c1ab4c13ff773102d3cbea1967511d079123b067fc077bd0c4d57d91d8  # py3-none-manylinux_2_17_x86_64, py3-none-manylinux2014_x86_64
+pytest==8.4.2 \
+    --hash=sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79  # py3-none-any
+python-dateutil==2.9.0.post0 \
+    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427  # py2-none-any, py3-none-any
+pytz==2026.4 \
+    --hash=sha256:9d514388fbc89ca0833203464272ac485b8828568ab73532f5020f17e892a0ff  # py2-none-any, py3-none-any
+scipy==1.18.1 \
+    --hash=sha256:ac0333bdf38309aa3dcbe7e3fa7ea29e7a2c37c6ea306a757b700ded8e4596ad  # cp314-cp314-manylinux_2_27_x86_64, cp314-cp314-manylinux_2_28_x86_64
+selectolax==0.4.13 \
+    --hash=sha256:67f86f7e9ddbc025a061e7f80a812deb90f4259400d49ac05eca81430a39d4a0  # cp314-cp314-manylinux_2_17_x86_64, cp314-cp314-manylinux2014_x86_64, cp314-cp314-manylinux_2_28_x86_64
+six==1.17.0 \
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274  # py2-none-any, py3-none-any
+soupsieve==2.10 \
+    --hash=sha256:8596eb8967d744174820280fa62b4542a2e955bfaccca73ed8a13c6eb8e9b502  # py3-none-any
+tenacity==9.1.4 \
+    --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55  # py3-none-any
+tqdm==4.70.1 \
+    --hash=sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73  # py3-none-any
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8  # py3-none-any
+tzdata==2026.4 \
+    --hash=sha256:c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81  # py2-none-any, py3-none-any

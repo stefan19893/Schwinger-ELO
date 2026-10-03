@@ -131,8 +131,13 @@
   };
 
   /* No id = no profile: an athlete without rated bouts is shown by name ("ohne Wertung"),
-   * a row whose name could not be read has no name either. */
+   * a row whose name could not be read has no name either, and an athlete who is not
+   * certainly of the publication age (anon) is listed without name and without rating. */
   SE.athleteLink = function (o) {
+    if (o.anon) {
+      return '<span class="text-stone-500 dark:text-stone-400" title="Wer nicht sicher volljährig ist, wird nicht mit Namen ' +
+        'und ohne Zahlen zur Wertung aufgeführt; die Gänge zählen trotzdem">Jungschwinger, Name nicht veröffentlicht</span>';
+    }
     if (!o.id && o.name) {
       return '<span class="font-medium">' + SE.esc(o.name) + '</span> <span class="se-badge se-badge-muted" ' +
         'title="Nur an Festen angetreten, die nicht für die Wertung zählen; deshalb ohne Wertung und ohne Profil">ohne Wertung</span>';

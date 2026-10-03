@@ -176,7 +176,7 @@
       });
       html += '</tbody></table></div>' +
         '<p class="mt-3 text-xs text-stone-500 dark:text-stone-400">S–G–N: gewonnen – gestellt – verloren. Noten: Summe der gedruckten Noten, ' +
-        'keine offizielle Rangliste (dafür die Quelle beachten). Wertung vor → nach dem Fest; in Klammern bei den Gängen die Wertung des Gegners vor dem Fest. ' +
+        'keine offizielle Rangliste (dafür die Quelle beachten). Wertung vor → nach dem Fest; in Klammern bei den Gängen die Wertung des Gegners vor dem Fest. Schwinger ohne veröffentlichten Namen stehen ohne Wertung da. ' +
         'Der Schlussgang ist nur markiert, wo ihn die Quelle ausweist.</p>';
       view.innerHTML = html;
 

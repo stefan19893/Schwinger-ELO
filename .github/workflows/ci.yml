@@ -1,0 +1,54 @@
+# Tests on every push to main and every pull request. Publishes nothing and makes no
+# request to schlussgang.ch: the suite blocks all non-loopback network access
+# (tests/conftest.py) and the build below uses the committed --sample data.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # oldest supported Python: version ranges of requirements.txt
+          - python-version: "3.11"
+            pip-args: -r requirements.txt
+          # the one used to deploy: the hashed lock the publishing workflows install
+          - python-version: "3.14"
+            pip-args: --require-hashes -r requirements-lock.txt
+    env:
+      # The runner image ships Chrome: the headless page smoke test must run, not skip.
+      SCHWINGEN_REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-lock.txt
+      - name: Install dependencies
+        run: python -m pip install ${{ matrix.pip-args }}
+      - name: Tests (incl. headless-browser smoke test of the sample site)
+        run: python -m pytest
+      - name: Build the sample site
+        run: python -m src.cli all --sample
+      - name: Deploy guard on the sample site
+        run: python -m src.cli check-site --sample

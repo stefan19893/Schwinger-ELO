@@ -163,3 +163,26 @@ def test_review_fixes_in_the_scripts() -> None:
     about = (WEB / "about.html").read_text(encoding="utf-8")
     assert "Jungaktiven- und U20-Anlässe" in about
     assert "Nachwuchs- und Frauenanlässe, Mannschaftsanlässe" not in about
+
+
+def test_publication_switches_in_the_pages() -> None:
+    """Static checks for the publication defaults (age filter, contact, indexing)."""
+    app = (WEB / "js" / "app.js").read_text(encoding="utf-8")
+    about_js = (WEB / "js" / "about.js").read_text(encoding="utf-8")
+    about = (WEB / "about.html").read_text(encoding="utf-8")
+    # a withheld athlete is labelled before anything else is looked at, never linked
+    link = app[app.index("SE.athleteLink = function"):app.index("SE.note = function")]
+    assert link.index("o.anon") < link.index("Name nicht veröffentlicht") < link.index("!o.id")
+    # the about page explains the rule with numbers from meta.json; hidden until filled
+    assert '<p id="se-minors" class="hidden"></p>' in about
+    for needle in ("pub.min_age > 0", "withheld_from_birth_year", "c.withheld_ranked",
+                   "Jahrgang nicht bekannt", "nur die veröffentlichten Schwinger"):
+        assert needle in about_js, needle
+    # the e-mail route: no address in the sources, set as text / href from meta.contact
+    assert '<p id="se-contact" class="hidden">' in about and "mailto:" not in about
+    assert "@" not in about.split('id="se-contact"')[1].split("</p>")[0]
+    assert "link.textContent = meta.contact" in about_js
+    assert "link.setAttribute('href', 'mailto:' + meta.contact)" in about_js
+    # indexing is a build setting (static_builder.apply_indexing), not part of the sources
+    for name in PAGES:
+        assert 'name="robots"' not in (WEB / name).read_text(encoding="utf-8")

@@ -1,0 +1,54 @@
+# The only shell of the publishing workflows: moves the pipeline state bundle between the
+# runner and the draft release. Everything else in the workflows is the CLI.
+#
+# The state holds birthdays, licence numbers and third-party PDFs, so the release must
+# stay a draft. That is checked here every time, immediately before the download and
+# immediately before the upload (hours can lie between the two in a crawl run): a release
+# that has been published in the meantime gets no new bundle.
+name: Pipeline state on the draft release
+description: Download the newest state bundle from the draft release, or upload a new one.
+
+inputs:
+  mode:
+    description: download | upload
+    required: true
+  token:
+    description: Token with contents:write (a draft release is invisible to a read-only token).
+    required: true
+  tag:
+    description: Tag of the draft release.
+    required: false
+    default: pipeline-state
+
+runs:
+  using: composite
+  steps:
+    - name: The release must still be a draft
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        STATE_TAG: ${{ inputs.tag }}
+        STATE_MODE: ${{ inputs.mode }}
+      run: |
+        test "$STATE_MODE" = "download" -o "$STATE_MODE" = "upload"
+        test "$(gh release view "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true"
+    - name: Download the bundle(s)
+      if: inputs.mode == 'download'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        STATE_TAG: ${{ inputs.tag }}
+      run: gh release download "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'schwingen-state-*.tar.gz' --dir "$RUNNER_TEMP/state-in"
+    # A new name first, the older generations afterwards (never an overwrite in place): a failed
+    # upload leaves the previous bundle in place.
+    - name: Upload the new bundle, then remove the generations it replaces
+      if: inputs.mode == 'upload'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        STATE_TAG: ${{ inputs.tag }}
+      run: |
+        gh release upload "$STATE_TAG" "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz" --repo "$GITHUB_REPOSITORY"
+        for old in "$RUNNER_TEMP"/state-in/schwingen-state-*.tar.gz; do
+          gh release delete-asset "$STATE_TAG" "$(basename "$old")" --repo "$GITHUB_REPOSITORY" --yes
+        done
