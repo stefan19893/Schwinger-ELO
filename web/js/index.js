@@ -128,7 +128,7 @@
     burn_in: 'Einschwing-Saison: ' +
       'Die Wertung startet für alle bei 1500 und muss sich erst einpendeln, zudem sind für diese Saison nur wenige Regionalfeste erfasst. ' +
       'Deshalb gibt es keine Rangierung.',
-    thin: 'Saison mit sehr wenigen Festen (2020: Absagen wegen der Pandemie, nur Hallenschwinget). ' +
+    thin: 'Saison mit sehr wenigen Festen (2020 fielen wegen der Pandemie fast alle aus, es blieben einige Hallenschwinget). ' +
       'Eine Saisonrangliste wäre nicht aussagekräftig, deshalb gibt es keine Rangierung.',
     current: 'Laufende Saison: Stand nach dem letzten erfassten Fest.'
   };
@@ -164,7 +164,7 @@
         SE.esc(x.season) + (x.status === 'burn_in' || x.status === 'thin' ? ' (ohne Rangierung)' : '') + '</option>';
     });
     html += '</select>';
-    html += '<p class="mt-3 text-sm text-stone-600 dark:text-stone-300">' + SE.num(s.n_festivals) + ' gewertete Feste, ' +
+    html += '<p class="mt-3 text-sm text-stone-600 dark:text-stone-300">' + SE.num(s.n_festivals) + (s.n_festivals === 1 ? ' gewertetes Fest, ' : ' gewertete Feste, ') +
       SE.num(s.n_athletes) + ' Schwinger im Einsatz' +
       (s.peak && placed ? '. Höchste Wertung der Saison: <a class="se-link" href="' + SE.athleteUrl(s.peak.id) + '">' +
         SE.esc(s.peak.name) + '</a> (' + SE.rating(s.peak.rating) + ')' : '') + '.</p>';

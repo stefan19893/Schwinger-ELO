@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 5 — Exporter & frontend (branch `phase-5-web`); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
-**Next action:** Phase 5 task 7 (web-builder; tasks 1–6 done, see `phase-5-web.md`).
+**Current phase:** 5 — Exporter & frontend, in review (branch `phase-5-web`, local commits only); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
+**Next action:** run phase-reviewer for Phase 5 (all seven tasks done, branch `phase-5-web`, not pushed). Then stop and ask the user before Phase 6 (publication question on ESV data is open; athlete-id stability should be decided before the site is linked publicly).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -12,7 +12,7 @@
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
-| 5 | Exporter & frontend | M4 | `phase-5-web.md` | in progress |
+| 5 | Exporter & frontend | M4 | `phase-5-web.md` | in review |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
 
 Status values: `not started` · `in progress` · `in review` · `done`
@@ -145,6 +145,10 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 5, to confirm: season lists need 12 bouts in the season** (`SEASON_MIN_BOUTS`, two festivals; places re-numbered among qualifying athletes, so they can differ from `season_ratings.rank`), **the 2020 season gets no places** (`thin`: fewer than 20 rated festivals; the list is shown by rating behind a caveat) and 2011 (burn-in) likewise — Phase 4 review: top-20 places on 6 bouts, six hall festivals in 2020.
 - 2026-10-03 — Search index is one file (`athletes.json`, 654 KB / 180 KB gzip, loaded on first use of the search), not chunked by initial letter (spec §7 "if large") — one lazy request, instant search across all names.
 - 2026-10-03 — `build` without Parquet inputs writes an empty site (warning) instead of failing.
+- 2026-10-03 — **Phase 5: athlete URLs are `athlete.html?id=<athlete_id>`** with the pipeline's id unchanged; an unknown id shows "Schwinger nicht gefunden" with suggestions searched from the words of the id, and the search field. The id scheme was not touched. **To decide before public linking:** ids are not stable between runs (Phase 3) and drop non-ASCII letters; a registry of issued ids (or a stable key) would make links permanent.
+- 2026-10-03 — **Phase 5: third-party code is vendored, no CDN, no Node** — ECharts 5.6.0 "common" build in `web/vendor/` (Apache-2.0, sha256 pinned in a test, loaded by `athlete.html` only); Tailwind v3.4.17 compiled once with the standalone CLI into the committed `web/css/style.css` (`scripts/build_css.sh`, sources in `tailwind/`). Reasons: offline `--sample` demo, a fresh clone needs only Python, no third-party requests from visitors, strict CSP (`script-src 'self'`). Cost: `scripts/build_css.sh` must be run after class changes (a test catches a stale stylesheet).
+- 2026-10-03 — **Phase 5: presentation rules** — UI in German (Swiss spelling); dark mode follows the system; identity-uncertain athletes carry a `?` / "Identität unsicher" wherever they are listed; inactive athletes' profiles lead with peak and last-active rating; the current ranking highlights a last bout older than 180 days; the 1 April reversion is drawn as its own step in the chart; `partial` festivals are labelled "mit Lücken"; "Schlussgang" only where the sheet marks it; bouts are shown from each athlete's side (no A / B); a methodology page (`about.html`) names source, meaning and limitations and links to GitHub issues for corrections; every footer says "Inoffizielle Auswertung".
+- 2026-10-03 — Pages were verified in headless Chrome 154 (Windows Chrome driven from WSL, phone width through a 390 px iframe); there is no JavaScript engine for pytest on this machine, so the scripts are not covered by automated tests (static checks only, `tests/test_web.py`).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -168,6 +172,11 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 4 → owner: **newcomers start at 1500 but are weaker** (at K x 2 they end their first season at ~1350-1450 on average, lose 51 points at their first festival, and first-festival predictions are worse than a coin flip, Brier 0.253 vs 0.20; at the spec scale: 1405-1476 / 25 points / 0.244). More visible since the K change. Keep the spec's 1500, or start newcomers lower (~1400) / with a higher K for the first 24 bouts?
 - Phase 4 → 5: ratings are not comparable across associations and eras without a caveat: in bouts between Teilverbände SWSV athletes score 0.045 and NOSV 0.023 per bout below expectation, BKSV 0.019 and ISV 0.017 above (K x 2; 78 % of all bouts stay within one Teilverband); the top of the scale only saturates around 2016 (top-20 mean 2040 in 2011, 2462 in 2016, then about +8 points a year), so "all-time peak" lists favour the recent years. Season 2020 has six hall festivals only — hide its season ranking?
 - Phase 3 leftover seen in Phase 4: elite athletes with a one-festival namesake fragment from a spelling variant (`sempach-mathias-26072-000`, `glarner-mathias-26065-001`, `siegenthaler-mathias-26065-003`, `kampf-bernard-26227-046`, `arnold-mathias-25875-000`; 2012-2013 sheets) — provisional (few bouts), so never ranked, but the real athlete misses those 6 bouts.
+
+- Phase 5 → owner: **stable athlete ids** before the site is public (links and bookmarks break when an id changes) — registry of issued ids in the pipeline, or accept the not-found page with suggestions?
+- Phase 5 → owner: wording and handling of the correction route on `about.html` ("Fehler, verwechselte Personen oder Einwände gegen einen Eintrag bitte über GitHub melden") — confirm, or name another contact; what happens when an athlete objects to being listed?
+- Phase 5 → owner: season lists require 12 season bouts and 2011 / 2020 have no places (`SEASON_MIN_BOUTS`, `THIN_SEASON_FESTIVALS` in `static_builder.py`) — confirm.
+- Phase 5: the frontend scripts have no automated tests (no Node / browser in the test environment). Add a JS test runner in CI (Phase 6), or keep the manual headless-Chrome check?
 
 
 ## Blockers
