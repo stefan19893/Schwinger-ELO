@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task 6 (written hand-over to the owner) — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Current phase:** 6 — CI & deployment (**in review**, branch `phase-6-deploy`, local only — not pushed); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896)
+**Next action:** run phase-reviewer for Phase 6 (then stop and ask the user for the publication go-ahead; nothing is pushed, Pages is not enabled, `PUBLISH_ENABLED` is not set)
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -13,7 +13,7 @@
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
-| 6 | CI & deployment | M5 | `phase-6-deploy.md` | in progress |
+| 6 | CI & deployment | M5 | `phase-6-deploy.md` | in review |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
@@ -189,9 +189,17 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 5 → owner: **stable athlete ids** before the site is public (links and bookmarks break when an id changes) — registry of issued ids in the pipeline, or accept the not-found page with suggestions?
 - Phase 5 → owner: wording and handling of the correction route on `about.html` ("Fehler, verwechselte Personen oder Einwände gegen einen Eintrag bitte über GitHub melden") — confirm, or name another contact; what happens when an athlete objects to being listed?
 - Phase 5 → owner: season lists require 12 season bouts and 2011 / 2020 have no places (`SEASON_MIN_BOUTS`, `THIN_SEASON_FESTIVALS` in `static_builder.py`) — confirm.
-- Phase 5 → owner (review 2026-10-03), before any deployment: 478 athletes born 2009–2010 are listed by name (345 ranked) — acceptable?; the objection route is a public GitHub issue only — add an e-mail contact?; search-engine indexing — allow, or add `noindex` / `robots.txt`? (today: indexable).
+- ~~Phase 5 → owner (review 2026-10-03), before any deployment: 478 athletes born 2009–2010 are listed by name (345 ranked) — acceptable?; the objection route is a public GitHub issue only — add an e-mail contact?; search-engine indexing — allow, or add `noindex` / `robots.txt`? (today: indexable).~~ — defaults implemented 2026-10-03 (`publish_min_age = 18`, `site_noindex`, optional `contact_email`); the owner may overrule each, see the Phase 6 questions below.
 - ~~Phase 5: the frontend scripts have no automated tests (no Node / browser in the test environment). Add a JS test runner in CI (Phase 6), or keep the manual headless-Chrome check?~~ — resolved 2026-10-03: headless-browser smoke test in pytest (`tests/test_browser_smoke.py`), required in CI, skipped locally without a browser.
 
+- Phase 6 → owner, **before anything is published** (nothing is: the workflows are inert without `PUBLISH_ENABLED`, Pages is not enabled, the branch is not pushed):
+  - **Publish at all?** (ESV-derived results obtained via schlussgang.ch) — the only step that makes the site public is the owner's checklist in `README.md`.
+  - **Age rule:** `publish_min_age = 18` withholds everyone not *certainly* 18 at the data date (born 2008 or later: 718 athletes, 523 ranked; ranks re-numbered, first change at rank 138). Narrower alternative "born 2009 or later": 478 / 345. Confirm, or set another value (0 = everyone).
+  - **State on a draft release** (`pipeline-state`, 504 MB, holds birthdays / licence numbers / residences / third-party PDFs; visible to accounts with write access; one click on "Publish release" would expose it; the job needs `contents: write`) — accept, or use a private store behind a secret?
+  - **`site_noindex`:** under `<user>.github.io/Schwinger-ELO/` the `robots.txt` is not read by crawlers and the JSON data files cannot carry a `noindex`; only the four HTML pages are covered. Enough, or use a custom domain / accept indexing?
+  - **Anonymous festival rows** ("Jungschwinger, Name nicht veröffentlicht") keep record, grade sum and rating change; together with the linked schlussgang.ch list a reader can work out who it is. Accept, or drop rating / grades from those rows?
+  - `contact_email`: none configured — objections go through public GitHub issues only until the owner sets one.
+  - Action versions are major tags written from memory (`checkout@v5`, `setup-python@v6`, `upload-pages-artifact@v4`, `deploy-pages@v4`); verify on the first run and consider pinning to commit SHAs.
 
 ## Blockers
 - none (2026-09-29: esv.ch-terms blocker resolved by user decision to use schlussgang.ch only)
