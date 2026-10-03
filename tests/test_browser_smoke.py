@@ -249,6 +249,7 @@ def test_pages_show_their_content(pages: dict[str, str], site: Path) -> None:
     assert "Datenstand" in Dom(pages["index"]).text["se-asof"]
     athlete = Dom(pages["athlete"])
     assert top_name in athlete.text["se-view"] and "canvas" in athlete.tags  # chart drawn
+    assert f'href="compare.html?ids={ranked[0][1]}"' in pages["athlete"]     # entry point
     assert "nicht gefunden" in Dom(pages["athlete-unknown"]).text["se-view"]
     assert "Feste" in Dom(pages["fests"]).text["se-view"]
     fest = Dom(pages["fest"])

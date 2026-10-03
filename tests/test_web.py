@@ -36,7 +36,8 @@ def test_page_links_are_relative_and_resolve(name: str) -> None:
     assert scripts.index("js/app.js") < len(scripts) - 1  # app.js before the page script
     assert {"se-banner", "se-asof"} <= page.ids
     hrefs = {u for t, _, u in page.links if t == "a"}
-    assert {"index.html", "fests.html", "about.html"} <= hrefs  # navigation on every page
+    # navigation on every page
+    assert {"index.html", "fests.html", "compare.html", "about.html"} <= hrefs
     assert any(u.endswith("/issues") for u in hrefs)             # correction route
 
 
@@ -230,5 +231,12 @@ def test_comparison_page_rules() -> None:
     # the search index and the ranking are only loaded on demand
     assert js.count("SE.loadSearchIndex()") == 3 and js.count("data/rankings_latest.json") == 1
     assert js.index("data/rankings_latest.json") > js.index("el.id === 'se-example'")
+    # entry points: the navigation (test_page_links...) and the profile; the ranking rows
+    # stay as they are
+    athlete = (WEB / "js" / "athlete.js").read_text(encoding="utf-8")
+    assert "href=\"compare.html?ids=' + encodeURIComponent(h.id) + '\"" in athlete
+    assert "compare.html" not in (WEB / "js" / "index.js").read_text(encoding="utf-8")
+    about = (WEB / "about.html").read_text(encoding="utf-8")
+    assert "<strong>Vergleich.</strong>" in about and "einmal gezählt" in about
     for ident in ("se-picked", "se-add", "se-add-results", "se-add-hint", "se-slots", "se-view"):
         assert f'id="{ident}"' in html, ident

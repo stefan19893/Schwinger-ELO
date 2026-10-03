@@ -88,6 +88,7 @@ Schwinger-ELO/
 ├── web/                            # Frontend source (static pages, German UI; copied to dist/ as is)
 │   ├── index.html                  # Current ranking, season lists, highest ratings, search
 │   ├── athlete.html                # Athlete profile & career chart (?id=<athlete_id>)
+│   ├── compare.html                # Comparison of up to six athletes (?ids=<athlete_id>,<athlete_id>,...)
 │   ├── fests.html                  # Festival list and one festival (?id=<fest_id>)
 │   ├── about.html                  # Method, source, limitations, how to report errors
 │   ├── js/
@@ -95,6 +96,7 @@ Schwinger-ELO/
 │   │   ├── index.js                # Start page views (#aktuell, #saison-YYYY, #bestwerte)
 │   │   ├── athlete.js              # Profile page
 │   │   ├── charts.js               # ECharts career chart (incl. the 1 April reversion steps)
+│   │   ├── compare.js              # Comparison page: selection in the URL, figures, chart, seasons, direct bouts, common festivals
 │   │   ├── fests.js                # Festival list / festival detail
 │   │   └── about.js                # Fills the methodology page with numbers from meta.json
 │   ├── css/
@@ -121,7 +123,7 @@ Schwinger-ELO/
 │   ├── site_checks.py, fixture_paths.py   # Helpers (page / link checks, fixture lookup)
 │   └── test_cli.py                 # End-to-end: `all --sample` produces a valid dist/, served under a sub-path
 ├── dist/                           # Built site, git-ignored
-│   ├── index.html, athlete.html, fests.html, about.html, css/, js/, vendor/, .nojekyll
+│   ├── index.html, athlete.html, compare.html, fests.html, about.html, css/, js/, vendor/, .nojekyll
 │   ├── robots.txt                  # only with site_noindex
 │   └── data/
 │       ├── meta.json               # as_of (last rated festival), counts, model parameters, `empty`
@@ -131,7 +133,8 @@ Schwinger-ELO/
 │       ├── seasons.json            # Season lists (top 100) and the peak of each season
 │       ├── festivals.json          # Festival index
 │       ├── fests/fest_<fest_id>.json           # One festival: participants and bouts (on demand)
-│       └── history/history_<athlete_id>.json   # One athlete: profile, seasons, rating history (on demand)
+│       ├── history/history_<athlete_id>.json   # One athlete: profile, seasons, rating history (on demand)
+│       └── bouts/bouts_<athlete_id>.json       # One athlete: his bouts against published opponents (comparison page, on demand)
 ├── pyproject.toml                  # Project metadata + pytest config
 ├── requirements.txt
 ├── requirements-lock.txt            # exact versions + wheel hashes for the publishing workflows (scripts/make_lock.py)

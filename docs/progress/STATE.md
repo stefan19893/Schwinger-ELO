@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-04
 **Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
-**Next action:** Phase 7 task 5 (web-builder): navigation link "Vergleich" on the other four pages, "vergleichen" link on the athlete profile, about-page text, README / SPEC. Then task 6 (verification record). The Tailwind CLI is not available offline: use only classes `web/css/style.css` already defines. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
+**Next action:** Phase 7 task 6 (web-builder): verification on sample and real data (browser cases at phone and desktop width, dark mode, leak check, sizes) and record the results. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -175,6 +175,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Feature request (user): general comparison of athletes** (first asked as a multi-athlete rating chart, then widened) → Phase 7.
 - 2026-10-03 — **Phase 7: head-to-head data = one on-demand file per published athlete, `data/bouts/bouts_<athlete_id>.json`** (his bouts against published opponents, file-local opponent table, grouped by festival; + about 36 MB / 6,306 files in `dist/`, 11.6 MB gzip) — fetching the common festival files instead costs up to 141 requests / 2.2 MB for one pair, putting the bouts into the history files would double every profile. Bouts against withheld / unnamed / unrated opponents are not written at all. Common festivals are derived in the browser from the history files. `SCHEMA_VERSION` stays 1 (additive).
 - 2026-10-04 — **Phase 7: comparison page** `compare.html?ids=a,b,…` — at most 6 athletes (six colour-blind-safe colours + six point shapes); selection in the address; chart built like the profile's (steps, dashed 1 April reversion, dotted idle tail), HTML legend instead of the ECharts one (namesakes); head-to-head read from one athlete's bout file so that every bout counts once; common festivals from the history files (rated festivals only); notes for non-overlapping careers and for the scale that saturates around 2016. No new third-party code; `style.css` not rebuilt (Tailwind CLI not available offline), only existing classes used.
+- 2026-10-04 — **Phase 7: entry points** = navigation "Vergleich" on every page and one link on the profile; no control on ranking rows (clutter on a phone).
 - 2026-10-03 — **Phase 7: `check-site` also fails when `data/history` or `data/bouts` do not match the search index one to one** (no override) — a selectable athlete must never end in a 404, and a per-athlete file outside the index would be an athlete published by accident.
 
 ## Open questions
