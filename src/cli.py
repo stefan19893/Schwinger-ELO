@@ -745,8 +745,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="baseline file (default: <data-dir>/published_meta.json)")
     sp = add("state-export", "bundle the pipeline state (data/raw, database, Parquet files, "
                              "guard baseline) into one file - not for publication")
-    sp.add_argument("output", help="bundle file to write, or a directory (a time-stamped "
-                                   "schwingen-state-*.tar.gz is created in it)")
+    sp.add_argument("output", help="a *.tar.gz file to write, or a directory (created if "
+                                   "missing; a time-stamped schwingen-state-*.tar.gz is "
+                                   "written into it). The bundle is readable by the owner "
+                                   "only")
     sp = add("state-import", "unpack a state bundle into the data directory")
     sp.add_argument("source", help="bundle file, or a directory (its newest bundle is used)")
     sp.add_argument("--force", action="store_true", default=False,

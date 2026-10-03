@@ -20,18 +20,25 @@ Format (``FORMAT`` 1): a gzip-compressed tar with regular files only::
     published_meta.json    (if present)
     manifest.json          sizes and sha256 of every file above, counts   (last member)
 
-``import_state`` unpacks into a temporary directory beside the target, verifies every file
-against the manifest and only then moves the parts into place.
+``import_state`` unpacks into a temporary directory beside the target (bounded by
+``MAX_UNPACKED_BYTES`` / ``MAX_FILES``), verifies every file against the manifest, checks
+that the unpacked state is usable (:func:`state_problems`) and only then moves the parts
+into place - a well-formed but useless bundle never replaces good state, also with
+``--force``.
+
+``export_state`` writes the bundle readable by the owner only (0600, new directories 0700).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import gzip
 import hashlib
 import io
 import json
 import logging
+import os
 import shutil
 import sqlite3
 import tarfile
@@ -51,10 +58,18 @@ HEADER, MANIFEST = "bundle.json", "manifest.json"
 DB_NAME, BASELINE_NAME = "schwingen.db", "published_meta.json"
 DIRS = ("raw", "processed")
 TOP_LEVEL = (*DIRS, DB_NAME, BASELINE_NAME)
-# `--require-state`: at least this share of the statistic PDFs of the festivals already in
-# the database must be in the cache, otherwise the crawl would download them all again.
-MIN_PDF_COVERAGE = 0.9
+# `--require-state`: at least this share of every kind of response the crawl needs again
+# (statistic PDFs, ranking PDFs, festival listings, event-portrait listings, portraits) must
+# be in the cache, otherwise the crawl would download thousands of files again. The real
+# state has 100 % of each (1,878 / 1,950 / 80 / 20 queries, 10,184 portraits).
+MIN_CACHE_COVERAGE = 0.9
 _CHUNK = 1 << 20
+# `state-import` refuses bundles that unpack to more than this (a 306 KB archive can
+# unpack to 300 MB and more). The real state is 719 MB in 8,373 files and grows by about
+# 60 MB a season; GitHub caps a release asset at 2 GB compressed.
+MAX_UNPACKED_BYTES = 4 * 1024 ** 3
+MAX_FILES = 100_000
+MAX_JSON_BYTES = 64 * 1024 ** 2      # bundle.json / manifest.json (real manifest: 1 MB)
 
 
 class StateError(RuntimeError):
@@ -88,22 +103,62 @@ def _db_counts(db_path: Path) -> dict[str, int]:
     return out
 
 
-def _pdf_coverage(cfg: Config) -> tuple[int, int]:
-    """(cached, expected) statistic PDFs of the active festivals in the database."""
-    from src.scraper.client import client_from_config
+def cache_coverage(cfg: Config) -> dict[str, tuple[int, int]]:
+    """(cached, expected) per kind of response a crawl would otherwise request again:
+    statistic PDFs and ranking PDFs of the active festivals in the database, the first
+    listing page of every category and year, the event -> portrait listings (2023+), and
+    the portraits (rows on the cached pages against the rows in the database).
 
+    Local files only (offline client)."""
+    from src.scraper import fests_crawler as fc
+    from src.scraper import portraits as pt
+    from src.scraper.client import CacheMiss, build_url, client_from_config
+
+    out: dict[str, tuple[int, int]] = {}
     conn = sqlite3.connect(f"file:{cfg.db_path.resolve()}?mode=ro", uri=True)
     try:
-        urls = {r[0] for r in conn.execute(
-            "SELECT statistic_pdf_url FROM festivals WHERE kind = 'active' AND NOT cancelled "
-            "AND statistic_pdf_url IS NOT NULL AND statistic_pdf_url != ''")}
-    except sqlite3.DatabaseError:
-        return 0, 0
+        urls: dict[str, set[str]] = {}
+        for kind, col in (("statistic PDFs", "statistic_pdf_url"),
+                          ("ranking PDFs", "ranking_pdf_url")):
+            try:
+                urls[kind] = {r[0] for r in conn.execute(
+                    f"SELECT {col} FROM festivals WHERE kind = 'active' AND NOT cancelled "
+                    f"AND {col} IS NOT NULL AND {col} != ''")}
+            except sqlite3.DatabaseError:
+                urls[kind] = set()
+        try:
+            first, last = conn.execute("SELECT MIN(date), MAX(date) FROM festivals").fetchone()
+            years = range(int(first[:4]), int(last[:4]) + 1)
+        except (sqlite3.DatabaseError, TypeError, ValueError):
+            years = range(0)
+        try:
+            n_portraits = int(conn.execute("SELECT COUNT(*) FROM portraits").fetchone()[0])
+        except sqlite3.DatabaseError:
+            n_portraits = 0
     finally:
         conn.close()
     with client_from_config(cfg, offline=True) as client:
-        cached = sum(1 for u in urls if all(p.is_file() for p in client.cache_paths(u)))
-    return cached, len(urls)
+        def cached(url: str) -> bool:
+            return all(p.is_file() for p in client.cache_paths(url))
+
+        for kind, group in urls.items():
+            out[kind] = (sum(1 for u in group if cached(u)), len(group))
+        listings = [build_url(fc.API_URL, fc.listing_params(tid, year))
+                    for year in years for tid in fc.SOURCE_CATEGORIES]
+        out["festival listings"] = (sum(1 for u in listings if cached(u)), len(listings))
+        links = [build_url(fc.API_URL, pt.event_portrait_params(tid, year))
+                 for year in years if year >= pt.PORTRAIT_LINK_FIRST_YEAR
+                 for tid in fc.SOURCE_CATEGORIES]
+        out["event-portrait listings"] = (sum(1 for u in links if cached(u)), len(links))
+        rows = 0
+        try:
+            for doc in pt.iter_portrait_pages(client):
+                rows += len(doc.get("data") or [])
+        except (CacheMiss, ValueError, OSError):
+            pass                       # the chain of pages ends where the cache ends
+        # at least the first page, even when the database knows no portrait yet
+        out["portraits"] = (rows, max(n_portraits, 1))
+    return out
 
 
 def state_problems(cfg: Config) -> list[str]:
@@ -120,10 +175,12 @@ def state_problems(cfg: Config) -> list[str]:
     if not cfg.raw_dir.is_dir() or not any(cfg.raw_dir.rglob("*.body")):
         problems.append(f"{cfg.raw_dir} holds no cached responses")
     elif counts["festivals"]:
-        cached, expected = _pdf_coverage(cfg)
-        if expected and cached < MIN_PDF_COVERAGE * expected:
-            problems.append(f"only {cached} of the {expected} statistic PDFs of the known "
-                            f"festivals are in {cfg.raw_dir} (need {MIN_PDF_COVERAGE:.0%})")
+        for kind, (cached, expected) in cache_coverage(cfg).items():
+            if expected and cached < MIN_CACHE_COVERAGE * expected:
+                problems.append(
+                    f"only {cached} of the {expected} {kind} of the known festivals are in "
+                    f"{cfg.raw_dir} (need {MIN_CACHE_COVERAGE:.0%}) - a crawl would request "
+                    f"the rest again")
     return problems
 
 
@@ -170,9 +227,11 @@ def _add_file(tar: tarfile.TarFile, name: str, path: Path, files: list[dict[str,
 
 
 def export_state(cfg: Config, output: Path, now: _dt.datetime | None = None) -> BundleInfo:
-    """Write the state in ``cfg.data_dir`` to ``output`` (a file, or a directory in which
-    a time-stamped bundle is created). Refuses a state that is not usable
-    (:func:`state_problems`): an upload must never replace a good bundle with a bad one."""
+    """Write the state in ``cfg.data_dir`` to ``output``: a file when the name ends in
+    ``.tar.gz``, otherwise a directory (created if missing) in which a time-stamped bundle
+    is written. The bundle is readable by the owner only. Refuses a state that is not
+    usable (:func:`state_problems`): an upload must never replace a good bundle with a
+    bad one."""
     problems = state_problems(cfg)
     missing = [n for n in ("bouts.parquet", "athletes.parquet", "ratings.parquet")
                if not (cfg.processed_dir / n).is_file()]
@@ -182,15 +241,20 @@ def export_state(cfg: Config, output: Path, now: _dt.datetime | None = None) -> 
         raise StateError("nothing exported, the state is incomplete: " + "; ".join(problems))
     now = now or _dt.datetime.now(_dt.timezone.utc)
     created = now.isoformat(timespec="seconds")
-    if output.is_dir():
+    if output.is_dir() or not output.name.endswith(BUNDLE_SUFFIX):
+        if output.exists() and not output.is_dir():
+            raise StateError(f"{output} exists and is neither a directory nor a "
+                             f"*{BUNDLE_SUFFIX} file name")
         output = output / bundle_name(now)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)   # only new ones: private
     tmp = output.with_name(output.name + ".part")
+    tmp.unlink(missing_ok=True)
     files: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(dir=output.parent, prefix=".state-db-") as scratch:
         snapshot = Path(scratch) / DB_NAME
         _snapshot_db(cfg.db_path, snapshot)
-        with tmp.open("wb") as raw, \
+        # owner-only from the first byte: the bundle holds birthdays and licence numbers
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as raw, \
                 gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=1, mtime=0) as gz, \
                 tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar:
             _add_bytes(tar, HEADER, json.dumps({"format": FORMAT, "created_at": created}).encode())
@@ -212,6 +276,7 @@ def export_state(cfg: Config, output: Path, now: _dt.datetime | None = None) -> 
             manifest = {"format": FORMAT, "created_at": created, "counts": counts,
                         "baseline": baseline.is_file(), "files": files}
             _add_bytes(tar, MANIFEST, json.dumps(manifest, separators=(",", ":")).encode())
+    os.chmod(tmp, 0o600)
     tmp.replace(output)
     return BundleInfo(output, created, len(files), sum(f["size"] for f in files), counts)
 
@@ -282,7 +347,8 @@ def import_state(cfg: Config, source: Path, force: bool = False) -> BundleInfo:
     staging = Path(tempfile.mkdtemp(dir=cfg.data_dir, prefix=".state-import-"))
     try:
         seen: dict[str, tuple[int, str]] = {}
-        manifest: dict[str, Any] | None = None
+        manifest: Any = None
+        total = 0
         try:
             with tarfile.open(bundle, mode="r|gz") as tar:
                 for member in tar:
@@ -292,17 +358,29 @@ def import_state(cfg: Config, source: Path, force: bool = False) -> BundleInfo:
                     fh = tar.extractfile(member)
                     assert fh is not None
                     if member.name in (HEADER, MANIFEST):
-                        data = fh.read()
+                        data = fh.read(MAX_JSON_BYTES + 1)
+                        if len(data) > MAX_JSON_BYTES:
+                            raise StateError(f"{bundle}: {member.name} is larger than "
+                                             f"{MAX_JSON_BYTES >> 20} MB")
                         if member.name == MANIFEST:
                             manifest = json.loads(data.decode("utf-8"))
                         continue
                     if member.name in seen:
                         raise StateError(f"bundle member {member.name!r} occurs twice")
+                    if len(seen) >= MAX_FILES:
+                        raise StateError(f"{bundle}: more than {MAX_FILES} files - not a "
+                                         f"pipeline state")
                     target = staging.joinpath(*name.parts)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     sha, size = hashlib.sha256(), 0
                     with target.open("wb") as out:
                         while chunk := fh.read(_CHUNK):
+                            total += len(chunk)
+                            if total > MAX_UNPACKED_BYTES:
+                                raise StateError(
+                                    f"{bundle}: unpacks to more than "
+                                    f"{MAX_UNPACKED_BYTES / 1024 ** 3:.0f} GB - refused "
+                                    f"(the real state is below 1 GB)")
                             sha.update(chunk)
                             size += len(chunk)
                             out.write(chunk)
@@ -311,7 +389,14 @@ def import_state(cfg: Config, source: Path, force: bool = False) -> BundleInfo:
             raise StateError(f"{bundle}: damaged or truncated bundle ({exc})") from exc
         if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list):
             raise StateError(f"{bundle}: truncated bundle (no {MANIFEST})")
-        expected = {f["path"]: (f["size"], f["sha256"]) for f in manifest["files"]}
+        expected: dict[str, tuple[int, str]] = {}
+        for entry in manifest["files"]:
+            if not (isinstance(entry, dict) and isinstance(entry.get("path"), str)
+                    and isinstance(entry.get("size"), int)
+                    and isinstance(entry.get("sha256"), str)):
+                raise StateError(f"{bundle}: malformed {MANIFEST} entry "
+                                 f"{json.dumps(entry)[:80]} (need path, size, sha256)")
+            expected[entry["path"]] = (entry["size"], entry["sha256"])
         if expected != seen:
             bad = sorted(set(expected) ^ set(seen)) or \
                 sorted(k for k in expected if expected[k] != seen[k])
@@ -319,6 +404,15 @@ def import_state(cfg: Config, source: Path, force: bool = False) -> BundleInfo:
                              f"({len(bad)} files, e.g. {bad[0]})")
         if DB_NAME not in seen or not any(k.startswith("raw/") for k in seen):
             raise StateError(f"{bundle}: bundle without database or cache")
+        if not isinstance(manifest.get("counts") or {}, dict):
+            raise StateError(f"{bundle}: malformed {MANIFEST} (counts)")
+        # usable? Checked on the unpacked copy, before anything existing is touched.
+        problems = state_problems(dataclasses.replace(cfg, data_dir=staging))
+        if problems:
+            raise StateError(
+                f"{bundle}: well-formed, but not a usable pipeline state - nothing in "
+                f"{cfg.data_dir} was changed: "
+                + "; ".join(p.replace(str(staging), "<bundle>") for p in problems))
         for name in TOP_LEVEL:
             part, target = staging / name, cfg.data_dir / name
             if target.is_dir():
@@ -329,6 +423,9 @@ def import_state(cfg: Config, source: Path, force: bool = False) -> BundleInfo:
                 part.replace(target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-    counts = {k: int(v) for k, v in (manifest.get("counts") or {}).items()}
+    try:
+        counts = {str(k): int(v) for k, v in (manifest.get("counts") or {}).items()}
+    except (TypeError, ValueError):
+        counts = {}
     return BundleInfo(bundle, header["created_at"], len(seen),
                       sum(s for s, _ in seen.values()), counts)

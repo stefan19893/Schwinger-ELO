@@ -39,10 +39,44 @@ def _pdf_urls(db: Path) -> list[str]:
         conn.close()
 
 
+def _cache_urls(db: Path) -> dict[str, list[str]]:
+    """Every URL `--require-state` expects in the cache besides the statistic PDFs."""
+    from src.scraper import fests_crawler as fc
+    from src.scraper import portraits as pt
+    from src.scraper.client import build_url
+
+    conn = sqlite3.connect(db)
+    try:
+        ranking = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ranking_pdf_url FROM festivals WHERE kind = 'active' AND NOT "
+            "cancelled AND ranking_pdf_url IS NOT NULL AND ranking_pdf_url != ''")]
+        first, last = conn.execute("SELECT MIN(date), MAX(date) FROM festivals").fetchone()
+    finally:
+        conn.close()
+    years = range(int(first[:4]), int(last[:4]) + 1)
+    return {
+        "ranking": ranking,
+        "listings": [build_url(fc.API_URL, fc.listing_params(t, y))
+                     for y in years for t in fc.SOURCE_CATEGORIES],
+        "links": [build_url(fc.API_URL, pt.event_portrait_params(t, y))
+                  for y in years if y >= pt.PORTRAIT_LINK_FIRST_YEAR
+                  for t in fc.SOURCE_CATEGORIES],
+        "portraits": [build_url(pt.PORTRAIT_API_URL, pt.portrait_list_params())],
+    }
+
+
+def _uncache(cfg: Config, urls: list[str]) -> None:
+    with client_from_config(cfg, offline=True) as client:
+        for url in urls:
+            for path in client.cache_paths(url):
+                path.unlink()
+
+
 @pytest.fixture(scope="module")
 def warm_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A small but complete state: the sample pipeline's database and Parquet files plus
-    a cache entry for every statistic PDF (as a real run leaves it behind)."""
+    a cache entry for everything a crawl would otherwise request again - statistic and
+    ranking PDFs, the listing queries, the portrait pages (as a real run leaves it)."""
     root = tmp_path_factory.mktemp("state")
     mp = pytest.MonkeyPatch()
     for key in list(os.environ):
@@ -56,14 +90,27 @@ def warm_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     cfg = load_config({"data_dir": root / "data"}, env={})
     urls = _pdf_urls(cfg.db_path)
     assert len(urls) >= 4
+    groups = _cache_urls(cfg.db_path)
+    assert all(groups.values())
     with client_from_config(cfg, offline=True) as client:
-        for i, url in enumerate(urls):
+        def put(url: str, content: bytes, kind: str) -> None:
             body, meta = client.cache_paths(url)
             body.parent.mkdir(parents=True, exist_ok=True)
-            body.write_bytes(b"%PDF-1.4 fake " + bytes([i]) * 2000)
+            body.write_bytes(content)
             meta.write_text(json.dumps({"url": url, "status": 200,
                                         "fetched_at": "2026-09-29T19:59:20+00:00",
-                                        "content_type": "application/pdf"}), encoding="utf-8")
+                                        "content_type": kind}), encoding="utf-8")
+
+        for i, url in enumerate(urls):
+            put(url, b"%PDF-1.4 fake " + bytes([i]) * 2000, "application/pdf")
+        for i, url in enumerate(groups["ranking"]):
+            put(url, b"%PDF-1.4 ranking " + bytes([i]) * 500, "application/pdf")
+        for url in groups["listings"] + groups["links"]:
+            put(url, b'{"data":[],"links":{}}', "application/vnd.api+json")
+        n = sqlite3.connect(cfg.db_path).execute("SELECT COUNT(*) FROM portraits").fetchone()[0]
+        put(groups["portraits"][0], json.dumps({"data": [{"id": str(i)} for i in range(n)],
+                                                "links": {}}).encode(),
+            "application/vnd.api+json")
     (root / "data" / "published_meta.json").write_text('{"counts":{"athletes":1}}',
                                                        encoding="utf-8")
     return root / "data"
@@ -242,10 +289,9 @@ def test_state_problems(warm: Config, tmp_path: Path) -> None:
     cold = load_config({"data_dir": tmp_path / "cold"}, env={})
     assert any("does not exist" in p for p in sbd.state_problems(cold))
     # most PDFs gone from the cache: the crawl would download them again
-    bodies = sorted(warm.raw_dir.rglob("*.body"))
-    for body in bodies[1:]:
-        body.unlink()
-    assert any("statistic PDFs" in p for p in sbd.state_problems(warm))
+    _uncache(warm, _pdf_urls(warm.db_path)[1:])
+    assert [p for p in sbd.state_problems(warm) if "statistic PDFs" in p]
+    assert len(sbd.state_problems(warm)) == 1
     shutil.rmtree(warm.raw_dir)
     assert any("no cached responses" in p for p in sbd.state_problems(warm))
     conn = sqlite3.connect(warm.db_path)
@@ -296,7 +342,7 @@ def test_all_with_require_state_stops_before_any_stage(tmp_path: Path,
 def test_require_state_lets_a_warm_run_through(warm: Config) -> None:
     api = _Counting()
     cfg = load_config({"data_dir": warm.data_dir, "require_state": True, "from_year": 2011,
-                       "to_year": 2011, "crawl_pdfs": False}, env={})
+                       "to_year": 2011, "crawl_pdfs": False, "refresh": True}, env={})
     assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api), portraits=False) == 1
     assert api.requests                       # the state check passed, the crawl ran (HTTP 500)
 
@@ -307,3 +353,132 @@ def test_require_state_is_ignored_for_sample_and_warned_elsewhere(
     with caplog.at_level("WARNING"):
         cli.main(["build", "--require-state", "--allow-empty"])
     assert "--require-state has no effect on `build`" in caplog.text
+
+
+@pytest.mark.parametrize("group, label", [
+    ("ranking", "ranking PDFs"), ("listings", "festival listings"),
+    ("links", "event-portrait listings"), ("portraits", "portraits"),
+])
+def test_half_empty_cache_is_not_a_state(warm: Config, group: str, label: str) -> None:
+    """Phase 6 review S1: database and statistic PDFs alone passed `--require-state`; a
+    live run would then have fetched the listings, ranking PDFs and portraits again."""
+    assert all(c == e for c, e in sbd.cache_coverage(warm).values())
+    urls = _cache_urls(warm.db_path)[group]
+    _uncache(warm, urls[: max(1, len(urls) // 5)] if len(urls) >= 10 else urls)
+    problems = sbd.state_problems(warm)
+    assert len(problems) == 1 and label in problems[0] and "request" in problems[0]
+
+
+def test_reviewers_half_empty_state_makes_no_request(warm: Config) -> None:
+    for urls in _cache_urls(warm.db_path).values():
+        _uncache(warm, urls)
+    assert any(warm.raw_dir.rglob("*.body"))               # the statistic PDFs are there
+    assert len(sbd.state_problems(warm)) == 4
+    api = _Counting()
+    cfg = load_config({"data_dir": warm.data_dir, "require_state": True}, env={})
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 1
+    assert cli.main(["all", "--skip-crawl", "--require-state",
+                     "--data-dir", str(warm.data_dir)]) == 1
+    assert api.requests == []
+    assert cli.main(["state-export", str(warm.data_dir.parent / "x.tar.gz"),
+                     "--data-dir", str(warm.data_dir)]) == 1  # never uploaded either
+
+
+# --------------------------------------------------------------------------- review S5 / S6
+def _manifest_edit(bundle: Path, out: Path, edit, keep=lambda name: True) -> Path:  # noqa: ANN001
+    def change(m: tarfile.TarInfo, data: bytes):  # noqa: ANN202
+        if m.name == sbd.MANIFEST:
+            manifest = json.loads(data)
+            manifest["files"] = [f for f in manifest["files"] if keep(f["path"])]
+            edit(manifest)
+            return m, json.dumps(manifest).encode()
+        return (m, data) if keep(m.name) else None
+    return _rewrite(bundle, out, change)
+
+
+@pytest.mark.parametrize("case", ["no_path", "not_a_dict", "bad_size", "bad_counts"])
+def test_malformed_manifest_is_a_clean_error(warm: Config, tmp_path: Path, case: str) -> None:
+    good = sbd.export_state(warm, tmp_path / "good.tar.gz").path
+
+    def edit(manifest: dict) -> None:  # noqa: ANN001
+        if case == "no_path":
+            del manifest["files"][0]["path"]
+        elif case == "not_a_dict":
+            manifest["files"][0] = "raw/x"
+        elif case == "bad_size":
+            manifest["files"][0]["size"] = "big"
+        else:
+            manifest["counts"] = ["festivals"]
+
+    bad = _manifest_edit(good, tmp_path / "bad.tar.gz", edit)
+    target = tmp_path / "t"
+    with pytest.raises(sbd.StateError, match="manifest"):
+        sbd.import_state(load_config({"data_dir": target}, env={}), bad)
+    assert cli.main(["state-import", str(bad), "--data-dir", str(target)]) == 1   # no traceback
+    assert not list(target.rglob("*"))
+
+
+def test_import_is_bounded_in_size(warm: Config, tmp_path: Path,
+                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    """A small archive can unpack to gigabytes; the import stops at the cap."""
+    assert sbd.MAX_UNPACKED_BYTES >= 4 * 1024 ** 3 and sbd.MAX_FILES >= 50_000
+    good = sbd.export_state(warm, tmp_path / "good.tar.gz")
+    target = load_config({"data_dir": tmp_path / "t"}, env={})
+    monkeypatch.setattr(sbd, "MAX_UNPACKED_BYTES", good.n_bytes - 1)
+    with pytest.raises(sbd.StateError, match="unpacks to more than"):
+        sbd.import_state(target, good.path)
+    assert not list(target.data_dir.rglob("*"))
+    monkeypatch.setattr(sbd, "MAX_UNPACKED_BYTES", good.n_bytes)
+    monkeypatch.setattr(sbd, "MAX_FILES", good.n_files - 1)
+    with pytest.raises(sbd.StateError, match="more than"):
+        sbd.import_state(target, good.path)
+    monkeypatch.setattr(sbd, "MAX_FILES", good.n_files)
+    monkeypatch.setattr(sbd, "MAX_JSON_BYTES", 100)
+    with pytest.raises(sbd.StateError, match="larger than"):
+        sbd.import_state(target, good.path)
+    assert not list(target.data_dir.rglob("*"))
+    monkeypatch.undo()
+    assert sbd.import_state(target, good.path).n_files == good.n_files
+
+
+def test_force_never_replaces_good_state_with_a_useless_bundle(warm: Config,
+                                                               tmp_path: Path) -> None:
+    """Well-formed (manifest and hashes agree) but not a state: database plus one cache
+    file. Before the fix `--force` moved it into place and failed afterwards."""
+    good = sbd.export_state(warm, tmp_path / "good.tar.gz").path
+    keep_one = sorted(p.relative_to(warm.data_dir).as_posix()
+                      for p in warm.raw_dir.rglob("*.body"))[0]
+    useless = _manifest_edit(
+        good, tmp_path / "useless.tar.gz", lambda m: None,
+        keep=lambda n: not n.startswith("raw/") or n == keep_one)
+    before = _tree(warm.data_dir)
+    assert cli.main(["state-import", str(useless), "--data-dir", str(warm.data_dir),
+                     "--force"]) == 1
+    assert _tree(warm.data_dir) == before and sbd.state_problems(warm) == []
+    assert not list(warm.data_dir.glob(".state-import-*"))
+    with pytest.raises(sbd.StateError, match="not a usable pipeline state"):
+        sbd.import_state(load_config({"data_dir": tmp_path / "fresh"}, env={}), useless)
+    assert not list((tmp_path / "fresh").rglob("*"))
+
+
+def test_export_creates_the_directory_and_a_private_bundle(warm: Config,
+                                                           tmp_path: Path) -> None:
+    """README step: `state-export <new directory>` (before: a file of that name, 0644)."""
+    out = tmp_path / "private" / "schwingen-state"
+    old = os.umask(0o022)
+    try:
+        assert cli.main(["state-export", str(out), "--data-dir", str(warm.data_dir)]) == 0
+        named = tmp_path / "named" / "x.tar.gz"
+        assert cli.main(["state-export", str(named), "--data-dir", str(warm.data_dir)]) == 0
+    finally:
+        os.umask(old)
+    [bundle] = list(out.glob(f"{sbd.BUNDLE_PREFIX}*{sbd.BUNDLE_SUFFIX}"))
+    assert out.is_dir() and bundle.stat().st_mode & 0o777 == 0o600
+    assert out.stat().st_mode & 0o077 == 0            # the new directory is private too
+    assert named.is_file() and named.stat().st_mode & 0o777 == 0o600
+    assert cli.main(["state-import", str(out), "--data-dir", str(tmp_path / "t")]) == 0
+    # a plain file in the way is an error, not something to overwrite
+    (tmp_path / "file").write_text("x", encoding="utf-8")
+    assert cli.main(["state-export", str(tmp_path / "file"),
+                     "--data-dir", str(warm.data_dir)]) == 1
+    assert (tmp_path / "file").read_text(encoding="utf-8") == "x"
