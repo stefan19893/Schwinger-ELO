@@ -134,9 +134,9 @@ Every stage is idempotent and incremental: re-running only processes what is new
 
 | Command | Does |
 |---|---|
-| `python -m src.cli crawl` | Discover festivals and download their statistic PDFs (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`) |
-| `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse) |
-| `python -m src.cli clean` | Identity resolution → `data/processed/*.parquet` |
+| `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`) |
+| `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse), then the identity evidence: `ranking_entries`, `portraits`, `clubs`, `athlete_evidence` |
+| `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet` |
 | `python -m src.cli build` | Write the static site to `dist/` |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |

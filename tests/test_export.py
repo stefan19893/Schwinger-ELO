@@ -120,6 +120,8 @@ def test_atomic_write_keeps_old_file_on_failure(tmp_path: Path,
 def test_schema_violation_raises_before_writing(tmp_path: Path) -> None:
     df = pd.DataFrame({"athlete_raw_id": ["1-0"], "athlete_id": [None], "fest_id": [1],
                        "name_raw": [None], "name": ["x"], "birth_year": [None],
+                       "club": [None], "sub_association": [None], "residence": [None],
+                       "portrait_slug": [None],
                        "confidence": [None], "evidence": [None], "resolver": ["r"]})
     with pytest.raises(ValueError, match="name_raw"):
         ex.to_table(df, ex.IDENTITY_SCHEMA)
@@ -142,6 +144,12 @@ def test_clean_sample_end_to_end(tmp_path: Path, caplog: pytest.LogCaptureFixtur
     assert set(bouts["athlete_a_id"]) | set(bouts["athlete_b_id"]) <= set(athletes["athlete_id"])
     assert sorted(bouts["fest_id"].unique()) == [24110, 26400, 37052, 45965, 46055]
     assert athletes["n_bouts"].sum() == 2 * len(bouts)
+    # club / Teilverband / portrait from the sample ranking lists and portraits
+    assert set(athletes["sub_association"].dropna()) <= {"BKSV", "ISV", "NOSV", "NWSV", "SWSV"}
+    fabian = athletes.set_index("athlete_id").loc["scherrer-fabian"]
+    assert (fabian["club"], fabian["sub_association"], fabian["slug"]) == (
+        "Surental", "ISV", "fabian-scherrer")
+    assert ident["club"].notna().sum() > 100 and ident["residence"].notna().sum() > 300
     assert any("self-bouts" in r.getMessage() for r in caplog.records)
     first = {n: (proc / f"{n}.parquet").read_bytes() for n in FILES}
     assert cli.main(["clean", "--sample", "--data-dir", str(data)]) == 0  # db reused
@@ -150,3 +158,23 @@ def test_clean_sample_end_to_end(tmp_path: Path, caplog: pytest.LogCaptureFixtur
 
 def test_clean_without_db_fails(tmp_path: Path) -> None:
     assert cli.main(["clean", "--data-dir", str(tmp_path / "empty")]) == 1
+
+
+def test_clean_rebuilds_an_outdated_sample_db_and_refuses_an_outdated_real_db(
+        tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """clean is read-only and never migrates: a --sample db from an older schema is
+    rebuilt from the fixtures, a real one needs `parse` first."""
+    import sqlite3
+
+    data = tmp_path / "data"
+    assert cli.main(["clean", "--sample", "--data-dir", str(data)]) == 0
+    conn = sqlite3.connect(data / "schwingen.db")
+    conn.execute("DROP TABLE athlete_evidence")
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+    assert cli.main(["clean", "--data-dir", str(data)]) == 1  # real mode: refuse, no traceback
+    assert any("run `parse` first" in r.getMessage() for r in caplog.records)
+    assert cli.main(["clean", "--sample", "--data-dir", str(data)]) == 0
+    athletes = pq.read_table(data / "processed" / "athletes.parquet").to_pandas()
+    assert athletes["club"].notna().any()

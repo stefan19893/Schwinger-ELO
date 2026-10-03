@@ -9,7 +9,9 @@ Files (explicit pyarrow schemas, written atomically: temp file + rename):
                             first/last season (calendar year of the festival),
                             n_festivals / n_bouts / n_raw, confidence / evidence.
 * ``festivals.parquet``     spec Festival + source metadata, parse status, counts.
-* ``identity_map.parquet``  every athletes_raw row -> athlete_id (NULL = unmapped).
+* ``identity_map.parquet``  every athletes_raw row -> athlete_id (NULL = unmapped) with
+                            its per-festival evidence: normalised club, Teilverband,
+                            residence, schlussgang portrait slug.
 * ``bout_rejects.parquet``  bouts not exported, with ``reason``.
 """
 
@@ -69,6 +71,8 @@ FESTIVALS_SCHEMA = _schema(
 IDENTITY_SCHEMA = _schema(
     ("athlete_raw_id", _S, False), ("athlete_id", _S, True), ("fest_id", _I64, False),
     ("name_raw", _S, False), ("name", _S, False), ("birth_year", _I16, True),
+    ("club", _S, True), ("sub_association", _S, True), ("residence", _S, True),
+    ("portrait_slug", _S, True),
     ("confidence", _F, True), ("evidence", _S, True), ("resolver", _S, False))
 
 SCHEMAS: dict[str, pa.Schema] = {

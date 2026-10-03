@@ -2,7 +2,8 @@
 
 Flow (``run_clean``)::
 
-    SQLite (read-only)  ->  ResolverInput(raw, bouts)  ->  Resolver.resolve()
+    SQLite (read-only: sheets + athlete_evidence)  ->  ResolverInput(raw, bouts)
+        ->  Resolver.resolve()
         -> Resolution(identity, athletes)  ->  validate  ->  remap bouts
         -> CleanResult (frames for src.pipeline.export)
 
@@ -47,7 +48,14 @@ FESTIVAL_JOIN: dict[str, str] = {
     "elo_eligible": "fest_elo_eligible"}
 #: per-raw-row evidence other sources may contribute (club lists, portraits).
 #: Always present in ``ResolverInput.raw`` (NULL when no source provides them).
-OPTIONAL_RAW_COLUMNS: tuple[str, ...] = ("club", "sub_association", "residence", "portrait_slug")
+#: ``club`` / ``club_key``: canonical Schwingklub (src.pipeline.clubs); ``sub_association``:
+#: BKSV / ISV / NOSV / NWSV / SWSV with its source in ``sub_assoc_source`` (code > club >
+#: portrait > festival = weakest); ``portrait_id`` / ``portrait_slug``: schlussgang portrait.
+OPTIONAL_RAW_COLUMNS: tuple[str, ...] = (
+    "club", "sub_association", "residence", "portrait_slug",
+    "club_key", "sub_assoc_source", "portrait_id")
+#: athlete_evidence columns read by :func:`load_evidence` (schema v6, built by ``parse``)
+EVIDENCE_COLUMNS: tuple[str, ...] = (*OPTIONAL_RAW_COLUMNS, "birth_year")
 BOUT_COLUMNS: tuple[str, ...] = (
     "bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
     "grade_a", "grade_b", "schlussgang", "flags")
@@ -219,7 +227,8 @@ def load_inputs(conn: sqlite3.Connection,
 
     ``extra_raw``: frames keyed on ``athlete_raw_id`` carrying any of
     :data:`OPTIONAL_RAW_COLUMNS` (e.g. club / portrait sources); left-joined,
-    later frames fill gaps left by earlier ones.
+    later frames fill gaps left by earlier ones. A ``birth_year`` column in a
+    frame fills gaps of the statistic sheet's birth year (never overrides it).
     """
     conn.execute("BEGIN")  # consistent snapshot while other processes write
     try:
@@ -243,15 +252,30 @@ def load_inputs(conn: sqlite3.Connection,
     for col in OPTIONAL_RAW_COLUMNS:
         raw[col] = pd.Series([None] * len(raw), index=raw.index, dtype=object)
     for extra in extra_raw:
-        cols = [c for c in OPTIONAL_RAW_COLUMNS if c in extra.columns]
+        cols = [c for c in EVIDENCE_COLUMNS if c in extra.columns]
         if extra["athlete_raw_id"].duplicated().any():
             raise ValueError("extra_raw frames must be unique per athlete_raw_id")
         m = raw[["athlete_raw_id"]].merge(extra[["athlete_raw_id", *cols]],
                                           on="athlete_raw_id", how="left")
         for c in cols:
-            raw[c] = raw[c].where(raw[c].notna(), m[c].to_numpy())
+            fill = m[c]
+            if c == "birth_year":  # same text form as the statistic sheets ('1995')
+                fill = fill.map(lambda v: None if pd.isna(v) else str(int(v))).astype(object)
+            raw[c] = raw[c].where(raw[c].notna(), fill.to_numpy())
     raw = raw.sort_values(["fest_date", "fest_id", "idx"], kind="stable").reset_index(drop=True)
     return CleanInputs(raw=raw, bouts=bouts, festivals=fests)
+
+
+def load_evidence(conn: sqlite3.Connection) -> pd.DataFrame | None:
+    """The ``athlete_evidence`` table (ranking lists, portraits, normalised clubs;
+    built by ``parse``) as an ``extra_raw`` frame; None when the staging DB predates
+    schema v6 or ``parse`` has not built it yet."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'athlete_evidence'").fetchone():
+        return None
+    ev = _table(conn, f"SELECT athlete_raw_id, {', '.join(EVIDENCE_COLUMNS)} "
+                      "FROM athlete_evidence")
+    return ev if len(ev) else None
 
 
 # ----------------------------------------------------------------------------- validation
@@ -362,7 +386,8 @@ def assemble(inputs: CleanInputs, resolution: Resolution, resolver_name: str) ->
     athletes = res.athletes.merge(_athlete_stats(inputs.raw, res.identity, bouts),
                                   on="athlete_id", how="left")
     athletes = athletes.sort_values("athlete_id").reset_index(drop=True)
-    ident = inputs.raw[["athlete_raw_id", "fest_id", "name_raw", "name", "birth_year"]].merge(
+    ident = inputs.raw[["athlete_raw_id", "fest_id", "name_raw", "name", "birth_year", "club",
+                        "sub_association", "residence", "portrait_slug"]].merge(
         res.identity, on="athlete_raw_id", how="left")
     ident["resolver"] = resolver_name
     festivals = inputs.festivals.copy()
@@ -394,11 +419,21 @@ def run_clean(db_path: Path, out_dir: Path, resolver: Resolver | None = None,
     resolver = resolver or default_resolver()
     conn = connect_ro(db_path)
     try:
-        inputs = load_inputs(conn, extra_raw)
+        evidence = load_evidence(conn)
+        # caller-supplied frames first: the stored evidence only fills their gaps
+        inputs = load_inputs(conn, [*extra_raw, *([] if evidence is None else [evidence])])
     finally:
         conn.close()
     log.info("clean: %d raw athletes, %d bouts, %d festivals from %s",
              len(inputs.raw), len(inputs.bouts), len(inputs.festivals), db_path)
+    if evidence is None:
+        log.warning("clean: no athlete_evidence in %s (run `parse`) - club, Teilverband, "
+                    "residence and portrait stay empty", db_path)
+    else:
+        n = len(inputs.raw)
+        log.info("clean: evidence per raw row: %s", ", ".join(
+            f"{c} {100 * inputs.raw[c].notna().sum() / max(n, 1):.1f}%"
+            for c in ("club", "sub_association", "residence", "birth_year", "portrait_slug")))
     resolution = resolver.resolve(ResolverInput(raw=inputs.raw, bouts=inputs.bouts))
     result = assemble(inputs, resolution, resolver.name)
     report(result)

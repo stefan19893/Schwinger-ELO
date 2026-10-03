@@ -386,20 +386,40 @@ def cmd_clean(cfg: Config) -> int:
 
     from src.pipeline.cleaner import run_clean
 
-    if cfg.sample and not _sample_db_ready(cfg):
-        log.info("clean: --sample db at %s is empty, building it first (crawl + parse --sample)",
-                 cfg.db_path)
+    from src.db import SCHEMA_VERSION
+
+    if cfg.sample and not (_sample_db_ready(cfg) and _db_version(cfg) == SCHEMA_VERSION):
+        log.info("clean: --sample db at %s is empty or from an older schema, building it "
+                 "first (crawl + parse --sample)", cfg.db_path)
         rc = _crawl_sample(cfg) or _parse_sample(cfg)
         if rc:
             return rc
     if not cfg.db_path.is_file():
         log.error("clean: %s not found - run `crawl` and `parse` first", cfg.db_path)
         return 1
+    if _db_version(cfg) != SCHEMA_VERSION:  # clean is read-only: it never migrates
+        log.error("clean: %s has schema v%d, expected v%d - run `parse` first (it migrates "
+                  "the database and builds the identity evidence)", cfg.db_path,
+                  _db_version(cfg), SCHEMA_VERSION)
+        return 1
     t0 = time.perf_counter()
     result = run_clean(cfg.db_path, cfg.processed_dir)
     log.info("clean: done in %.1f s -> %s (%s)", time.perf_counter() - t0, cfg.processed_dir,
              ", ".join(f"{k}={v}" for k, v in result.counts.items()))
     return 0
+
+
+def _db_version(cfg: Config) -> int:
+    """``PRAGMA user_version`` of the staging db (read-only; -1 if there is no file)."""
+    import sqlite3
+
+    if not cfg.db_path.is_file():
+        return -1
+    conn = sqlite3.connect(f"file:{cfg.db_path.resolve()}?mode=ro", uri=True)
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def _sample_db_ready(cfg: Config) -> bool:

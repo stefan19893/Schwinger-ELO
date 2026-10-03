@@ -263,3 +263,81 @@ def test_assemble_baseline_stats(db: Path) -> None:
     assert not b.loc["200-1-1", "elo_eligible"] and b.loc["200-1-1", "event_flags"] == "team"
     f = result.festivals.set_index("fest_id")
     assert (f.loc[100, "n_bouts"], f.loc[100, "n_athletes_raw"]) == (3, 4)
+
+
+# ------------------------------------------------------------------ athlete_evidence
+EVIDENCE = [  # (raw id, fest, residence, birth_year, club_key, club, sub, source, pid, slug)
+    ("100-000", 100, "Thun", 1994, "thun", "Thun", "BKSV", "code", 7, "hans-muster"),
+    ("100-001", 100, "Bulle", 1990, None, None, "SWSV", "festival", None, None),
+    ("200-000", 200, "Thun", None, "thun", "Thun", "BKSV", "club", None, None),
+]
+
+
+def add_evidence(db_path: Path) -> None:
+    conn = connect(db_path)
+    with conn:
+        conn.executemany(
+            "INSERT INTO athlete_evidence (athlete_raw_id, fest_id, residence, birth_year, "
+            "club_key, club, sub_association, sub_assoc_source, portrait_id, portrait_slug) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)", EVIDENCE)
+    conn.close()
+
+
+def test_load_evidence_feeds_optional_columns(db: Path) -> None:
+    conn = cl.connect_ro(db)
+    assert cl.load_evidence(conn) is None  # table empty: parse has not built it
+    conn.close()
+    add_evidence(db)
+    conn = cl.connect_ro(db)
+    try:
+        ev = cl.load_evidence(conn)
+        assert ev is not None and list(ev.columns) == ["athlete_raw_id", *cl.EVIDENCE_COLUMNS]
+        raw = cl.load_inputs(conn, [ev]).raw.set_index("athlete_raw_id")
+    finally:
+        conn.close()
+    row = raw.loc["100-000"]
+    assert (row["club"], row["club_key"], row["sub_association"], row["sub_assoc_source"],
+            row["residence"], row["portrait_slug"], row["portrait_id"]) == (
+        "Thun", "thun", "BKSV", "code", "Thun", "hans-muster", 7)
+    assert row["birth_year"] == "1995"                     # statistic sheet wins
+    assert raw.loc["100-001", "birth_year"] == "1990"      # gap filled, same text form
+    assert pd.isna(raw.loc["100-001", "club"]) and raw.loc["100-001", "sub_assoc_source"] == "festival"
+    assert pd.isna(raw.loc["100-002", "sub_association"])  # no evidence row
+
+
+def test_load_evidence_on_a_pre_v6_database(db: Path) -> None:
+    conn = connect(db)
+    conn.execute("DROP TABLE athlete_evidence")
+    conn.commit()
+    conn.close()
+    conn = cl.connect_ro(db)
+    try:
+        assert cl.load_evidence(conn) is None
+    finally:
+        conn.close()
+
+
+def test_run_clean_writes_club_and_teilverband(db: Path, tmp_path: Path,
+                                               caplog: pytest.LogCaptureFixture) -> None:
+    import pyarrow.parquet as pq
+
+    out = tmp_path / "processed"
+    with caplog.at_level("WARNING"):
+        cl.run_clean(db, out)
+    assert any("no athlete_evidence" in r.getMessage() for r in caplog.records)
+    assert pq.read_table(out / "athletes.parquet").to_pandas()["club"].isna().all()
+    add_evidence(db)
+    # a caller-supplied frame has priority; the stored evidence fills its gaps
+    override = pd.DataFrame({"athlete_raw_id": ["200-000"], "club": ["Thun und Umgebung"]})
+    res = cl.run_clean(db, out, extra_raw=[override])
+    athletes = pq.read_table(out / "athletes.parquet").to_pandas().set_index("athlete_id")
+    hans = athletes.loc["muster-hans"]
+    assert (hans["club"], hans["sub_association"], hans["slug"], hans["birth_year"]) == (
+        "Thun und Umgebung", "BKSV", "hans-muster", 1995)
+    kurt = athletes.loc["beispiel-kurt"]
+    assert kurt["club"] is None and kurt["sub_association"] == "SWSV" and kurt["birth_year"] == 1990
+    ident = pq.read_table(out / "identity_map.parquet").to_pandas().set_index("athlete_raw_id")
+    assert tuple(ident.loc["100-000", ["club", "sub_association", "residence", "portrait_slug"]]) == (
+        "Thun", "BKSV", "Thun", "hans-muster")
+    assert ident.loc["100-002", "club"] is None
+    assert res.counts["athletes"] == 5  # evidence does not change the baseline identities
