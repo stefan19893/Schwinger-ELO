@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task 1 (state persistence: decision + `state-export` / `state-import` + `--require-state`), then C, 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Next action:** Phase 6 task C (headless-browser smoke test), then 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -158,6 +158,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6: ranks are re-numbered among the published athletes** (engine rank minus the withheld athletes ahead) — a list with gaps would end at "Rang 2020" with 1,497 rows and every gap would mark a hidden person; rank is identical in ranking, search and profile. Withheld athletes keep their festival rows (W / D / L, grade sum, rating before / after) without id, name, club, Teilverband (`anon` column, schema version unchanged).
 - 2026-10-03 — **Phase 6: `site_noindex` = robots meta tag on every page (injected at build time) + `robots.txt` `Disallow: /`** — known limit: under the project path `/Schwinger-ELO/` crawlers do not read `robots.txt` and JSON files cannot carry the tag; effective only for the HTML pages unless a custom domain is used.
 - 2026-10-03 — **Phase 6: deploy guard `check-site`** — baseline is the `meta.json` of the last accepted site, kept in `data/published_meta.json` inside the pipeline state (no request to the live site; exists before the first deployment once the owner accepts a build). Tolerances `guard_max_drop = 0.02` (athletes, festivals, bouts) and `guard_max_drop_ranked = 0.25` (19 % of the ranked leave at once when a season starts). One override, `--accept-changes`, covers intended drops, a missing baseline and loosened publication settings; empty / demo / inconsistent sites have no override.
+- 2026-10-03 — **Phase 6: state between scheduled runs = one bundle (`state-export` / `state-import`, gzip tar with manifest, 504 MB) stored as an asset of a draft GitHub release `pipeline-state`** — the only GitHub-native store that is durable (no 7-day eviction like the Actions cache, no 90-day expiry like artifacts), not publicly downloadable (the state holds birthdays, licence numbers, residences and third-party PDFs; a data branch, a public release and artifacts would expose it) and can be seeded from the owner's machine without a secret. Costs: `contents: write` for the state job, and the draft must never be published (checked at the start of every run). Fallback if unwanted: a private store behind a secret. Resolves the open question "How does the scheduled GitHub Action keep state between runs".
+- 2026-10-03 — **Phase 6: a missing or incomplete state fails the run before any request** — `crawl` / `all --require-state` (`state_problems`: database, festivals, bouts, cache, ≥ 90 % of the known statistic PDFs cached); workflows always pass the flag. New bundles are uploaded under a new name and older generations deleted afterwards (never `--clobber`).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -168,7 +170,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - ~~schlussgang lists only 3 Regional festivals for 2011 (vs ~100/year later) — accept the gap, or start ratings with a 2011 burn-in season? → decide in Phase 4.~~ — resolved 2026-10-03: 2011 is a burn-in season (see Decisions, to confirm).
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
 - ~~ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.~~ — resolved 2026-10-03: 1.0 / 1.36 (see Decisions, to confirm).
-- How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
+- ~~How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.~~ — resolved 2026-10-03: bundle on a draft release (see Decisions).
 
 - ~~Phase 3: portrait fixtures with birthdays / licence numbers~~ — resolved 2026-10-03 (anonymised, see Decisions).
 - ~~Phase 3: portrait list cache policy~~ — resolved 2026-10-03 (30-day refresh kept, see Decisions).
