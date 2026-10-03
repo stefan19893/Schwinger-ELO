@@ -33,8 +33,9 @@ The application will:
 Schwinger-ELO/
 ├── .github/
 │   └── workflows/
-│       ├── scrape_and_update.yml   # Scheduled workflow (runs weekly during season)
-│       └── deploy_pages.yml        # Builds dist/ and publishes to GitHub Pages
+│       ├── ci.yml                  # Tests on push / pull request (no crawl, no deployment)
+│       ├── scrape_and_update.yml   # Scheduled: incremental crawl -> rebuild -> deploy (gated on PUBLISH_ENABLED)
+│       └── deploy_pages.yml        # Manual: rebuild from the stored state -> deploy (gated on PUBLISH_ENABLED)
 ├── scripts/
 │   ├── deploy_local.sh             # One-command local setup, build and serve
 │   └── build_css.sh                # Regenerates web/css/style.css (Tailwind standalone CLI, sha256-pinned, no Node)
@@ -52,8 +53,9 @@ Schwinger-ELO/
 │   └── schwingen.db                # SQLite staging database
 ├── src/
 │   ├── __init__.py
-│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | all | serve
-│   ├── config.py                   # Paths, year range, rate limits, ELO params (defaults + env overrides)
+│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | check-site | all | serve | state-export | state-import
+│   ├── config.py                   # Paths, year range, rate limits, ELO params, publication switches (defaults + env overrides)
+│   ├── state_bundle.py             # Pipeline state as one verified bundle; cold-start check (--require-state)
 │   ├── scraper/
 │   │   ├── __init__.py
 │   │   ├── client.py               # Rate-limited HTTP client with caching
@@ -81,7 +83,8 @@ Schwinger-ELO/
 │   │   └── elo_eval.py             # Calibration and evaluation report (`elo --evaluate`)
 │   └── exporter/
 │       ├── __init__.py
-│       └── static_builder.py       # Copies web/ and writes JSON slices into dist/data/
+│       ├── static_builder.py       # Copies web/ and writes JSON slices into dist/data/; age filter, noindex
+│       └── deploy_guard.py         # check-site: empty / shrunken site against the last accepted meta.json
 ├── web/                            # Frontend source (static pages, German UI; copied to dist/ as is)
 │   ├── index.html                  # Current ranking, season lists, highest ratings, search
 │   ├── athlete.html                # Athlete profile & career chart (?id=<athlete_id>)
@@ -113,10 +116,13 @@ Schwinger-ELO/
 │   ├── test_elo.py
 │   ├── test_static_builder.py      # JSON contracts of dist/data (sample + real data), determinism, empty build
 │   ├── test_web.py                 # Static checks of web/: relative URLs, CSP, classes in the stylesheet, escaping
+│   ├── test_deploy_guard.py, test_state_bundle.py, test_workflows.py   # Phase 6: guard, state bundle, workflow invariants
+│   ├── test_browser_smoke.py       # Headless Chrome on the built sample site (skipped without a browser)
 │   ├── site_checks.py, fixture_paths.py   # Helpers (page / link checks, fixture lookup)
 │   └── test_cli.py                 # End-to-end: `all --sample` produces a valid dist/, served under a sub-path
 ├── dist/                           # Built site, git-ignored
 │   ├── index.html, athlete.html, fests.html, about.html, css/, js/, vendor/, .nojekyll
+│   ├── robots.txt                  # only with site_noindex
 │   └── data/
 │       ├── meta.json               # as_of (last rated festival), counts, model parameters, `empty`
 │       ├── rankings_latest.json    # Every ranked athlete (the only data file the start page needs)
@@ -203,13 +209,16 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/`. Exits 1 and writes nothing when the rating data are missing or empty (a deployment must never publish an empty site); `--allow-empty` writes the pages with empty data files instead (`meta.empty = true`). With `--sample` the sample pipeline is run first if its data are missing |
+| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
+| `python -m src.cli state-export OUT` / `state-import SRC` | Bundle / restore the pipeline state (`data/raw`, database, Parquet files, guard baseline) as one verified `.tar.gz`; not for publication |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |
 
 Global options:
 - `--sample`: use the committed offline dataset in `tests/fixtures/sample/` instead of the network. The full pipeline finishes in well under a minute. Outputs go to `data/sample/` (unless `--data-dir` is given) so a sample run never overwrites real data.
 - `--data-dir`: use a different data directory.
 - `--skip-crawl`: in `all`, use only data that is already cached.
+- `--require-state`: `crawl` / `all` exit 1 before the first request unless the data directory holds the state of earlier runs (database with festivals and bouts, cache with ≥ 90 % of the known statistic PDFs). Always set in the workflows: a runner without state must fail, not re-crawl the archive.
 
 Configuration precedence: CLI flag > environment variable (`SCHWINGEN_*`) > defaults in `src/config.py`.
 
@@ -262,6 +271,13 @@ Since GitHub Pages serves static files only:
    - Runs tests.
    - Executes the incremental data update: `python -m src.cli all`.
    - Uses `actions/deploy-pages@v4` to publish `dist/` directly.
+
+**As implemented (Phase 6, decisions of 2026-10-03 in `docs/progress/STATE.md`; owner checklist in `README.md`):**
+- **Nothing is published without the owner's opt-in:** every job of `deploy_pages.yml` and `scrape_and_update.yml` runs only when the repository variable `PUBLISH_ENABLED` is `true` (and the ref is `main`). `ci.yml` (tests, sample build) is not gated; it neither crawls nor deploys.
+- **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name; ranks are re-numbered among the published), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
+- **State between runs:** one bundle (`state-export` / `state-import`) as an asset of a *draft* release `pipeline-state` — durable, not publicly downloadable, seeded from the owner's machine. Runs upload a new generation and delete the older ones afterwards. A missing state fails the run before any request (`--require-state`).
+- **Sequence of the scheduled run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload → Pages artifact → `actions/deploy-pages@v4`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
+- **Deploy guard:** see `check-site` in §5; the baseline travels inside the state bundle.
 
 ---
 
