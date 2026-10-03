@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 4 — ELO engine (in review, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
-**Next action:** run phase-reviewer for Phase 4 (all six tasks done 2026-10-03; several Phase 4 decisions are marked "to confirm" for the owner). Then stop and ask the user before Phase 5.
+**Next action:** WAITING FOR THE USER — Phase 4 reviewed 2026-10-03 (ready for next phase, no must-fix; see phase-4 handoff note "Phase review"). User must decide before Phase 5: (1) K / δ: keep spec values, or K x 2 with δ = 0.05, or δ = 0.05 alone; (2) confirm festival-wise update order; (3) go-ahead for Phase 5 (web-builder). Do not start Phase 5 without that.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
