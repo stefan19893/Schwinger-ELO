@@ -548,8 +548,12 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
              int(table["provisional_reason"].str.contains("few_bouts").sum()),
              int(table["provisional_reason"].str.contains("inactive").sum()),
              int((table["ranked"] & table["identity_uncertain"]).sum()))
+    # Names only for a person at a terminal: `elo` ranks everyone, so the top of this
+    # table can hold an athlete the site withholds (minors), and the logs of a workflow
+    # run in a public repository are world-readable. Elsewhere: DEBUG (`-v`).
+    names = log.info if sys.stderr.isatty() else log.debug
     for line in top_table(table, 10):
-        log.info("elo:   %s", line)
+        names("elo:   %s", line)
     if evaluate:
         from src.pipeline.elo_eval import evaluation_report
         from src.pipeline.elo_runner import load_inputs

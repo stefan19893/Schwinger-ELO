@@ -9,8 +9,10 @@
 # fails before the first request (`--require-state`) - a cold runner must never re-crawl
 # the archive. One run at a time (concurrency).
 #
-# All logic lives in the CLI (python -m src.cli ...). The only shell here moves the state
-# bundle to and from the draft release `pipeline-state`.
+# All logic lives in the CLI (python -m src.cli ...). The state bundle is moved to and from
+# the draft release `pipeline-state` by the local action .github/actions/pipeline-state,
+# which re-checks that the release is still a draft before every download and upload.
+# The token is passed to that action only - never to a step that runs project code.
 name: Scrape and update
 
 on:
@@ -33,9 +35,6 @@ concurrency:
   group: pipeline-state
   cancel-in-progress: false
 
-env:
-  STATE_TAG: pipeline-state
-
 jobs:
   update:
     name: Crawl and rebuild
@@ -52,20 +51,20 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements-lock.txt
+      # exact versions, every wheel checked against its sha256 (this job holds contents:write)
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install --require-hashes -r requirements-lock.txt
       - name: Tests
         env:
           SCHWINGEN_REQUIRE_BROWSER: "1"
         run: python -m pytest
 
       - name: Download the pipeline state (must still be a draft release)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test "$(gh release view "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true"
-          gh release download "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'schwingen-state-*.tar.gz' --dir "$RUNNER_TEMP/state-in"
+        uses: ./.github/actions/pipeline-state
+        with:
+          mode: download
+          token: ${{ github.token }}
       - name: Import the state (fails when there is none)
         id: state
         run: python -m src.cli state-import "$RUNNER_TEMP/state-in"
@@ -88,15 +87,12 @@ jobs:
       - name: Export the final state (replaces the snapshot)
         run: python -m src.cli state-export "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz"
 
-      - name: Upload the new state, then remove the generations it replaces
+      - name: Upload the new state (draft checked again), then remove the generations it replaces
         if: always() && steps.snapshot.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "$STATE_TAG" "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz" --repo "$GITHUB_REPOSITORY"
-          for old in "$RUNNER_TEMP"/state-in/schwingen-state-*.tar.gz; do
-            gh release delete-asset "$STATE_TAG" "$(basename "$old")" --repo "$GITHUB_REPOSITORY" --yes
-          done
+        uses: ./.github/actions/pipeline-state
+        with:
+          mode: upload
+          token: ${{ github.token }}
 
       - uses: actions/upload-pages-artifact@v4
         with:
