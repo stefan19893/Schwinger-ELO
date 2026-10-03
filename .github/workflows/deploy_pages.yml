@@ -1,0 +1,99 @@
+# Rebuild the site from the stored pipeline state (no crawl, no request to
+# schlussgang.ch) and deploy it to GitHub Pages. Started by hand only.
+#
+# INERT UNTIL THE OWNER OPTS IN: every job is skipped unless the repository variable
+# PUBLISH_ENABLED is exactly 'true' (Settings -> Secrets and variables -> Actions ->
+# Variables). See README.md, "Hosted setup", for the full checklist.
+#
+# All logic lives in the CLI (python -m src.cli ...). The only shell here moves the state
+# bundle to and from the draft release `pipeline-state`.
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      accept_changes:
+        description: >-
+          Accept an intended change the deploy guard would stop: first deployment (no
+          baseline), a smaller site, looser publication settings. Use for one run.
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One run at a time across both state-writing workflows; never cancel a run half-way.
+concurrency:
+  group: pipeline-state
+  cancel-in-progress: false
+
+env:
+  STATE_TAG: pipeline-state
+
+jobs:
+  build:
+    name: Rebuild from state
+    if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write   # the state lives on a draft release, invisible to a read-only token
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Tests
+        env:
+          SCHWINGEN_REQUIRE_BROWSER: "1"
+        run: python -m pytest
+
+      - name: Download the pipeline state (must still be a draft release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true"
+          gh release download "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'schwingen-state-*.tar.gz' --dir "$RUNNER_TEMP/state-in"
+      - name: Import the state (fails when there is none)
+        run: python -m src.cli state-import "$RUNNER_TEMP/state-in"
+
+      - name: Rebuild offline (parse, clean, elo, build)
+        run: python -m src.cli all --skip-crawl --require-state
+      - name: Deploy guard
+        run: python -m src.cli check-site --record ${{ inputs.accept_changes && '--accept-changes' || '' }}
+
+      - name: Export the state
+        run: python -m src.cli state-export "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz"
+      - name: Upload the new state, then remove the generations it replaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$STATE_TAG" "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz" --repo "$GITHUB_REPOSITORY"
+          for old in "$RUNNER_TEMP"/state-in/schwingen-state-*.tar.gz; do
+            gh release delete-asset "$STATE_TAG" "$(basename "$old")" --repo "$GITHUB_REPOSITORY" --yes
+          done
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

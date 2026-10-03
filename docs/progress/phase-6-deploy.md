@@ -13,8 +13,8 @@ Automated weekly update and GitHub Pages deployment.
 
 ## Tasks
 - [x] 1. Decide state persistence strategy for scheduled runs; log decision
-- [~] 2. Write `deploy_pages.yml`
-- [ ] 3. Write `scrape_and_update.yml` (cron, polite crawl, caching)
+- [x] 2. Write `deploy_pages.yml`
+- [~] 3. Write `scrape_and_update.yml` (cron, polite crawl, caching)
 - [ ] 4. Validate workflows (syntax/`actionlint` if available)
 - [ ] 5. README: quick start with `./scripts/deploy_local.sh`, flags, CLI reference, Pages setup
 - [ ] 6. Hand over to user for first push + enabling Pages (do not push yourself)
@@ -74,3 +74,11 @@ Automated weekly update and GitHub Pages deployment.
   - **Browser lookup:** `SCHWINGEN_BROWSER`, then `google-chrome` / `chromium` on the PATH, then the Windows Chrome / Edge under `/mnt/c/Program Files…` (profile path through `wslpath -w`). No browser → the 11 browser tests skip (run: `SCHWINGEN_BROWSER=/nonexistent` → 1 passed, 11 skipped); with `SCHWINGEN_REQUIRE_BROWSER=1` (CI) a missing browser is an error (run: 11 errors). No Node, no new dependency: a fresh clone still needs only Python. `--no-sandbox` is added only under `GITHUB_ACTIONS` / root.
   - **Run here:** Windows Chrome 154 from WSL, three runs in a row green. **Surprise:** a first start on a fresh profile sometimes prints an empty DOM (2 of 8 in one measurement) → `dump_dom` retries up to three times until it sees `</html>`.
   - **Looked at** (screenshots, 500 px wide, real-data build with the age filter): Hallenschwinget Sarnen 2026 shows a "Jungschwinger, Name nicht veröffentlicht" row with record and rating change, no link; `about.html` shows the counts of the published site (6'314 / 1'497) and the age paragraph. **Not verified:** Linux Chrome on a GitHub runner (flags, sandbox), other browsers, real phones.
+- 2026-10-03 — **Task 2 done (web-builder): `.github/workflows/deploy_pages.yml` and the ungated test workflow `.github/workflows/ci.yml`** (`.gitkeep` removed). Written, not run — nothing here can execute GitHub Actions; validation is task 4.
+  - **`ci.yml`** — triggers: push to `main`, every pull request. No gate (publishes nothing, no request to schlussgang.ch: the suite blocks non-loopback network access and the build uses the sample data). `permissions: contents: read`, checkout without persisted credentials, Python 3.11 and 3.14 (matrix), pip cache, `pip install -r requirements.txt`, `python -m pytest` with `SCHWINGEN_REQUIRE_BROWSER=1` (the runner's Chrome; the smoke test may not skip), `python -m src.cli all --sample`, `python -m src.cli check-site --sample`. Concurrency per ref, superseded runs cancelled.
+  - **`deploy_pages.yml`** — trigger: `workflow_dispatch` only (input `accept_changes`, boolean). **No push trigger on purpose:** with the variable set, a merge to `main` must not change the public site by itself; code changes go live with the next scheduled run or a manual start. Both jobs carry `if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'`; workflow-level `permissions: {}`.
+    - job `build` (`contents: write`, needed to see the draft release; the token is in the environment of the two `gh` steps only): install → `pytest` (before the state is imported, so the real-data tests skip and the run time is that of CI) → check the release is still a draft, download `schwingen-state-*.tar.gz` → `state-import` → `all --skip-crawl --require-state` (parse, clean, elo, build; offline) → `check-site --record [--accept-changes]` → `state-export` under a new name → upload, then delete the downloaded generations → `actions/upload-pages-artifact@v4` (`dist`).
+    - job `deploy` (`pages: write`, `id-token: write`, environment `github-pages`): `actions/deploy-pages@v4`.
+    - Concurrency group `pipeline-state`, shared with the scheduled workflow, `cancel-in-progress: false`: one state writer at a time.
+  - **Variable unset (today):** a manual start produces a run whose jobs are skipped; nothing is downloaded, built or deployed. **Variable set:** still nothing happens until someone starts it; without a state bundle on the draft release the download step fails (no crawl exists in this workflow at all); without Pages enabled the `deploy` job fails.
+  - Action versions are major tags (`checkout@v5`, `setup-python@v6`, `upload-pages-artifact@v4`, `deploy-pages@v4`) written from memory — no network lookup was allowed in this session, so their existence and commit SHAs are **not verified**; pinning to SHAs (Dependabot) is left to the owner.
