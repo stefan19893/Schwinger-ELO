@@ -12,7 +12,7 @@
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
-| 5 | Exporter & frontend | M4 | `phase-5-web.md` | in review |
+| 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
 
 Status values: `not started` · `in progress` · `in review` · `done`
@@ -152,6 +152,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 5 review fix: `build` fails without rating data** (exit 1, `dist/` untouched) — supersedes "`build` without Parquet inputs writes an empty site"; the empty site is the explicit opt-in `build --allow-empty`; `build --sample` runs the sample pipeline first when its data are missing. Reason: a deploy job on a fresh runner must not publish an empty site with a green run.
 - 2026-10-03 — **Phase 5 review fix: athletes without rated bouts are listed by name in a festival** (name only; no id, club, Teilverband, profile or search entry; label "ohne Wertung") — narrows "only athletes with rated bouts are exported": 9 athletes of the unrated festival 46111 were shown as "Name nicht lesbar". `not_a_name` rows stay nameless. Schema unchanged (`SCHEMA_VERSION` 1): `name` may be set while `id` is null; `namesakes[]` and `seasons[].peak` gained `unc`.
 - 2026-10-03 — **Phase 5 review fix: day counts are worded relative to the data date** ("N Tage vor dem Datenstand"), not computed in the browser — rank, the inactive rule and the 180-day highlight are computed at the data date, so the page stays consistent with itself when it is not rebuilt.
+- 2026-10-03 — **User sign-off on Phase 5** ("merge everything on main … then go on"): Phase 5 closed after the review fixes and merged to `main` by PR. `gh` installed in `~/.local/bin` (no sudo), authenticated per command through the existing git credential.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
