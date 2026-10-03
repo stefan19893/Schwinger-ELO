@@ -33,7 +33,7 @@
      "langcode": "de"
     },
     "field_portait_end_of_career": null,
-    "field_portrait_birthday": "1991-03-27",
+    "field_portrait_birthday": "1991-01-01",
     "field_portrait_city": "Lanterswil",
     "field_portrait_first_name": "Christian",
     "field_portrait_hknr": null,
@@ -114,17 +114,17 @@
    },
    "attributes": {
     "drupal_internal__nid": 56,
-    "title": "Fischer Yvan, 1992-02-06 (26951)",
+    "title": "Fischer Yvan, 1992-01-01 (900056)",
     "path": {
      "alias": "/portraet/yvan-fischer",
      "pid": 35,
      "langcode": "de"
     },
     "field_portait_end_of_career": null,
-    "field_portrait_birthday": "1992-02-06",
+    "field_portrait_birthday": "1992-01-01",
     "field_portrait_city": "Villaz-St-Pierre",
     "field_portrait_first_name": "Yvan",
-    "field_portrait_hknr": 26951,
+    "field_portrait_hknr": 900056,
     "field_portrait_last_name": "Fischer"
    },
    "relationships": {
@@ -208,17 +208,17 @@
    },
    "attributes": {
     "drupal_internal__nid": 57,
-    "title": "Jaquier Pierre, 2002-04-04 (31722)",
+    "title": "Jaquier Pierre, 2002-01-01 (900057)",
     "path": {
      "alias": "/portraet/pierre-jaquier",
      "pid": 36,
      "langcode": "de"
     },
     "field_portait_end_of_career": null,
-    "field_portrait_birthday": "2002-04-04",
+    "field_portrait_birthday": "2002-01-01",
     "field_portrait_city": "Chavannes-les-Forts",
     "field_portrait_first_name": "Pierre",
-    "field_portrait_hknr": 31722,
+    "field_portrait_hknr": 900057,
     "field_portrait_last_name": "Jaquier"
    },
    "relationships": {

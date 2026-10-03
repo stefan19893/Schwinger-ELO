@@ -69,8 +69,8 @@ def test_parse_portrait_page_real_response() -> None:
     aerne, fischer, jaquier = P.parse_portrait_page(PAGE1)
     assert fischer == P.Portrait(
         portrait_id=56, slug="yvan-fischer", url="https://www.schlussgang.ch/portraet/yvan-fischer",
-        title="Fischer Yvan, 1992-02-06 (26951)", last_name="Fischer", first_name="Yvan",
-        name_key="fischer yvan", birthday="1992-02-06", city="Villaz-St-Pierre", hknr=26951,
+        title="Fischer Yvan, 1992-01-01 (900056)", last_name="Fischer", first_name="Yvan",
+        name_key="fischer yvan", birthday="1992-01-01", city="Villaz-St-Pierre", hknr=900056,
         club_tid=194, club_name="Cottens", club_esv_id=303, association_name="Suedwestschweiz",
         canton_association="Fribourgeoise", activity=None, end_of_career=None)
     # old portraits lack licence number and club; the Teilverband is still there
@@ -170,7 +170,7 @@ def test_load_portraits_from_cache_offline(tmp_path: Path) -> None:
     assert rep.appearances == 0 and rep.skipped == {"unknown_festival": 0, "unknown_portrait": 4}
     row = conn.execute("SELECT slug, hknr, club_name, club_esv_id, association_name, fetched_at "
                        "FROM portraits WHERE portrait_id = 56").fetchone()
-    assert tuple(row) == ("yvan-fischer", 26951, "Cottens", 303, "Suedwestschweiz",
+    assert tuple(row) == ("yvan-fischer", 900056, "Cottens", 303, "Suedwestschweiz",
                           "2026-10-03T00:00:00+00:00")
     assert conn.execute("SELECT COUNT(*) FROM portraits").fetchone()[0] == 4
 
