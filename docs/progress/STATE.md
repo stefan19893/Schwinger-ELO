@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task B (deploy guard `check-site`), then 1 (state persistence), C, 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Next action:** Phase 6 task 1 (state persistence: decision + `state-export` / `state-import` + `--require-state`), then C, 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -157,6 +157,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6: age filter rule = not certainly 18** — withheld when `data year - birth year <= publish_min_age` (only the birth year is known; the cohort turning 18 in the data year is withheld too). Real data: 718 athletes / 523 ranked withheld (born 2008+); the narrower "born 2009+" would be 478 / 345. **Owner may overrule** (`publish_min_age`, 0 = everyone).
 - 2026-10-03 — **Phase 6: ranks are re-numbered among the published athletes** (engine rank minus the withheld athletes ahead) — a list with gaps would end at "Rang 2020" with 1,497 rows and every gap would mark a hidden person; rank is identical in ranking, search and profile. Withheld athletes keep their festival rows (W / D / L, grade sum, rating before / after) without id, name, club, Teilverband (`anon` column, schema version unchanged).
 - 2026-10-03 — **Phase 6: `site_noindex` = robots meta tag on every page (injected at build time) + `robots.txt` `Disallow: /`** — known limit: under the project path `/Schwinger-ELO/` crawlers do not read `robots.txt` and JSON files cannot carry the tag; effective only for the HTML pages unless a custom domain is used.
+- 2026-10-03 — **Phase 6: deploy guard `check-site`** — baseline is the `meta.json` of the last accepted site, kept in `data/published_meta.json` inside the pipeline state (no request to the live site; exists before the first deployment once the owner accepts a build). Tolerances `guard_max_drop = 0.02` (athletes, festivals, bouts) and `guard_max_drop_ranked = 0.25` (19 % of the ranked leave at once when a season starts). One override, `--accept-changes`, covers intended drops, a missing baseline and loosened publication settings; empty / demo / inconsistent sites have no override.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).

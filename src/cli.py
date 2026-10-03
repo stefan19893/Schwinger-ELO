@@ -1,6 +1,6 @@
 """Single entry point for every pipeline stage (spec §5).
 
-    python -m src.cli {crawl|parse|clean|elo|build|all|serve} [options]
+    python -m src.cli {crawl|parse|clean|elo|build|check-site|all|serve} [options]
 
 Global options (``--sample``, ``--data-dir``, ``--skip-crawl``, ``--refresh``,
 ``-v``) are accepted before or after the subcommand. Local runs
@@ -525,6 +525,44 @@ def cmd_build(cfg: Config, allow_empty: bool = False) -> int:
     return 0
 
 
+def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = False,
+                   baseline: str | None = None) -> int:
+    """Deploy guard: fail on an empty, incomplete or shrunken site in ``cfg.dist_dir``
+    (see :mod:`src.exporter.deploy_guard`). ``record`` makes a site that passed the new
+    baseline; ``accept_changes`` lets intended drops and a missing baseline pass."""
+    from pathlib import Path
+
+    from src.exporter import deploy_guard as dg
+
+    path = Path(baseline).expanduser() if baseline else dg.baseline_path(cfg)
+    base = dg.read_meta(path)
+    if base is None and path.exists():
+        log.error("check-site: baseline %s is not readable JSON", path)
+        return 1
+    rep = dg.check_site(cfg, cfg.dist_dir, base, accept_changes=accept_changes)
+    log.info("check-site: site %s, baseline %s", cfg.dist_dir,
+             path if base is not None else f"none ({path} does not exist)")
+    for line in rep.notes:
+        log.info("check-site: %s", line)
+    for line in rep.fatal:
+        log.error("check-site: %s", line)
+    for line in rep.changes:
+        (log.warning if rep.accepted else log.error)(
+            "check-site: %s%s", line, " - accepted (--accept-changes)" if rep.accepted else "")
+    if not rep.ok:
+        if rep.changes and not rep.fatal:
+            log.error("check-site: FAILED - if this is intended, run once with "
+                      "--accept-changes (workflow input `accept_changes`)")
+        else:
+            log.error("check-site: FAILED - this site must not be deployed")
+        return 1
+    if record and not cfg.sample:
+        dg.record_baseline(cfg.dist_dir, path)
+        log.info("check-site: baseline recorded in %s", path)
+    log.info("check-site: ok")
+    return 0
+
+
 def cmd_all(cfg: Config, skip_crawl: bool = False, portraits: bool = True) -> int:
     stages: list[tuple[str, Callable[[Config], int]]] = [
         ("crawl", functools.partial(cmd_crawl, portraits=portraits)),
@@ -620,6 +658,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--allow-empty", action="store_true", default=False,
                     help="without rating data, write a site without content (pages and "
                          "empty data files) instead of failing; never use for a deployment")
+    sp = add("check-site", "deploy guard: fail on an empty or shrunken site in dist/ "
+                           "(compared with the last accepted meta.json)")
+    sp.add_argument("--accept-changes", action="store_true", default=False,
+                    help="let intended changes pass: a smaller site, an older data date, "
+                         "looser publication settings, or no baseline yet (first deployment)")
+    sp.add_argument("--record", action="store_true", default=False,
+                    help="after a passed check, store the site's meta.json as the new "
+                         "baseline (<data-dir>/published_meta.json)")
+    sp.add_argument("--baseline", default=None,
+                    help="baseline file (default: <data-dir>/published_meta.json)")
     sp = add("serve", "serve dist/ over HTTP")
     sp.add_argument("--port", type=int, default=None, help="port (default 8000)")
     sp.add_argument("--host", default=None, help="bind address (default 127.0.0.1)")
@@ -692,6 +740,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_elo(cfg, evaluate=args.evaluate)
         if args.command == "build":
             return cmd_build(cfg, allow_empty=args.allow_empty)
+        if args.command == "check-site":
+            return cmd_check_site(cfg, accept_changes=args.accept_changes, record=args.record,
+                                  baseline=args.baseline)
         if args.command == "crawl":
             if args.portraits_only and args.no_portraits:
                 raise ValueError("--portraits-only and --no-portraits exclude each other")

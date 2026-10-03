@@ -12,7 +12,7 @@ Automated weekly update and GitHub Pages deployment.
 - `README.md` documents local usage (`deploy_local.sh` + flags) and hosted setup (enabling Pages).
 
 ## Tasks
-- [ ] 1. Decide state persistence strategy for scheduled runs; log decision
+- [~] 1. Decide state persistence strategy for scheduled runs; log decision
 - [ ] 2. Write `deploy_pages.yml`
 - [ ] 3. Write `scrape_and_update.yml` (cron, polite crawl, caching)
 - [ ] 4. Validate workflows (syntax/`actionlint` if available)
@@ -21,7 +21,7 @@ Automated weekly update and GitHub Pages deployment.
 
 ### Added by the main session's brief (2026-10-03), done before / between the tasks above
 - [x] A. Publication defaults in config + exporter: `publish_min_age`, `site_noindex` (+ `robots.txt`), `contact_email`
-- [~] B. Deploy guard in the CLI (`check-site`: empty / shrunken site against the last accepted `meta.json`)
+- [x] B. Deploy guard in the CLI (`check-site`: empty / shrunken site against the last accepted `meta.json`)
 - [ ] C. Headless-browser smoke test of the built sample site (CI must run it, locally it skips without a browser)
 
 ## Known inputs from Phase 5 review (2026-10-03)
@@ -45,3 +45,9 @@ Automated weekly update and GitHub Pages deployment.
   - **`contact_email`:** written to `meta.json` as `contact` (null when empty); `about.js` shows the hidden paragraph `#se-contact` with a `mailto:` link only when it is set. No address exists anywhere in the repository.
   - `meta.json` gained `counts.withheld`, `counts.withheld_ranked`, `publish {min_age, withheld_from_birth_year, noindex}`, `contact`. `build` logs the three settings and the withheld counts.
   - **Not checked in a browser yet** (label on a festival page, the two about paragraphs) — done with task C.
+- 2026-10-03 — **Task B done (web-builder): deploy guard `python -m src.cli check-site`.** Files: `src/exporter/deploy_guard.py`, `src/cli.py` (`cmd_check_site`; options `--accept-changes`, `--record`, `--baseline FILE`), `src/config.py` (`guard_max_drop = 0.02`, `guard_max_drop_ranked = 0.25`), `tests/test_deploy_guard.py` (22 tests). 977 tests green.
+  - **Fatal, no override:** `dist/data/meta.json` missing / unreadable, `meta.empty`, a zero or missing count of athletes / ranked / festivals / bouts, a missing or empty page or core data file, the `--sample` demo outside a `--sample` run, a site built with other publication settings than the configured ones, `robots.txt` missing while `site_noindex` is on. `build --allow-empty` therefore never passes.
+  - **Needs `--accept-changes`:** no baseline; a count more than 2 % below the baseline (ranked: 25 %); a data date older than the baseline's; publication settings looser than the baseline's (`publish_min_age` lowered, `noindex` switched off — the site would publish more than the accepted one). The override is for one run; scheduled runs never pass it.
+  - **Baseline = `meta.json` of the last site that passed**, stored as `<data_dir>/published_meta.json` by `check-site --record`. It is part of the pipeline state (task 1), so the check needs no request to the live site, and before the first deployment it is created by the owner on his machine (`build`, look at the site, `check-site --accept-changes --record`) or by the first manual workflow run with the input `accept_changes`. A failed check never changes the baseline. With `--sample` the site is checked for content only and nothing is recorded.
+  - **Tolerance for `ranked` is wide on purpose:** at the data date 2026-09-27, 289 of the 1,497 published ranked athletes (19 %) had no bout for more than 300 days; they all leave the ranking with the first festival of the next season (the 1.5-season rule is applied at the data date). 15 % would have failed that run.
+  - **Run on the real data:** age-18 site against the age-0 site as baseline → exit 1 (`athletes 7032 -> 6314 (-10.2 %)`, `ranked 2020 -> 1497 (-25.9 %)`); against itself → exit 0.

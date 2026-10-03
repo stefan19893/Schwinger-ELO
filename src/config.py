@@ -151,9 +151,11 @@ class Config:
     # A build may be this much smaller than the last accepted one (meta.json counts) before
     # `check-site` fails. Festivals and bouts only grow (small corrections aside); athletes
     # shrink a little when identities are merged; the number of ranked athletes moves with
-    # the season (the inactive rule is applied at the data date).
+    # the season: the inactive rule is applied at the data date, and when a new season
+    # starts everyone who stopped after the previous one leaves the ranking at once (18 %
+    # of the ranked had no bout for more than 300 days at the end of season 2026).
     guard_max_drop: float = 0.02
-    guard_max_drop_ranked: float = 0.15
+    guard_max_drop_ranked: float = 0.25
     # `crawl` / `all` refuse to run without the state of earlier runs (festivals in the db,
     # cached responses): a cold start would re-request the whole archive. Set in CI.
     require_state: bool = False
