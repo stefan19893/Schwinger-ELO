@@ -17,6 +17,7 @@ import pytest
 from src import cli
 from src.config import Config, DEFAULT_K_FACTORS, load_config
 from src.pipeline import elo_engine as ee
+from src.pipeline import elo_eval as ev
 from src.pipeline import elo_runner as er
 from src.pipeline.elo_engine import EloParams, SchwingElo
 
@@ -551,7 +552,7 @@ def test_ranking_excludes_garbage_unrated_provisional() -> None:
 
 def test_burn_in_seasons_are_rated_but_not_ranked() -> None:
     bouts = frame(*[bout("a", "b", date=f"{y}-06-10", fest=y, gang=1) for y in (2011, 2012)])
-    cfg = cfg_with(provisional_min_bouts=0, elo_first_ranked_season=2012)
+    cfg = cfg_with(provisional_min_bouts=0, elo_first_ranked_season=2012, mov_alpha=0.0)
     result, table, seasons = er.compute(bouts, athletes_frame(("a", "x"), ("b", "x")), None, cfg)
     s = seasons.set_index(["season", "athlete_id"])
     assert s.loc[(2011, "a"), "burn_in"] and pd.isna(s.loc[(2011, "a"), "rank"])
@@ -612,6 +613,9 @@ def test_cli_elo_sample_athlete_and_season_tables(sample_run: Path) -> None:
     assert ranked.sort_values("rank")["rating"].is_monotonic_decreasing
     assert table.loc[table["n_bouts"] == 0, "rating"].isna().all()
     assert set(seasons["season"]) == {2011, 2019, 2024, 2025}
+    assert seasons.loc[seasons["season"] == 2011, "burn_in"].all()
+    assert not seasons.loc[seasons["season"] == 2011, "ranked"].any()
+    assert seasons.loc[seasons["season"] == 2019, "ranked"].any()
     for _, part in seasons[seasons["ranked"]].groupby("season"):
         assert sorted(part["rank"]) == list(range(1, len(part) + 1))
     # a known result of the sample: the ESAF 2019 Schlussgang winner leads that festival
@@ -634,8 +638,116 @@ def test_cli_elo_without_clean_outputs_fails(tmp_path: Path,
     assert "run `clean` first" in caplog.text
 
 
+def test_sample_mode_lowers_the_provisional_threshold() -> None:
+    assert load_config(env={}).provisional_min_bouts == 24
+    assert load_config({"sample": True}, env={}).provisional_min_bouts == 6
+    assert load_config({"sample": True, "provisional_min_bouts": 12},
+                       env={}).provisional_min_bouts == 12
+    env = {"SCHWINGEN_SAMPLE": "1", "SCHWINGEN_PROVISIONAL_MIN_BOUTS": "30"}
+    assert load_config(env=env).provisional_min_bouts == 30
+
+
 def test_invalid_elo_configuration_is_rejected() -> None:
     with pytest.raises(ValueError, match="update mode"):
         load_config(env={"SCHWINGEN_ELO_UPDATE_MODE": "bogus"})
     with pytest.raises(ValueError, match="provisional_min_bouts"):
         load_config(env={"SCHWINGEN_PROVISIONAL_MIN_BOUTS": "-1"})
+
+
+# =========================================================================== task 5: evaluation
+
+def test_prediction_metrics() -> None:
+    d = pd.DataFrame({"score_a": [1.0, 0.0, 0.5, 1.0], "expected_a": [0.5, 0.5, 0.5, 0.5],
+                      "season": [2014, 2014, 2022, 2022]})
+    m = ev.prediction_metrics(d)
+    assert m["n"] == 4 and m["brier"] == pytest.approx(0.1875)
+    assert m["log_loss"] == pytest.approx(math.log(2))
+    sharp = ev.prediction_metrics(d.assign(expected_a=[0.9, 0.1, 0.5, 0.9]))
+    assert sharp["brier"] < m["brier"] and sharp["log_loss"] < m["log_loss"]
+    assert math.isnan(ev.prediction_metrics(d.iloc[:0])["brier"])
+    assert len(ev.in_seasons(d, ev.TRAIN)) == 2 and len(ev.in_seasons(d, ev.TEST)) == 2
+
+
+def test_predictions_are_made_before_the_bout() -> None:
+    """The expected score of a bout never depends on that bout's own result."""
+    df = random_bouts()
+    flipped = df.copy()
+    last = flipped["date"] == flipped["date"].max()
+    flipped.loc[last, "outcome"] = flipped.loc[last, "outcome"].map(
+        {"WIN_A": "WIN_B", "WIN_B": "WIN_A", "DRAW": "WIN_A"})
+    for mode in ("festival", "phase"):
+        one = SchwingElo(params(update_mode=mode)).run(df).bouts.set_index("bout_id")
+        two = SchwingElo(params(update_mode=mode)).run(flipped).bouts.set_index("bout_id")
+        assert np.allclose(one["expected_a_prefest"], two["expected_a_prefest"])
+    one = SchwingElo(params()).run(df).bouts.set_index("bout_id")
+    two = SchwingElo(params()).run(flipped).bouts.set_index("bout_id")
+    assert np.allclose(one["expected_a"], two["expected_a"])  # festival mode: also `used`
+
+
+def test_mean_win_margin_and_mov_grid() -> None:
+    df = frame(bout("a", "b", ga=10.0, gb=8.5), bout("c", "d", "WIN_B", ga=8.75, gb=9.75),
+               bout("e", "f", "DRAW", ga=9.0, gb=8.75), bout("g", "h", ga=None, gb=8.5))
+    assert ev.mean_win_margin(df) == pytest.approx(1.25)
+    grid = ev.calibrate_mov(random_bouts(), params(), alphas=(0.0, 1.0), baselines=(1.25,))
+    assert list(grid["alpha"]) == [0.0, 1.0]
+    assert grid.loc[0, "mean_lambda"] == 1.0 and grid.loc[1, "mean_lambda"] != 1.0
+    assert {"train_brier", "test_brier", "train_log_loss", "test_log_loss"} <= set(grid.columns)
+
+
+def test_gang_noise_only_moves_flagged_bouts_and_never_the_festival_mode() -> None:
+    df = random_bouts()
+    df["flags"] = ""
+    df.loc[df.index[::7], "flags"] = "gang_uncertain:2/3,gang_collision"
+    noisy = ev.perturb_gang_order(df, seed=1)
+    changed = noisy["gang_nr"] != df["gang_nr"]
+    assert changed.any() and not changed[df["flags"] == ""].any()
+    assert noisy["gang_nr"].between(1, 4).all()
+    sens = ev.gang_noise_sensitivity(df, params(), seed=1, top_n=5)
+    assert sens.loc["festival", "max_abs_diff"] == 0.0
+    assert sens.loc["sequential", "max_abs_diff"] > 0.0
+    modes = ev.compare_update_modes(df, params())
+    assert list(modes.index) == list(ee.UPDATE_MODES)
+
+
+def test_calibration_experience_and_drift_tables() -> None:
+    res = SchwingElo(params(provisional_min_bouts=8)).run(random_bouts())
+    cal = ev.calibration_table(res.bouts)
+    assert cal["n"].sum() == len(res.bouts)
+    assert ((cal["win"] + cal["draw"] + cal["loss"]).round(9) == 1).all()
+    assert (cal["predicted"] >= 0.5).all()
+    exp = ev.experience_table(res.bouts)
+    assert exp["n"].sum() == len(res.bouts)
+    drift = ev.season_drift(res.history, 8)
+    assert drift.loc[2012, "newcomers"] == drift.loc[2012, "athletes"]
+    assert drift.loc[2012, "mean"] == pytest.approx(1500.0)
+    assert set(ev.season_metrics(res.bouts).columns) == {"n", "brier", "log_loss"}
+    scan = ev.parameter_scan(random_bouts(), params(), (1, 2), (0.0,))
+    assert list(scan.index) == ["K x 1", "K x 2", "delta = 0"]
+
+
+def test_identity_sensitivity_pass() -> None:
+    bouts = frame(*[bout(a, b, date=f"2025-06-{d:02d}", fest=d, gang=1)
+                    for d, (a, b) in enumerate([("a", "b"), ("a", "c"), ("b", "c"), ("a", "b")],
+                                               start=1)])
+    bouts["athlete_a_raw_id"] = [f"{f}-{a}" for f, a in zip(bouts["fest_id"], bouts["athlete_a_id"])]
+    bouts["athlete_b_raw_id"] = [f"{f}-{b}" for f, b in zip(bouts["fest_id"], bouts["athlete_b_id"])]
+    im = pd.DataFrame({"athlete_raw_id": ["1-a", "1-b", "2-a", "2-c", "3-b", "3-c", "4-a", "4-b"],
+                       "athlete_id": ["a", "b", "a", "c", "b", "c", "a", "b"],
+                       "confidence": [0.9, 0.9, 0.9, 0.4, 0.9, 0.9, 0.9, 0.9]})
+    cfg = cfg_with(provisional_min_bouts=0, mov_alpha=0.0)
+    top, summary = ev.identity_sensitivity(
+        bouts, athletes_frame(("a", "x"), ("b", "x"), ("c", "x")), im, cfg, top_n=3)
+    assert summary["bouts_dropped"] == 1 and summary["ranked"] == 3
+    t = top.set_index("athlete_id")
+    assert t.loc["a", "n_bouts"] == 3 and t.loc["a", "n_bouts_strict"] == 2
+    assert t.loc["a", "rating_strict"] < t.loc["a", "rating"]  # one win less
+    assert summary["max_abs_rating_diff"] > 0
+
+
+def test_cli_elo_evaluate_prints_report(sample_run: Path,
+                                        capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["elo", "--sample", "--evaluate", "--data-dir", str(sample_run.parent)]) == 0
+    out = capsys.readouterr().out
+    for section in ("update modes", "MoV grid", "calibration by rating gap",
+                    "identity sensitivity", "rating distribution"):
+        assert section in out

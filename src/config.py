@@ -22,6 +22,10 @@ REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 # touch the real SQLite db / Parquet files in data/.
 SAMPLE_DATA_DIR: Path = REPO_ROOT / "data" / "sample"
 
+# The --sample dataset has five festivals (at most ~20 bouts per athlete): a lower
+# provisional threshold keeps its rankings non-empty (explicit settings still win).
+SAMPLE_PROVISIONAL_MIN_BOUTS = 6
+
 # Politeness floor (spec §4.1): no configuration may go below this delay.
 MIN_REQUEST_DELAY = 0.5
 
@@ -97,8 +101,8 @@ class Config:
     elo_phase_split_gang: int = 4
     # MoV multiplier for wins: lambda = 1 + alpha * (grade_winner - grade_loser -
     # baseline_diff), clamped to [mov_lambda_min, mov_lambda_max]; NULL grade -> 1.
-    mov_alpha: float = 0.0
-    mov_baseline_diff: float = 0.0
+    mov_alpha: float = 1.0
+    mov_baseline_diff: float = 1.36
     mov_lambda_min: float = 0.5
     mov_lambda_max: float = 2.0
     # Mean reversion before the first festival on/after 1 <season_start_month>.
@@ -108,9 +112,9 @@ class Config:
     # Provisional: no bout for more than this many seasons, or fewer rated career
     # bouts than provisional_min_bouts.
     provisional_inactive_seasons: float = 1.5
-    provisional_min_bouts: int = 0
+    provisional_min_bouts: int = 24
     # Seasons (calendar years) before this one are rated but not ranked (burn-in).
-    elo_first_ranked_season: int = 0
+    elo_first_ranked_season: int = 2012
     # Identity uncertainty (Phase 3): identity_map rows with confidence <= this value
     # are "low confidence"; an athlete is marked uncertain with >= min_rows such rows
     # or >= min_share of his rows.
@@ -186,6 +190,8 @@ def load_config(
         values[key] = Path(val) if isinstance(getattr(defaults, key), Path) else val
     if values.get("sample") and "data_dir" not in values:
         values["data_dir"] = SAMPLE_DATA_DIR
+    if values.get("sample") and "provisional_min_bouts" not in values:
+        values["provisional_min_bouts"] = SAMPLE_PROVISIONAL_MIN_BOUTS
     cfg = Config(**values)
     if cfg.from_year > cfg.to_year:
         raise ValueError(f"from_year {cfg.from_year} > to_year {cfg.to_year}")

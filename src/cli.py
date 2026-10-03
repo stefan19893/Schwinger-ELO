@@ -439,9 +439,10 @@ def _sample_db_ready(cfg: Config) -> bool:
         conn.close()
 
 
-def cmd_elo(cfg: Config) -> int:
+def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     """Rate all eligible bouts: data/processed/{bouts,athletes,identity_map}.parquet ->
-    ratings.parquet (history), athlete_ratings.parquet, season_ratings.parquet."""
+    ratings.parquet (history), athlete_ratings.parquet, season_ratings.parquet.
+    ``evaluate`` additionally prints the calibration / evaluation report (read-only)."""
     import time
 
     from src.pipeline.elo_runner import run_elo, top_table
@@ -480,6 +481,12 @@ def cmd_elo(cfg: Config) -> int:
              int((table["ranked"] & table["identity_uncertain"]).sum()))
     for line in top_table(table, 10):
         log.info("elo:   %s", line)
+    if evaluate:
+        from src.pipeline.elo_eval import evaluation_report
+        from src.pipeline.elo_runner import load_inputs
+
+        log.info("elo: evaluating (re-runs the engine a few dozen times) ...")
+        print(evaluation_report(*load_inputs(cfg.processed_dir), cfg), flush=True)
     return 0
 
 
@@ -577,8 +584,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-parse festivals even if PDF and parser version are unchanged")
     add("clean", "identity resolution -> data/processed/{bouts,athletes,festivals,"
                  "identity_map,bout_rejects}.parquet (reads SQLite read-only)")
-    add("elo", "compute ratings -> data/processed/{ratings,athlete_ratings,"
-               "season_ratings}.parquet")
+    sp = add("elo", "compute ratings -> data/processed/{ratings,athlete_ratings,"
+                    "season_ratings}.parquet")
+    sp.add_argument("--evaluate", action="store_true", default=False,
+                    help="also print the evaluation report: update modes, MoV grid, "
+                         "calibration, rating drift, identity sensitivity (about a minute)")
     add("build", "write the static site to dist/")
     sp = add("serve", "serve dist/ over HTTP")
     sp.add_argument("--port", type=int, default=None, help="port (default 8000)")
@@ -648,6 +658,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_all(cfg, skip_crawl=args.skip_crawl, portraits=not args.no_portraits)
         if args.command == "parse":
             return cmd_parse(cfg, force=args.force)
+        if args.command == "elo":
+            return cmd_elo(cfg, evaluate=args.evaluate)
         if args.command == "crawl":
             if args.portraits_only and args.no_portraits:
                 raise ValueError("--portraits-only and --no-portraits exclude each other")
