@@ -11,7 +11,10 @@ Never acceptable (no override):
 * no ``meta.json``, an empty site (``meta.empty``), a count of athletes, ranked athletes,
   festivals or bouts that is zero, a missing page or core data file;
 * the ``--sample`` demo outside a ``--sample`` run;
-* a site built with other publication settings than the configured ones.
+* a site built with other publication settings than the configured ones;
+* an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
+  or missing), or a database whose portraits carry no birthday at all: the filter has
+  lost its input.
 
 Acceptable only with ``accept_changes`` (``check-site --accept-changes``), for changes that
 are intended and have been looked at:
@@ -20,14 +23,27 @@ are intended and have been looked at:
 * a count that dropped by more than the tolerance (``guard_max_drop``; for the ranked
   athletes ``guard_max_drop_ranked``), e.g. after raising ``publish_min_age``;
 * a data date older than the baseline's;
-* publication settings looser than the baseline's (lower ``publish_min_age``, ``noindex``
-  switched off) - they publish more than the last accepted site did.
+* publication settings looser than the baseline's (lower ``publish_min_age`` or
+  ``publish_unknown_recent_seasons``, ``noindex`` switched off) - they publish more than
+  the last accepted site did;
+* **a site that publishes more people than the baseline**: fewer withheld athletes
+  (``guard_max_drop_withheld``), more published athletes (``guard_max_rise``) or more
+  ranked ones (``guard_max_rise_ranked``) - the signature of an age filter that stopped
+  working (e.g. the source no longer exposes birthdays). When the data year advances by
+  one, the cohort the baseline announced (``publish.release_next_year``) is allowed on top;
+  any other change of the data year needs the override;
+* a fall of the filter's inputs: the share of rated athletes with a known birth year, or
+  the number of portraits with a birthday in the database (``guard_max_drop_birth_known``).
+
+The baseline file is the accepted ``meta.json`` plus ``guard_inputs`` (figures read from
+the database when the site was accepted; absent when there was no database).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +51,7 @@ from typing import Any
 from src.config import Config
 
 BASELINE_NAME = "published_meta.json"
+INPUTS_KEY = "guard_inputs"
 GUARDED_COUNTS = ("athletes", "ranked", "festivals", "bouts")
 REQUIRED_FILES = ("index.html", "athlete.html", "fests.html", "about.html",
                   "data/meta.json", "data/rankings_latest.json", "data/athletes.json",
@@ -71,10 +88,109 @@ def _count(meta: dict[str, Any], key: str) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
+def db_inputs(cfg: Config) -> dict[str, int] | None:
+    """Inputs of the age filter that only the database knows: portraits and how many of
+    them carry a birthday. ``None`` when there is no database or no portraits table."""
+    if not cfg.db_path.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{cfg.db_path.resolve()}?mode=ro", uri=True)
+        try:
+            n, with_bd = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(birthday IS NOT NULL AND birthday != ''), 0) "
+                "FROM portraits").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        return None
+    return {"portraits": int(n), "portraits_with_birthday": int(with_bd)}
+
+
+def _year(meta: dict[str, Any]) -> int | None:
+    text = str(meta.get("as_of") or "")
+    return int(text[:4]) if text[:4].isdigit() else None
+
+
+def _release(baseline: dict[str, Any], key: str) -> int | None:
+    v = ((baseline.get("publish") or {}).get("release_next_year") or {}).get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
+                  inputs: dict[str, int] | None, rep: GuardReport) -> None:
+    """Does the site publish more people than the accepted one, or did the filter's
+    inputs fall? (Only called with ``publish_min_age`` > 0.)"""
+    new_year, old_year = _year(meta), _year(baseline)
+    allow = {"athletes": 0, "ranked": 0}
+    if new_year is not None and old_year is not None and new_year != old_year:
+        got = {k: _release(baseline, k) for k in allow}
+        if new_year == old_year + 1 and None not in got.values():
+            allow = {k: int(v) for k, v in got.items()}          # type: ignore[arg-type]
+            rep.notes.append(
+                f"data year {old_year} -> {new_year}: the baseline announced "
+                f"{allow['athletes']} athletes ({allow['ranked']} ranked) who are now "
+                f"certainly {cfg.publish_min_age} and may be published")
+        else:
+            rep.changes.append(
+                f"data year {old_year} -> {new_year}: more than one year ahead, or the "
+                f"baseline does not say who is released - the age filter cannot be compared")
+    old_w, new_w = _count(baseline, "withheld"), _count(meta, "withheld")
+    if old_w is None:
+        rep.changes.append("counts.withheld: the baseline has no value - it predates the "
+                           "age-filter check; look at the site and accept it once")
+    else:
+        floor = max(old_w - allow["athletes"], 0) * (1 - cfg.guard_max_drop_withheld)
+        line = (f"counts.withheld: {old_w} -> {new_w} (released by the year change: "
+                f"{allow['athletes']}, allowed drop {cfg.guard_max_drop_withheld:.0%})")
+        if new_w is None or new_w < floor:
+            rep.changes.append(line + " - fewer athletes are withheld: is the age filter "
+                                      "still fed with birth years?")
+        else:
+            rep.notes.append(line)
+    for key, tol in (("athletes", cfg.guard_max_rise), ("ranked", cfg.guard_max_rise_ranked)):
+        new, old = _count(meta, key), _count(baseline, key)
+        if old is None or old <= 0 or new is None:
+            continue                                   # reported by the drop check
+        if new > old * (1 + tol) + allow[key]:
+            rep.changes.append(
+                f"counts.{key}: {old} -> {new} ({(new - old) / old:+.1%}; allowed rise "
+                f"{tol:.0%} plus {allow[key]} released) - more athletes are published by "
+                f"name than the age filter let through before")
+    shares = []
+    for m in (baseline, meta):
+        known, rated = _count(m, "birth_year_known"), _count(m, "rated")
+        shares.append(known / rated if known is not None and rated else None)
+    if shares[0] is None:
+        rep.changes.append("counts.birth_year_known: the baseline has no value - it predates "
+                           "the age-filter check; look at the site and accept it once")
+    else:
+        line = (f"share of rated athletes with a known birth year: {shares[0]:.1%} -> "
+                + (f"{shares[1]:.1%}" if shares[1] is not None else "unknown")
+                + f" (allowed fall {cfg.guard_max_drop_birth_known:.0%} points)")
+        if shares[1] is None or shares[1] < shares[0] - cfg.guard_max_drop_birth_known:
+            rep.changes.append(line + " - the age filter is losing its input")
+        else:
+            rep.notes.append(line)
+    old_bd = (baseline.get(INPUTS_KEY) or {}).get("portraits_with_birthday")
+    if isinstance(old_bd, int) and old_bd > 0:
+        new_bd = inputs.get("portraits_with_birthday") if inputs else None
+        line = (f"portraits with a birthday: {old_bd} -> "
+                f"{new_bd if new_bd is not None else 'unknown (no database)'} "
+                f"(allowed fall {cfg.guard_max_drop_birth_known:.0%})")
+        if new_bd is None or new_bd < old_bd * (1 - cfg.guard_max_drop_birth_known):
+            rep.changes.append(line + " - the source of the birth years is drying up")
+        else:
+            rep.notes.append(line)
+    elif inputs is not None:
+        rep.notes.append(f"portraits with a birthday: {inputs['portraits_with_birthday']} "
+                         f"(no baseline value)")
+
+
 def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
                accept_changes: bool = False) -> GuardReport:
     """Judge the site in ``dist`` against ``baseline`` (``None`` = there is none)."""
     rep = GuardReport(accepted=accept_changes)
+    inputs = db_inputs(cfg)
     meta = read_meta(dist / "data" / "meta.json")
     if meta is None:
         rep.fatal.append(f"{dist / 'data' / 'meta.json'} is missing or unreadable - run `build`")
@@ -93,14 +209,28 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
         if n is None or n <= 0:
             rep.fatal.append(f"counts.{key} = {n!r}: the site has no {key}")
     pub = meta.get("publish") or {}
+    recent = cfg.publish_unknown_recent_seasons if cfg.publish_min_age > 0 else 0
     if pub.get("min_age") != cfg.publish_min_age or pub.get("noindex") != cfg.site_noindex \
+            or pub.get("unknown_recent_seasons") != recent \
             or (meta.get("contact") or "") != cfg.contact_email:
         rep.fatal.append(
             f"the site was built with other publication settings (min_age "
-            f"{pub.get('min_age')!r}, noindex {pub.get('noindex')!r}, contact "
+            f"{pub.get('min_age')!r}, unknown_recent_seasons "
+            f"{pub.get('unknown_recent_seasons')!r}, noindex {pub.get('noindex')!r}, contact "
             f"{'set' if meta.get('contact') else 'not set'}) than configured "
-            f"({cfg.publish_min_age}, {cfg.site_noindex}, "
+            f"({cfg.publish_min_age}, {recent}, {cfg.site_noindex}, "
             f"{'set' if cfg.contact_email else 'not set'}) - rebuild")
+    if cfg.publish_min_age > 0 and not cfg.sample:
+        n = _count(meta, "withheld")
+        if n is None or n <= 0:
+            rep.fatal.append(
+                f"publish_min_age = {cfg.publish_min_age} but counts.withheld = {n!r}: the "
+                f"age filter withholds nobody - it has lost its birth years")
+        if inputs is not None and inputs["portraits"] > 0 \
+                and inputs["portraits_with_birthday"] == 0:
+            rep.fatal.append(
+                f"none of the {inputs['portraits']} portraits in {cfg.db_path} has a "
+                f"birthday: the age filter has lost its input")
     if cfg.site_noindex and not (dist / "robots.txt").is_file():
         rep.fatal.append("site_noindex is on but robots.txt is missing - rebuild")
     if rep.fatal:
@@ -136,14 +266,28 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
     if isinstance(old_age, int) and cfg.publish_min_age < old_age:
         rep.changes.append(f"publish_min_age lowered: {old_age} -> {cfg.publish_min_age} "
                            f"(younger athletes would be published by name)")
+    old_recent = old_pub.get("unknown_recent_seasons")
+    if isinstance(old_recent, int) and cfg.publish_min_age > 0 \
+            and cfg.publish_unknown_recent_seasons < old_recent:
+        rep.changes.append(
+            f"publish_unknown_recent_seasons lowered: {old_recent} -> "
+            f"{cfg.publish_unknown_recent_seasons} (recent debutants without a birth year "
+            f"would be published by name)")
     if old_pub.get("noindex") is True and not cfg.site_noindex:
         rep.changes.append("site_noindex switched off (the site becomes indexable)")
+    if cfg.publish_min_age > 0:
+        _check_filter(cfg, meta, baseline, inputs, rep)
     return rep
 
 
-def record_baseline(dist: Path, path: Path) -> None:
-    """Make the checked site's ``meta.json`` the new baseline (atomic replace)."""
+def record_baseline(dist: Path, path: Path, inputs: dict[str, int] | None = None) -> None:
+    """Make the checked site's ``meta.json`` the new baseline (atomic replace). With
+    ``inputs`` (:func:`db_inputs`) the file also carries them as ``guard_inputs``."""
     data = (dist / "data" / "meta.json").read_bytes()
+    if inputs is not None:
+        obj = json.loads(data.decode("utf-8"))
+        obj[INPUTS_KEY] = inputs
+        data = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(data)

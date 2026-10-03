@@ -22,6 +22,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             monkeypatch.delenv(key)
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(tmp_path / "dist"))
     monkeypatch.setenv("SCHWINGEN_DATA_DIR", str(tmp_path / "data"))
+    # the site under test is the sample build, which runs without the unknown-birth-year rule
+    monkeypatch.setenv("SCHWINGEN_PUBLISH_UNKNOWN_RECENT_SEASONS", "0")
 
 
 @pytest.fixture(scope="module")
@@ -164,7 +166,8 @@ def test_publication_settings_are_guarded(built: Path, tmp_path: Path,
     assert cli.main(["check-site", "--accept-changes"]) == 1
     monkeypatch.delenv("SCHWINGEN_PUBLISH_MIN_AGE")
     # a site that publishes more than the accepted one (age filter lowered, indexable)
-    for publish, env in (({"min_age": 0, "noindex": True, "withheld_from_birth_year": None},
+    for publish, env in (({"min_age": 0, "noindex": True, "withheld_from_birth_year": None,
+                           "unknown_recent_seasons": 0},
                           {"SCHWINGEN_PUBLISH_MIN_AGE": "0"}),
                          ({**meta["publish"], "noindex": False},
                           {"SCHWINGEN_SITE_NOINDEX": "0"})):
@@ -204,3 +207,163 @@ def test_baseline_option(built: Path, tmp_path: Path) -> None:
     assert cli.main(["check-site", "--baseline", str(other)]) == 1
     assert cli.main(["check-site", "--baseline", str(other), "--accept-changes", "--record"]) == 0
     assert dg.read_meta(other) == meta and not (tmp_path / "data" / dg.BASELINE_NAME).exists()
+
+
+# --------------------------------------------------------------------------- the age filter
+def _edit_baseline(path: Path, **top: Any) -> None:
+    base = json.loads(path.read_text(encoding="utf-8"))
+    for key, val in top.items():
+        if isinstance(val, dict) and isinstance(base.get(key), dict):
+            base[key].update(val)
+        else:
+            base[key] = val
+    path.write_text(json.dumps(base), encoding="utf-8")
+
+
+def test_fewer_withheld_athletes_fail(built: Path, tmp_path: Path) -> None:
+    """The filter's collapse (reviewer's case: 718 withheld became 87 and it passed)."""
+    meta = _site(built, tmp_path)
+    w = meta["counts"]["withheld"]
+    assert w >= 3
+    path = _baseline(tmp_path, meta, withheld=w * 8)
+    before = path.read_text(encoding="utf-8")
+    assert cli.main(["check-site", "--record"]) == 1
+    assert path.read_text(encoding="utf-8") == before
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+    _baseline(tmp_path, meta, withheld=w)                 # more withheld is never a problem
+    _site(built, tmp_path, withheld=w + 50)
+    assert cli.main(["check-site"]) == 0
+
+
+@pytest.mark.parametrize("withheld", [0, None])
+def test_a_filter_that_withholds_nobody_is_fatal(built: Path, tmp_path: Path,
+                                                 withheld: Any) -> None:
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    _site(built, tmp_path, withheld=withheld)
+    assert cli.main(["check-site"]) == 1
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 1   # no override
+    assert dg.read_meta(tmp_path / "data" / dg.BASELINE_NAME)["counts"]["withheld"] > 0
+    (tmp_path / "data" / dg.BASELINE_NAME).unlink()       # ... also as a first deployment
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 1
+    assert not (tmp_path / "data" / dg.BASELINE_NAME).exists()
+
+
+@pytest.mark.parametrize("key, factor, passes", [
+    ("athletes", 1.02, True), ("athletes", 1.05, False),      # allowed rise 3 %
+    ("ranked", 1.08, True), ("ranked", 1.15, False),          # allowed rise 10 %
+])
+def test_more_published_athletes_fail_beyond_the_tolerance(
+        built: Path, tmp_path: Path, key: str, factor: float, passes: bool) -> None:
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta, **{key: int(meta["counts"][key] / factor)})
+    assert (cli.main(["check-site"]) == 0) is passes
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+
+
+def test_year_rollover_releases_exactly_the_announced_cohort(built: Path,
+                                                             tmp_path: Path) -> None:
+    """In January the oldest withheld cohort becomes publishable: no override needed for
+    the number the baseline announced, an override for anything beyond it."""
+    meta = _site(built, tmp_path)
+    c, year = meta["counts"], int(meta["as_of"][:4])
+    freed, freed_ranked = 60, 40                         # far above the 3 % / 10 % rises
+    old = {"athletes": c["athletes"] - freed, "ranked": c["ranked"] - freed_ranked,
+           "withheld": c["withheld"] + freed}
+    path = _baseline(tmp_path, meta, **old)
+    last_year = f"{year - 1}-10-01"
+    _edit_baseline(path, as_of=last_year,
+                   publish={"release_next_year": {"athletes": freed, "ranked": freed_ranked}})
+    assert cli.main(["check-site"]) == 0
+    # the same counts without a year change: the filter lost people
+    _edit_baseline(path, as_of=meta["as_of"])
+    assert cli.main(["check-site"]) == 1
+    # a year change, but fewer were announced than have appeared
+    _edit_baseline(path, as_of=last_year,
+                   publish={"release_next_year": {"athletes": 10, "ranked": 5}})
+    assert cli.main(["check-site"]) == 1
+    # two years at once, or a baseline that announced nothing: not comparable
+    _edit_baseline(path, as_of=f"{year - 2}-10-01",
+                   publish={"release_next_year": {"athletes": freed, "ranked": freed_ranked}})
+    assert cli.main(["check-site"]) == 1
+    _edit_baseline(path, as_of=last_year, publish={"release_next_year": None})
+    assert cli.main(["check-site"]) == 1
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+
+
+def test_falling_share_of_known_birth_years_fails(built: Path, tmp_path: Path) -> None:
+    meta = _site(built, tmp_path)
+    c = meta["counts"]
+    _baseline(tmp_path, meta, birth_year_known=c["birth_year_known"] + c["rated"] // 100)
+    assert cli.main(["check-site"]) == 0                  # one point: within two
+    _baseline(tmp_path, meta, birth_year_known=c["birth_year_known"] + c["rated"] // 20)
+    assert cli.main(["check-site"]) == 1                  # five points
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+    path = _baseline(tmp_path, meta)
+    base = json.loads(path.read_text(encoding="utf-8"))
+    del base["counts"]["birth_year_known"], base["counts"]["withheld"]
+    path.write_text(json.dumps(base), encoding="utf-8")   # a baseline from before the check
+    assert cli.main(["check-site"]) == 1
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 0
+    assert cli.main(["check-site"]) == 0
+
+
+def _portraits_db(tmp_path: Path, birthdays: list[str | None]) -> None:
+    import sqlite3
+    (tmp_path / "data").mkdir(exist_ok=True)
+    conn = sqlite3.connect(tmp_path / "data" / "schwingen.db")
+    conn.execute("DROP TABLE IF EXISTS portraits")
+    conn.execute("CREATE TABLE portraits (portrait_id INTEGER PRIMARY KEY, birthday TEXT)")
+    conn.executemany("INSERT INTO portraits (birthday) VALUES (?)", [(b,) for b in birthdays])
+    conn.commit()
+    conn.close()
+
+
+def test_portraits_losing_their_birthdays_fail(built: Path, tmp_path: Path) -> None:
+    """The input itself: the baseline remembers how many portraits had a birthday."""
+    _site(built, tmp_path)
+    _portraits_db(tmp_path, ["2000-01-01"] * 100)
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 0
+    base = dg.read_meta(tmp_path / "data" / dg.BASELINE_NAME)
+    assert base[dg.INPUTS_KEY] == {"portraits": 100, "portraits_with_birthday": 100}
+    _portraits_db(tmp_path, ["2000-01-01"] * 99 + [None])
+    assert cli.main(["check-site"]) == 0
+    _portraits_db(tmp_path, ["2000-01-01"] * 90 + [None] * 5 + [""] * 5)
+    assert cli.main(["check-site"]) == 1
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+    (tmp_path / "data" / "schwingen.db").unlink()          # cannot be verified at all
+    assert cli.main(["check-site"]) == 1
+    _portraits_db(tmp_path, [None] * 100)                  # no birthday left: no override
+    assert cli.main(["check-site", "--accept-changes"]) == 1
+
+
+def test_collapsed_filter_of_the_review_fails(built: Path, tmp_path: Path) -> None:
+    """Phase 6 review M1 with its numbers: 718 / 523 withheld became 87 / 81, the site
+    grew from 6314 to 6953 athletes and from 1497 to 1938 ranked - and passed."""
+    meta = _site(built, tmp_path, athletes=6953, ranked=1938, withheld=87, withheld_ranked=81,
+                 rated=7040, birth_year_known=900)
+    path = _baseline(tmp_path, meta, athletes=6314, ranked=1497, withheld=718,
+                     withheld_ranked=523, rated=7032, birth_year_known=5287)
+    before = path.read_text(encoding="utf-8")
+    cfg = load_config(env=dict(os.environ))
+    rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path))
+    assert not rep.ok and not rep.fatal and len(rep.changes) == 4, rep.changes
+    assert cli.main(["check-site", "--record"]) == 1
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_unknown_birth_year_setting_is_guarded(built: Path, tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    meta = _site(built, tmp_path)
+    path = _baseline(tmp_path, meta)
+    monkeypatch.setenv("SCHWINGEN_PUBLISH_UNKNOWN_RECENT_SEASONS", "3")
+    assert cli.main(["check-site", "--accept-changes"]) == 1   # built with 0, configured 3
+    monkeypatch.setenv("SCHWINGEN_PUBLISH_UNKNOWN_RECENT_SEASONS", "0")
+    _edit_baseline(path, publish={"unknown_recent_seasons": 3})
+    assert cli.main(["check-site"]) == 1                       # looser than the accepted site
+    assert cli.main(["check-site", "--accept-changes"]) == 0
+    cfg = load_config(env={})
+    assert (cfg.guard_max_rise, cfg.guard_max_rise_ranked, cfg.guard_max_drop_withheld,
+            cfg.guard_max_drop_birth_known) == (0.03, 0.10, 0.02, 0.02)
+    with pytest.raises(ValueError, match="guard_max_rise"):
+        load_config({"guard_max_rise": 1.5}, env={})

@@ -626,7 +626,7 @@ def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = Fal
             log.error("check-site: FAILED - this site must not be deployed")
         return 1
     if record and not cfg.sample:
-        dg.record_baseline(cfg.dist_dir, path)
+        dg.record_baseline(cfg.dist_dir, path, dg.db_inputs(cfg))
         log.info("check-site: baseline recorded in %s", path)
     log.info("check-site: ok")
     return 0
@@ -736,7 +736,8 @@ def build_parser() -> argparse.ArgumentParser:
                            "(compared with the last accepted meta.json)")
     sp.add_argument("--accept-changes", action="store_true", default=False,
                     help="let intended changes pass: a smaller site, an older data date, "
-                         "looser publication settings, or no baseline yet (first deployment)")
+                         "looser publication settings, more published or fewer withheld "
+                         "athletes, or no baseline yet (first deployment)")
     sp.add_argument("--record", action="store_true", default=False,
                     help="after a passed check, store the site's meta.json as the new "
                          "baseline (<data-dir>/published_meta.json)")
