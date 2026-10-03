@@ -1,0 +1,398 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--portrait",
+   "id": "c8072b65-dd73-4e52-8c58-d6bccad54558",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558?resourceVersion=id%3A138"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__nid": 23,
+    "title": "Aerne Christian",
+    "path": {
+     "alias": "/portraet/christian-aerne",
+     "pid": 14,
+     "langcode": "de"
+    },
+    "field_portait_end_of_career": null,
+    "field_portrait_birthday": "1991-03-27",
+    "field_portrait_city": "Lanterswil",
+    "field_portrait_first_name": "Christian",
+    "field_portrait_hknr": null,
+    "field_portrait_last_name": "Aerne"
+   },
+   "relationships": {
+    "field_portrait_activity": {
+     "data": {
+      "type": "taxonomy_term--portrait_activity",
+      "id": "562e2792-7362-4c38-9a7c-ab285294b295",
+      "meta": {
+       "drupal_internal__target_id": 23
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/field_portrait_activity?resourceVersion=id%3A138"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/relationships/field_portrait_activity?resourceVersion=id%3A138"
+      }
+     }
+    },
+    "field_portrait_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+      "meta": {
+       "drupal_internal__target_id": 28
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/field_portrait_association?resourceVersion=id%3A138"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/relationships/field_portrait_association?resourceVersion=id%3A138"
+      }
+     }
+    },
+    "field_portrait_cant_association": {
+     "data": null,
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/field_portrait_cant_association?resourceVersion=id%3A138"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/relationships/field_portrait_cant_association?resourceVersion=id%3A138"
+      }
+     }
+    },
+    "field_portrait_club": {
+     "data": null,
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/field_portrait_club?resourceVersion=id%3A138"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/c8072b65-dd73-4e52-8c58-d6bccad54558/relationships/field_portrait_club?resourceVersion=id%3A138"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--portrait",
+   "id": "e7a497e0-b884-40d7-88b3-9f915a8023eb",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb?resourceVersion=id%3A166"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__nid": 56,
+    "title": "Fischer Yvan, 1992-02-06 (26951)",
+    "path": {
+     "alias": "/portraet/yvan-fischer",
+     "pid": 35,
+     "langcode": "de"
+    },
+    "field_portait_end_of_career": null,
+    "field_portrait_birthday": "1992-02-06",
+    "field_portrait_city": "Villaz-St-Pierre",
+    "field_portrait_first_name": "Yvan",
+    "field_portrait_hknr": 26951,
+    "field_portrait_last_name": "Fischer"
+   },
+   "relationships": {
+    "field_portrait_activity": {
+     "data": null,
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/field_portrait_activity?resourceVersion=id%3A166"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/relationships/field_portrait_activity?resourceVersion=id%3A166"
+      }
+     }
+    },
+    "field_portrait_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "4b9d0057-4a4e-4c55-82ba-6b11aa41bf39",
+      "meta": {
+       "drupal_internal__target_id": 30
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/field_portrait_association?resourceVersion=id%3A166"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/relationships/field_portrait_association?resourceVersion=id%3A166"
+      }
+     }
+    },
+    "field_portrait_cant_association": {
+     "data": {
+      "type": "taxonomy_term--canton_association",
+      "id": "0188386c-d1f6-42b3-b53a-243e91e7dfe6",
+      "meta": {
+       "drupal_internal__target_id": 193
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/field_portrait_cant_association?resourceVersion=id%3A166"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/relationships/field_portrait_cant_association?resourceVersion=id%3A166"
+      }
+     }
+    },
+    "field_portrait_club": {
+     "data": {
+      "type": "taxonomy_term--club",
+      "id": "35f73a77-e0d5-4fdb-a20f-e375f163324c",
+      "meta": {
+       "drupal_internal__target_id": 194
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/field_portrait_club?resourceVersion=id%3A166"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/e7a497e0-b884-40d7-88b3-9f915a8023eb/relationships/field_portrait_club?resourceVersion=id%3A166"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "node--portrait",
+   "id": "1a09867a-34ae-4979-995b-1d5329794574",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574?resourceVersion=id%3A167"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__nid": 57,
+    "title": "Jaquier Pierre, 2002-04-04 (31722)",
+    "path": {
+     "alias": "/portraet/pierre-jaquier",
+     "pid": 36,
+     "langcode": "de"
+    },
+    "field_portait_end_of_career": null,
+    "field_portrait_birthday": "2002-04-04",
+    "field_portrait_city": "Chavannes-les-Forts",
+    "field_portrait_first_name": "Pierre",
+    "field_portrait_hknr": 31722,
+    "field_portrait_last_name": "Jaquier"
+   },
+   "relationships": {
+    "field_portrait_activity": {
+     "data": null,
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/field_portrait_activity?resourceVersion=id%3A167"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/relationships/field_portrait_activity?resourceVersion=id%3A167"
+      }
+     }
+    },
+    "field_portrait_association": {
+     "data": {
+      "type": "taxonomy_term--association",
+      "id": "4b9d0057-4a4e-4c55-82ba-6b11aa41bf39",
+      "meta": {
+       "drupal_internal__target_id": 30
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/field_portrait_association?resourceVersion=id%3A167"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/relationships/field_portrait_association?resourceVersion=id%3A167"
+      }
+     }
+    },
+    "field_portrait_cant_association": {
+     "data": {
+      "type": "taxonomy_term--canton_association",
+      "id": "0188386c-d1f6-42b3-b53a-243e91e7dfe6",
+      "meta": {
+       "drupal_internal__target_id": 193
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/field_portrait_cant_association?resourceVersion=id%3A167"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/relationships/field_portrait_cant_association?resourceVersion=id%3A167"
+      }
+     }
+    },
+    "field_portrait_club": {
+     "data": {
+      "type": "taxonomy_term--club",
+      "id": "35f73a77-e0d5-4fdb-a20f-e375f163324c",
+      "meta": {
+       "drupal_internal__target_id": 194
+      }
+     },
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/field_portrait_club?resourceVersion=id%3A167"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/1a09867a-34ae-4979-995b-1d5329794574/relationships/field_portrait_club?resourceVersion=id%3A167"
+      }
+     }
+    }
+   }
+  }
+ ],
+ "included": [
+  {
+   "type": "taxonomy_term--club",
+   "id": "35f73a77-e0d5-4fdb-a20f-e375f163324c",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/club/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/club/35f73a77-e0d5-4fdb-a20f-e375f163324c?resourceVersion=id%3A194"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/club/35f73a77-e0d5-4fdb-a20f-e375f163324c?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__tid": 194,
+    "name": "Cottens",
+    "field_tax_esv_id": 303
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "bc61709e-2100-443e-955c-457f8486f5b3",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/bc61709e-2100-443e-955c-457f8486f5b3?resourceVersion=id%3A28"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/bc61709e-2100-443e-955c-457f8486f5b3?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__tid": 28,
+    "name": "Nordostschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--association",
+   "id": "4b9d0057-4a4e-4c55-82ba-6b11aa41bf39",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/4b9d0057-4a4e-4c55-82ba-6b11aa41bf39?resourceVersion=id%3A30"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/association/4b9d0057-4a4e-4c55-82ba-6b11aa41bf39?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__tid": 30,
+    "name": "Suedwestschweiz"
+   }
+  },
+  {
+   "type": "taxonomy_term--canton_association",
+   "id": "0188386c-d1f6-42b3-b53a-243e91e7dfe6",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/canton_association/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/canton_association/0188386c-d1f6-42b3-b53a-243e91e7dfe6?resourceVersion=id%3A193"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/canton_association/0188386c-d1f6-42b3-b53a-243e91e7dfe6?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__tid": 193,
+    "name": "Fribourgeoise"
+   }
+  },
+  {
+   "type": "taxonomy_term--portrait_activity",
+   "id": "562e2792-7362-4c38-9a7c-ab285294b295",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/portrait_activity/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/portrait_activity/562e2792-7362-4c38-9a7c-ab285294b295?resourceVersion=id%3A23"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/taxonomy_term/portrait_activity/562e2792-7362-4c38-9a7c-ab285294b295?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "name": "Aktive"
+   }
+  }
+ ],
+ "links": {
+  "describedby": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait/collection/schema"
+  },
+  "next": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait?include=field_portrait_club%2Cfield_portrait_association%2Cfield_portrait_cant_association%2Cfield_portrait_activity&fields%5Bnode--portrait%5D=drupal_internal__nid%2Ctitle%2Cpath%2Cfield_portrait_first_name%2Cfield_portrait_last_name%2Cfield_portrait_birthday%2Cfield_portrait_city%2Cfield_portrait_hknr%2Cfield_portait_end_of_career%2Cfield_portrait_club%2Cfield_portrait_association%2Cfield_portrait_cant_association%2Cfield_portrait_activity&fields%5Btaxonomy_term--club%5D=name%2Cdrupal_internal__tid%2Cfield_tax_esv_id&fields%5Btaxonomy_term--association%5D=name%2Cdrupal_internal__tid&fields%5Btaxonomy_term--canton_association%5D=name%2Cdrupal_internal__tid&fields%5Btaxonomy_term--portrait_activity%5D=name&sort%5B0%5D%5Bdirection%5D=ASC&sort%5B0%5D%5Blangcode%5D&sort%5B0%5D%5Bpath%5D=drupal_internal__nid&page%5Boffset%5D=50&page%5Blimit%5D=50"
+  },
+  "self": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/portrait?fields%5Bnode--portrait%5D=drupal_internal__nid%2Ctitle%2Cpath%2Cfield_portrait_first_name%2Cfield_portrait_last_name%2Cfield_portrait_birthday%2Cfield_portrait_city%2Cfield_portrait_hknr%2Cfield_portait_end_of_career%2Cfield_portrait_club%2Cfield_portrait_association%2Cfield_portrait_cant_association%2Cfield_portrait_activity&fields%5Btaxonomy_term--club%5D=name%2Cdrupal_internal__tid%2Cfield_tax_esv_id&fields%5Btaxonomy_term--association%5D=name%2Cdrupal_internal__tid&fields%5Btaxonomy_term--canton_association%5D=name%2Cdrupal_internal__tid&fields%5Btaxonomy_term--portrait_activity%5D=name&include=field_portrait_club%2Cfield_portrait_association%2Cfield_portrait_cant_association%2Cfield_portrait_activity&page%5Blimit%5D=50&sort=drupal_internal__nid"
+  }
+ }
+}

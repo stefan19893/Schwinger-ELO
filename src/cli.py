@@ -35,14 +35,25 @@ log = logging.getLogger("schwingen")
 
 
 # --------------------------------------------------------------------------- stages
-def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
-    """Discover festivals (schlussgang.ch JSON:API) into the SQLite ``festivals`` table."""
+def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
+              portraits: bool = True, portraits_only: bool = False) -> int:
+    """Discover festivals (schlussgang.ch JSON:API) into the SQLite ``festivals`` table,
+    then download statistic + ranking PDFs and the athlete portraits.
+    ``portraits_only`` skips the listings and PDFs (no festival request at all)."""
     if cfg.sample:
         return _crawl_sample(cfg)
     from src.db import connect
     from src.scraper import fests_crawler as fc
     from src.scraper.client import FetchError, client_from_config
 
+    if portraits_only:
+        log.info("crawl: portraits only, offline=%s, cache=%s", cfg.offline, cfg.raw_dir)
+        with client_from_config(cfg, transport=transport, offline=cfg.offline) as client:
+            rc = _crawl_portraits(cfg, client)
+            log.info("crawl: %d network requests (%d retries), %d cache hits",
+                     client.stats.network_requests, client.stats.retries,
+                     client.stats.cache_hits)
+        return rc
     log.info("crawl: years %d-%d, refresh=%s, offline=%s, cache=%s, db=%s",
              cfg.from_year, cfg.to_year, cfg.refresh, cfg.offline, cfg.raw_dir, cfg.db_path)
     conn = connect(cfg.db_path)
@@ -66,6 +77,10 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None) -> int:
                 return 1
             _log_crawl_report(report)
             pdf_rc = _crawl_pdfs(cfg, client, conn) if cfg.crawl_pdfs else 0
+            if cfg.crawl_pdfs:
+                pdf_rc = _crawl_ranking_pdfs(cfg, client, conn) or pdf_rc
+            if portraits:
+                pdf_rc = _crawl_portraits(cfg, client) or pdf_rc
             stats = client.stats
     finally:
         conn.close()
@@ -117,6 +132,71 @@ def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> in
     rep.missing += _crawl_interim_sheets(client, todo, cfg)
     if rep.missing:
         log.error("crawl: --offline: %d statistic PDFs not in cache", len(rep.missing))
+        return 1
+    return 0
+
+
+def _crawl_ranking_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> int:
+    """Download (or confirm cached) the Schlussrangliste PDF of every active festival
+    (Phase 3 identity evidence), highest tiers first, own request cap."""
+    import datetime as dt
+
+    from src.db import load_festivals
+    from src.scraper.ranking_pdfs import (download_ranking_pdfs, festivals_with_ranking,
+                                          ranking_max_requests)
+    from src.scraper.statistic_pdfs import PdfLimitExceeded
+
+    todo = festivals_with_ranking(load_festivals(conn).values())
+    cap = ranking_max_requests()
+    log.info("crawl: ranking PDFs for %d active festivals (cap %d network requests)",
+             len(todo), cap)
+    before = client.stats.network_requests
+    try:
+        rep = download_ranking_pdfs(
+            client, tqdm(todo, desc="rankings", unit="pdf", disable=not sys.stderr.isatty()),
+            today=dt.date.today(), max_requests=cap, max_age_hours=cfg.pdf_max_age_hours,
+            grace_days=cfg.pdf_final_grace_days)
+    except PdfLimitExceeded as exc:
+        log.error("crawl: %s after %d requests - downloaded PDFs are cached, re-run to "
+                  "continue", exc, client.stats.network_requests - before)
+        return 1
+    except RuntimeError as exc:
+        log.error("crawl: %s", exc)
+        return 1
+    log.info("crawl: ranking PDFs: %d downloaded, %d cached, %d failed%s, %d not cached "
+             "(offline)", rep.fetched, rep.cached, len(rep.failed),
+             f" (HTTP {rep.status_counts})" if rep.status_counts else "", len(rep.missing))
+    for fid, err in rep.failed:
+        log.warning("crawl: ranking PDF of festival %d failed: %s", fid, err)
+    if rep.missing:
+        log.error("crawl: --offline: %d ranking PDFs not in cache", len(rep.missing))
+        return 1
+    return 0
+
+
+def _crawl_portraits(cfg: Config, client: HttpClient) -> int:
+    """Download (or confirm cached) all schlussgang portraits and the 2023+
+    festival -> portrait listings (Phase 3 identity evidence)."""
+    from src.scraper.client import FetchError
+    from src.scraper.portraits import (PortraitLimitExceeded, crawl_portraits,
+                                       portrait_max_requests)
+
+    cap = portrait_max_requests()
+    before = client.stats.network_requests
+    try:
+        rep = crawl_portraits(client, to_year=cfg.to_year, max_requests=cap,
+                              listing_max_age=cfg.listing_max_age_hours * 3600,
+                              grace_days=cfg.listing_final_grace_days)
+    except (PortraitLimitExceeded, FetchError) as exc:
+        log.error("crawl: portraits: %s after %d requests - cached pages are kept, re-run "
+                  "to continue", exc, client.stats.network_requests - before)
+        return 1
+    log.info("crawl: portraits: %d on %d pages, %d festival appearances (%d queries), "
+             "%d network requests", rep.portraits, rep.pages, rep.appearances,
+             rep.event_queries, client.stats.network_requests - before)
+    if rep.cache_misses:
+        log.error("crawl: --offline: %d portrait queries not in cache (%s)",
+                  len(rep.cache_misses), ", ".join(rep.cache_misses[:5]))
         return 1
     return 0
 
@@ -225,7 +305,8 @@ def cmd_parse(cfg: Config, force: bool = False) -> int:
                             progress=sys.stderr.isatty(),
                             pdf_max_age_hours=cfg.pdf_max_age_hours,
                             pdf_grace_days=cfg.pdf_final_grace_days)
-        _log_parse_summary(conn, rep.parsed, rep.unchanged)
+            _log_parse_summary(conn, rep.parsed, rep.unchanged)
+            _parse_identity_evidence(cfg, conn, client, force=force)
     finally:
         conn.close()
     return 0
@@ -247,6 +328,41 @@ def _log_parse_summary(conn: sqlite3.Connection, parsed: int, unchanged: int) ->
     log.info("parse: top rejects: %s", ", ".join(f"{r}={n}" for r, n in top))
 
 
+def _parse_identity_evidence(cfg: Config, conn: sqlite3.Connection, client: HttpClient | None,
+                             force: bool = False) -> None:
+    """Phase 3 evidence (offline): Schlussranglisten -> ranking_entries (linked to
+    athletes_raw), portraits -> portraits / portrait_appearances, then clubs and
+    athlete_evidence. ``client`` None = --sample (ranking lists and portrait JSON from
+    the sample dir)."""
+    from src.scraper.evidence import build_evidence
+    from src.scraper.portraits import load_portraits, load_portraits_from_dir
+    from src.scraper.ranking_runner import parse_rankings, parse_rankings_from_dir
+
+    if client is None:
+        rrep = parse_rankings_from_dir(conn, cfg.sample_dir / "ranking", force=force)
+    else:
+        rrep = parse_rankings(conn, client, force=force, progress=sys.stderr.isatty(),
+                              pdf_max_age_hours=cfg.pdf_max_age_hours,
+                              pdf_grace_days=cfg.pdf_final_grace_days)
+    log.info("parse: ranking lists: %d (re)parsed, %d unchanged, status %s; %d entries "
+             "linked to athletes_raw (%s), unlinked %s", rrep.parsed, rrep.unchanged,
+             dict(rrep.status), rrep.linked, dict(rrep.link_methods), dict(rrep.unlinked))
+    if client is None:
+        prep = load_portraits_from_dir(conn, cfg.sample_dir / "schlussgang")
+    else:
+        prep = load_portraits(conn, client, to_year=cfg.to_year)
+    if prep.cache_misses:
+        log.warning("parse: portraits: %d queries not cached (run `crawl`): %s",
+                    len(prep.cache_misses), ", ".join(m[:120] for m in prep.cache_misses[:3]))
+    log.info("parse: portraits: %d portraits, %d festival appearances, linked %s, "
+             "not stored %s", prep.portraits, prep.appearances, dict(prep.linked),
+             dict(+prep.skipped))
+    erep = build_evidence(conn)
+    log.info("parse: athlete evidence: %d rows, %d with club (%d canonical clubs), "
+             "Teilverband by source %s, %d with portrait", erep.rows, erep.with_club,
+             erep.clubs, dict(erep.with_sub), erep.with_portrait)
+
+
 def _parse_sample(cfg: Config, force: bool = False) -> int:
     """--sample: parse the committed sheets in tests/fixtures/sample/statistic/ (no network)."""
     from src.db import connect
@@ -258,6 +374,7 @@ def _parse_sample(cfg: Config, force: bool = False) -> int:
     try:
         rep = parse_from_dir(conn, directory, min_pair_rate=cfg.parse_min_pair_rate, force=force)
         _log_parse_summary(conn, rep.parsed, rep.unchanged)
+        _parse_identity_evidence(cfg, conn, None, force=force)
     finally:
         conn.close()
     return 0
@@ -281,9 +398,9 @@ def cmd_build(cfg: Config) -> int:
     return 0
 
 
-def cmd_all(cfg: Config, skip_crawl: bool = False) -> int:
+def cmd_all(cfg: Config, skip_crawl: bool = False, portraits: bool = True) -> int:
     stages: list[tuple[str, Callable[[Config], int]]] = [
-        ("crawl", cmd_crawl),
+        ("crawl", functools.partial(cmd_crawl, portraits=portraits)),
         ("parse", cmd_parse),
         ("clean", cmd_clean),
         ("elo", cmd_elo),
@@ -355,7 +472,13 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--from-year", type=int, default=None)
         sp.add_argument("--to-year", type=int, default=None)
         sp.add_argument("--no-pdfs", action="store_true", default=False,
-                        help="only crawl festival listings, skip statistic PDF downloads")
+                        help="only crawl festival listings, skip statistic / ranking PDFs")
+        sp.add_argument("--no-portraits", action="store_true", default=False,
+                        help="skip the schlussgang athlete portraits")
+        if name == "crawl":
+            sp.add_argument("--portraits-only", action="store_true", default=False,
+                            help="only download the athlete portraits and the 2023+ "
+                                 "festival -> portrait listings (no festival listings, no PDFs)")
     sp = add("parse", "parse cached statistic PDFs into SQLite (offline)")
     sp.add_argument("--force", action="store_true", default=False,
                     help="re-parse festivals even if PDF and parser version are unchanged")
@@ -427,9 +550,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     _warn_ignored_options(args)
     try:
         if args.command == "all":
-            return cmd_all(cfg, skip_crawl=args.skip_crawl)
+            return cmd_all(cfg, skip_crawl=args.skip_crawl, portraits=not args.no_portraits)
         if args.command == "parse":
             return cmd_parse(cfg, force=args.force)
+        if args.command == "crawl":
+            if args.portraits_only and args.no_portraits:
+                raise ValueError("--portraits-only and --no-portraits exclude each other")
+            return cmd_crawl(cfg, portraits=not args.no_portraits,
+                             portraits_only=args.portraits_only)
         return COMMANDS[args.command](cfg)
     except ValueError as exc:
         log.error("%s: %s", args.command, exc)

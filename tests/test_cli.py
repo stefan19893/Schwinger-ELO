@@ -216,14 +216,45 @@ def test_crawl_command_with_mock_api(tmp_path: Path, no_sleep: list[float]) -> N
 
     api = FakeApi()
     cfg = _crawl_cfg(tmp_path)
-    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 0
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api), portraits=False) == 0
     assert len(api.requests) == 5  # one listing query per crawled category
     assert len(load_festivals(connect(cfg.db_path))) == 6
-    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 0
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api), portraits=False) == 0
     assert len(api.requests) == 5  # second run served from data/raw cache
     refresh = _crawl_cfg(tmp_path, refresh=True)
-    assert cli.cmd_crawl(refresh, transport=httpx.MockTransport(api)) == 0
+    assert cli.cmd_crawl(refresh, transport=httpx.MockTransport(api), portraits=False) == 0
     assert len(api.requests) == 10
+
+
+def test_crawl_command_downloads_portraits(tmp_path: Path, no_sleep: list[float]) -> None:
+    """Default crawl: listings, then the portrait list and the 2023+ festival ->
+    portrait listings; --portraits-only skips everything else."""
+    import httpx
+
+    from tests.test_portraits import FakeApi
+
+    api = FakeApi()
+    cfg = _crawl_cfg(tmp_path, to_year=2023)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api)) == 0
+    paths = [r.url.path.rsplit("/", 1)[-1] for r in api.requests]
+    # 13 years x 5 categories of listings, 2 portrait pages, 5 portrait-link queries (2023)
+    assert paths == ["event"] * 65 + ["portrait"] * 2 + ["event"] * 5
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(api), portraits_only=True) == 0
+    assert len(api.requests) == 72  # all cached
+    other = _crawl_cfg(tmp_path / "other", to_year=2023)
+    api2 = FakeApi()
+    assert cli.cmd_crawl(other, transport=httpx.MockTransport(api2), portraits_only=True) == 0
+    assert [r.url.path.rsplit("/", 1)[-1] for r in api2.requests] == ["portrait"] * 2 + ["event"] * 5
+    assert not other.db_path.exists()  # no database needed for the download
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path / "x", offline=True),
+                         transport=httpx.MockTransport(api2), portraits_only=True) == 1
+
+
+def test_portrait_cli_options() -> None:
+    args = cli.build_parser().parse_args(["crawl", "--portraits-only"])
+    assert args.portraits_only and not args.no_portraits
+    assert cli.build_parser().parse_args(["all", "--no-portraits"]).no_portraits
+    assert cli.main(["crawl", "--sample", "--portraits-only", "--no-portraits"]) == 1
 
 
 def test_crawl_command_request_cap(tmp_path: Path, no_sleep: list[float]) -> None:
@@ -316,6 +347,18 @@ def test_parse_sample_offline(tmp_path: Path) -> None:
     # extra bouts (ESAF 2019, Kirchberg, Scheidegg) are stored with a NULL grade
     assert q("SELECT COUNT(*) FROM bouts WHERE flags LIKE '%extra_bout%'") == [(4,)]
     assert not (tmp_path / "d" / "raw").exists()
+    # identity evidence from the sample ranking lists and portraits (Phase 3)
+    assert dict(q("SELECT fest_id, status FROM ranking_parse")) == {
+        24110: "ok", 26400: "ok", 37052: "ok", 45965: "ok", 46055: "ok"}
+    assert q("SELECT COUNT(*) FROM ranking_entries WHERE athlete_raw_id IS NULL") == [(0,)]
+    assert q("SELECT COUNT(*) FROM athlete_evidence") == q("SELECT COUNT(*) FROM athletes_raw")
+    assert q("SELECT residence, club, sub_association, sub_assoc_source, portrait_slug "
+             "FROM athlete_evidence e JOIN athletes_raw a USING (athlete_raw_id) "
+             "WHERE a.fest_id = 46055 AND a.rank = '1'") == [
+        ("Uffikon", "Surental", "ISV", "club", "fabian-scherrer")]
+    assert q("SELECT COUNT(*) > 30 FROM athlete_evidence WHERE portrait_slug IS NOT NULL") == [(1,)]
+    assert q("SELECT name, sub_association, esv_id FROM clubs WHERE club_key = 'surental'") == [
+        ("Surental", "ISV", 206)]
     # incremental: nothing re-parsed, --force re-parses everything
     assert cli.main(["parse", "--sample", "--data-dir", d]) == 0
     assert cli.main(["parse", "--sample", "--force", "--data-dir", d]) == 0

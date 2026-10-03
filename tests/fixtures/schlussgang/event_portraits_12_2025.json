@@ -1,0 +1,82 @@
+{
+ "jsonapi": {
+  "version": "1.0",
+  "meta": {
+   "links": {
+    "self": {
+     "href": "http://jsonapi.org/format/1.0/"
+    }
+   }
+  }
+ },
+ "data": [
+  {
+   "type": "node--event",
+   "id": "cae9a916-be18-4de8-941c-ffeddca3d089",
+   "links": {
+    "describedby": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/resource/schema"
+    },
+    "self": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/cae9a916-be18-4de8-941c-ffeddca3d089?resourceVersion=id%3A21219"
+    },
+    "working-copy": {
+     "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/cae9a916-be18-4de8-941c-ffeddca3d089?resourceVersion=rel%3Aworking-copy"
+    }
+   },
+   "attributes": {
+    "drupal_internal__nid": 21085
+   },
+   "relationships": {
+    "field_ref_portrait": {
+     "data": [
+      {
+       "type": "node--portrait",
+       "id": "fcf7cd0f-1aeb-48d1-aef7-1c8f92f178ca",
+       "meta": {
+        "drupal_internal__target_id": 1076
+       }
+      },
+      {
+       "type": "node--portrait",
+       "id": "662bde48-e94e-4f28-9412-6b7c1ffb4b40",
+       "meta": {
+        "drupal_internal__target_id": 19796
+       }
+      },
+      {
+       "type": "node--portrait",
+       "id": "303ca1ac-8649-4085-8f9b-2212f88271bd",
+       "meta": {
+        "drupal_internal__target_id": 150
+       }
+      },
+      {
+       "type": "node--portrait",
+       "id": "44b379ca-6a77-42b8-82bc-0e774c7e6184",
+       "meta": {
+        "drupal_internal__target_id": 634
+       }
+      }
+     ],
+     "links": {
+      "related": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/cae9a916-be18-4de8-941c-ffeddca3d089/field_ref_portrait?resourceVersion=id%3A21219"
+      },
+      "self": {
+       "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/cae9a916-be18-4de8-941c-ffeddca3d089/relationships/field_ref_portrait?resourceVersion=id%3A21219"
+      }
+     }
+    }
+   }
+  }
+ ],
+ "links": {
+  "describedby": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/event/collection/schema"
+  },
+  "self": {
+   "href": "https://backend-api.schlussgang.ch/jsonapi/node/event?fields%5Bnode--event%5D=drupal_internal__nid%2Cfield_ref_portrait&filter%5Bfield_category.tid%5D=12&filter%5Bdate%5D%5Bcondition%5D%5Bpath%5D=field_event_date&filter%5Bdate%5D%5Bcondition%5D%5Boperator%5D=BETWEEN&filter%5Bdate%5D%5Bcondition%5D%5Bvalue%5D%5B0%5D=2025-01-01&filter%5Bdate%5D%5Bcondition%5D%5Bvalue%5D%5B1%5D=2025-12-31&page%5Blimit%5D=50&sort=field_event_date%2Cdrupal_internal__nid"
+  }
+ }
+}
