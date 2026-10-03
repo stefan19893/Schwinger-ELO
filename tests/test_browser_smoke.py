@@ -1,4 +1,4 @@
-"""Headless-browser smoke test: the scripts of the four pages run on a built site.
+"""Headless-browser smoke test: the scripts of the five pages run on a built site.
 
 The rest of the suite never executes JavaScript. This module builds the ``--sample`` site,
 serves it from a loopback server under ``/Schwinger-ELO/`` and loads every page in a
@@ -195,6 +195,15 @@ def pages(browser: str, site: Path, base_url: str,
         "fests": base_url + "fests.html",
         "fest": base_url + f"fests.html?id={fest}&a={ranked[0][1]}",
         "about": base_url + "about.html",
+        # the comparison: nobody, one, a pair, an outdated id next to a valid one, garbage
+        # and more ids than the limit
+        "compare-empty": base_url + "compare.html",
+        "compare-one": base_url + f"compare.html?ids={ranked[0][1]}",
+        "compare-pair": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}",
+        "compare-unknown": base_url + f"compare.html?ids={ranked[0][1]},"
+                                      + ranked[1][1].rsplit("-", 1)[0] + "-p0",
+        "compare-limit": base_url + "compare.html?ids=" + ",".join(
+            [r[1] for r in ranked[:8]] + ["%3Cb%3Ex", "A..B"]),
     }
     return _load_all(browser, urls, tmp_path_factory.mktemp("profiles"))
 
@@ -213,7 +222,8 @@ def test_dom_helper_detects_broken_pages() -> None:
 
 
 @pytest.mark.parametrize("name", ["index", "seasons", "peaks", "athlete", "athlete-unknown",
-                                  "fests", "fest"])
+                                  "fests", "fest", "compare-empty", "compare-one",
+                                  "compare-pair", "compare-unknown", "compare-limit"])
 def test_page_renders_without_error(pages: dict[str, str], name: str) -> None:
     assert page_problems(pages[name]) == [], name
 
@@ -244,6 +254,52 @@ def test_pages_show_their_content(pages: dict[str, str], site: Path) -> None:
     fest = Dom(pages["fest"])
     assert top_name in fest.text["se-view"] and "se-focus" in fest.attrs
     assert "Bestenliste aller Zeiten" in Dom(pages["peaks"]).text["se-view"]
+
+
+def test_comparison_page(pages: dict[str, str], site: Path) -> None:
+    data = site / SUBPATH / "data"
+    ranked = json.loads((data / "rankings_latest.json").read_text(encoding="utf-8"))["rows"]
+    first, second = ranked[0][2], ranked[1][2]
+    empty = Dom(pages["compare-empty"])
+    assert "Noch niemand ausgewählt" in empty.text["se-view"] and "canvas" not in empty.tags
+    assert empty.text["se-picked"] == "" and empty.text["se-slots"] == ""
+    one = Dom(pages["compare-one"])
+    assert first in one.text["se-picked"] and "canvas" in one.tags
+    assert "Erst ein Schwinger ausgewählt" in one.text["se-view"]
+    assert "se-duels" in one.attrs and one.text["se-duels"] == ""       # nothing to compare
+    pair = Dom(pages["compare-pair"])
+    for name in (first, second):
+        assert name in pair.text["se-picked"] and name in pair.text["se-view"]
+    assert "canvas" in pair.tags
+    for heading in ("Kennzahlen", "Verlauf der Wertung", "Saisons", "Direkte Gänge",
+                    "Gemeinsame Feste"):
+        assert heading in pair.text["se-view"], heading
+    # the direct bouts of the pair are the ones of the data file, each counted once
+    bouts = json.loads((data / "bouts" / f"bouts_{ranked[0][1]}.json")
+                       .read_text(encoding="utf-8"))
+    n = sum(1 for _, rows in bouts["fests"] for r in rows
+            if bouts["opps"][r[1]] == ranked[1][1])
+    duels = pair.text["se-duels"]
+    assert "Wird geladen" not in duels
+    if n:
+        assert f"{n} {'Gang' if n == 1 else 'Gänge'}" in duels
+    else:
+        assert "Kein direkter Gang erfasst" in duels
+    # an outdated id: the valid athlete is shown, the slot says so and offers the search
+    unknown = Dom(pages["compare-unknown"])
+    assert first in unknown.text["se-view"] and "canvas" in unknown.tags
+    assert "Schwinger nicht gefunden" in unknown.text["se-slots"]
+    assert "Vielleicht gemeint" in unknown.text["se-slots"]
+    assert second in unknown.text["se-slots"]                           # the suggestion
+    # more ids than the limit and two invalid ones: six shown, the rest reported
+    limit = Dom(pages["compare-limit"])
+    assert sum(1 for r in ranked[:8] if r[2] in limit.text["se-picked"]) == 6
+    assert "höchstens 6" in limit.text["se-slots"] and "2 weitere" in limit.text["se-slots"]
+    assert "2 Angaben im Link" in limit.text["se-slots"]
+    assert "disabled" in limit.attrs["se-add"] and "höchstens 6" in limit.text["se-add-hint"]
+    assert "<b>x" not in pages["compare-limit"]                         # nothing injected
+    for name in ("compare-empty", "compare-pair"):
+        assert '<meta name="robots" content="noindex">' in pages[name]
 
 
 def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_url: str,

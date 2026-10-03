@@ -58,7 +58,7 @@ INPUTS_KEY = "guard_inputs"
 GUARDED_COUNTS = ("athletes", "ranked", "festivals", "bouts")
 # one file per published athlete: directory -> file name prefix
 PER_ATHLETE_FILES = {"data/history": "history_", "data/bouts": "bouts_"}
-REQUIRED_FILES = ("index.html", "athlete.html", "fests.html", "about.html",
+REQUIRED_FILES = ("index.html", "athlete.html", "compare.html", "fests.html", "about.html",
                   "data/meta.json", "data/rankings_latest.json", "data/athletes.json",
                   "data/festivals.json", "data/seasons.json", "data/alltime_top200.json")
 

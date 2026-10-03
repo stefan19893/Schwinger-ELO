@@ -15,14 +15,16 @@ from src.config import REPO_ROOT
 from tests.site_checks import check_page, css_defines, js_classes, js_ids, js_literals
 
 WEB = REPO_ROOT / "web"
-PAGES = ["index.html", "athlete.html", "fests.html", "about.html"]
+PAGES = ["index.html", "athlete.html", "compare.html", "fests.html", "about.html"]
+CHART_PAGES = {"athlete.html", "compare.html"}
 SCRIPTS = sorted(p.name for p in (WEB / "js").glob("*.js"))
 ECHARTS_SHA256 = "55974cf42cc160e6cf9099cd3ed8cdedfaa9779919fcee7e2272c85f6ca30e27"
 
 
 def test_expected_files() -> None:
     assert sorted(p.name for p in WEB.glob("*.html")) == sorted(PAGES)
-    assert SCRIPTS == ["about.js", "app.js", "athlete.js", "charts.js", "fests.js", "index.js"]
+    assert SCRIPTS == ["about.js", "app.js", "athlete.js", "charts.js", "compare.js", "fests.js",
+                       "index.js"]
     assert (WEB / "css" / "style.css").is_file()
 
 
@@ -38,10 +40,12 @@ def test_page_links_are_relative_and_resolve(name: str) -> None:
     assert any(u.endswith("/issues") for u in hrefs)             # correction route
 
 
-def test_only_the_athlete_page_loads_echarts() -> None:
+def test_only_the_chart_pages_load_echarts() -> None:
     for name in PAGES:
         text = (WEB / name).read_text(encoding="utf-8")
-        assert ("vendor/echarts" in text) == (name == "athlete.html")
+        assert ("vendor/echarts" in text) == (name in CHART_PAGES)
+        assert ("js/charts.js" in text) == (name in CHART_PAGES)
+        assert ("js/compare.js" in text) == (name == "compare.html")
         assert "cdn." not in text and "unpkg" not in text  # no CDN at run time
 
 
@@ -90,6 +94,11 @@ def test_scripts_use_relative_urls_and_no_unsafe_apis(name: str) -> None:
         assert "SE.ID_RE.test(id)" in text
     if name == "fests.js":
         assert r"/^\d{1,9}$/.test(id)" in text
+    if name == "compare.js":
+        parse = text[text.index("function parseIds"):text.index("function compareUrl")]
+        assert "SE.ID_RE.test(id)" in parse and "out.length >= MAX" in parse
+        assert "if (!SE.ID_RE.test(id) || entries.length >= MAX" in text       # picker
+        assert "if (SE.ID_RE.test(id) && list.indexOf(id) === -1)" in text     # suggestion
 
 
 def test_scripts_only_fetch_files_the_builder_writes() -> None:
@@ -102,6 +111,13 @@ def test_scripts_only_fetch_files_the_builder_writes() -> None:
                        "data/alltime_top200.json"}
     assert "'data/history/history_' + id + '.json'" in text
     assert "'data/fests/fest_' + id + '.json'" in text
+    assert "'data/bouts/bouts_' + id + '.json'" in text
+    compare = (WEB / "js" / "compare.js").read_text(encoding="utf-8")
+    assert f"B_UNRATED = {sb.B_UNRATED}" in compare
+    # compare.js reads the bout rows by position
+    assert sb.BOUT_SIDE_COLS == ["gang", "opp", "res", "g", "go", "flags"]
+    assert "row = [gang, opp, res, g, go, flags]" in compare
+    assert sb.OTHER_FEST_COLS == ["id", "name", "date", "cat"]
     # the column names the scripts read exist in the contracts
     cols = set(sb.RANKING_COLS + sb.SEARCH_COLS + sb.ALLTIME_COLS + sb.SEASON_COLS
                + sb.FESTIVAL_COLS + sb.FEST_ATHLETE_COLS + sb.FEST_BOUT_COLS + sb.HISTORY_COLS
@@ -118,7 +134,8 @@ def test_scripts_only_fetch_files_the_builder_writes() -> None:
 def test_all_data_strings_are_escaped_in_templates() -> None:
     """Every data field concatenated into HTML goes through SE.esc / a formatter."""
     raw = re.compile(
-        r"\+\s*((?:r|a|h|s|f|n|x|o|b\.opp|m|c|meta)\.(?:name|club|fest|loc|location|tv|id|url))\s*(?:\+|;|\))")
+        r"\+\s*((?:r|a|b|d|e|h|e\.h|s|f|n|x|o|b\.opp|m|c|meta|info|winner)\."
+        r"(?:name|club|fest|loc|location|tv|id|url|by|first|last))\s*(?:\+|;|\))")
     for name in SCRIPTS:
         for i, line in enumerate((WEB / "js" / name).read_text(encoding="utf-8").splitlines(), 1):
             for m in raw.finditer(line):
@@ -186,3 +203,32 @@ def test_publication_switches_in_the_pages() -> None:
     # indexing is a build setting (static_builder.apply_indexing), not part of the sources
     for name in PAGES:
         assert 'name="robots"' not in (WEB / name).read_text(encoding="utf-8")
+
+
+def test_comparison_page_rules() -> None:
+    """Static checks for the comparison page (its behaviour is covered by the browser
+    smoke test)."""
+    js = (WEB / "js" / "compare.js").read_text(encoding="utf-8")
+    html = (WEB / "compare.html").read_text(encoding="utf-8")
+    assert "var MAX = 6;" in js and "?ids=" in js
+    # the identity marker wherever a name is shown: chips, legend, table heads, direct
+    # bouts (nameHtml / head), the picker and the suggestions for an outdated id
+    name_html = js[js.index("function nameHtml"):js.index("function head")]
+    assert "SE.uncertainMark(e.h.unc)" in name_html
+    assert js[js.index("function head"):js.index("function badges")].count("SE.uncertainMark(e.h.unc)") == 2
+    assert js.count("(a.flags & SE.F_UNCERTAIN) ? SE.uncertainMark(1)") == 2
+    assert "Identität unsicher" in js[js.index("formatter: function (p)"):js.index("xAxis:")]
+    # the chart keeps the profile's honesty: the reversion comes from SE.careerSeries
+    assert "SE.careerSeries(e.h)" in js and "s.reversion" in js and "1. April" in js
+    # where the comparison invites it: eras, no common time
+    for needle in ("Keine gemeinsame Zeit", "bis etwa 2016", "nicht direkt vergleichbar",
+                   "about.html#grenzen", "jeder Gang einmal gezählt", "ohne Note",
+                   "Noch niemand ausgewählt", "höchstens"):
+        assert needle in js, needle
+    # day counts relate to the data date, nothing is computed from today's date
+    assert "Date.now" not in js and "new Date" not in js and "Datenstand" in js
+    # the search index and the ranking are only loaded on demand
+    assert js.count("SE.loadSearchIndex()") == 3 and js.count("data/rankings_latest.json") == 1
+    assert js.index("data/rankings_latest.json") > js.index("el.id === 'se-example'")
+    for ident in ("se-picked", "se-add", "se-add-results", "se-add-hint", "se-slots", "se-view"):
+        assert f'id="{ident}"' in html, ident

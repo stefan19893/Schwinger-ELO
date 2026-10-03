@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Schwinger vergleichen: ELO-Wertung im Verlauf, Kennzahlen, Saisons, direkte Gänge und gemeinsame Feste.">
+  <title>Schwinger-ELO – Vergleich</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="min-h-screen bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+  <header class="border-b border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
+    <div class="mx-auto flex max-w-4xl flex-wrap items-center gap-x-5 gap-y-2 px-3 py-3 sm:px-4">
+      <a href="index.html" class="text-lg font-bold tracking-tight">Schwinger<span class="text-red-700 dark:text-red-400">-ELO</span></a>
+      <nav class="flex gap-4 text-sm" aria-label="Hauptnavigation">
+        <a class="se-nav" href="index.html">Rangliste</a>
+        <a class="se-nav" href="fests.html">Feste</a>
+        <a class="se-nav" href="compare.html" aria-current="page">Vergleich</a>
+        <a class="se-nav" href="about.html">Methodik</a>
+      </nav>
+      <div class="relative w-full sm:ml-auto sm:w-72" data-search>
+        <label class="sr-only" for="se-q">Schwinger suchen</label>
+        <input id="se-q" type="search" autocomplete="off" spellcheck="false" placeholder="Schwinger suchen (Name, Klub)" class="se-input w-full">
+        <div data-search-results class="absolute left-0 right-0 z-20 mt-1 hidden max-h-96 overflow-auto rounded-md border border-stone-300 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-900"></div>
+      </div>
+    </div>
+  </header>
+  <main class="mx-auto max-w-4xl px-3 py-5 sm:px-4">
+    <noscript><div class="se-note">Diese Seite braucht JavaScript, um die Ranglisten anzuzeigen.</div></noscript>
+    <div id="se-banner" class="mb-4 empty:hidden"></div>
+    <h1 class="text-2xl font-bold tracking-tight">Schwinger vergleichen</h1>
+    <p class="mt-1 text-sm text-stone-600 dark:text-stone-300">Wer war wann stärker, und wie gingen die direkten Gänge aus? Bis zu sechs Schwinger nebeneinander: Wertung im Verlauf, Kennzahlen, Saisons, direkte Gänge und gemeinsame Feste.</p>
+    <div id="se-picked" class="mt-4 flex flex-wrap items-center gap-2 empty:hidden" aria-live="polite"></div>
+    <div class="relative mt-3 w-full sm:w-72" id="se-pick">
+      <label class="sr-only" for="se-add">Schwinger zum Vergleich hinzufügen</label>
+      <input id="se-add" type="search" autocomplete="off" spellcheck="false" placeholder="Schwinger hinzufügen (Name, Klub)" class="se-input w-full">
+      <div id="se-add-results" class="absolute left-0 right-0 z-20 mt-1 hidden max-h-96 overflow-auto rounded-md border border-stone-300 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-900"></div>
+    </div>
+    <p id="se-add-hint" class="mt-1 text-xs text-stone-500 dark:text-stone-400 empty:hidden"></p>
+    <div id="se-slots" class="mt-3 space-y-3 empty:hidden"></div>
+    <section id="se-view" class="mt-4" aria-live="polite"><p class="text-sm text-stone-500 dark:text-stone-400">Wird geladen …</p></section>
+  </main>
+  <footer class="mx-auto max-w-4xl px-3 pb-8 pt-4 text-xs text-stone-500 dark:text-stone-400 sm:px-4">
+    <p><span id="se-asof"></span> · Quelle: Resultatlisten auf <a class="se-link" href="https://www.schlussgang.ch/" rel="noopener">schlussgang.ch</a> · Inoffizielle Auswertung, keine Wertung des Eidgenössischen Schwingerverbands.</p>
+    <p class="mt-1"><a class="se-link" href="about.html">Methodik und Grenzen</a> · <a class="se-link" href="https://github.com/stefan19893/Schwinger-ELO/issues" rel="noopener">Fehler melden</a></p>
+  </footer>
+  <script src="vendor/echarts.common.min.js" defer></script>
+  <script src="js/app.js" defer></script>
+  <script src="js/charts.js" defer></script>
+  <script src="js/compare.js" defer></script>
+</body>
+</html>
