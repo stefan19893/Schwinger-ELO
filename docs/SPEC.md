@@ -145,17 +145,20 @@ Standard chess ELO must be calibrated with the following domain parameters:
    - Teilverbandsfeste: $K = 32$
    - Kantonal- and Gauverbandsfeste (one Kranzfest tier): $K = 24$
    - Regional-/Rangschwinget and Bergschwinget without Kranz: $K = 16$
+   - These are the base values. The engine multiplies all of them by one factor, `elo_k_scale` (2.0 since 2026-10-03, see "As implemented"), so the effective values are $96 / 80 / 64 / 48 / 48 / 32$ with unchanged ratios between the tiers.
 4. **Seasonality & Inactivity Decay:**
    - At the beginning of each season (April), apply Mean Reversion:
      $$R_{t+1} = R_t \cdot (1 - \delta) + R_{\text{mean}} \cdot \delta \quad (\text{with } \delta \approx 0.10, R_{\text{mean}} = 1500)$$
+   - Implemented with $\delta = 0.05$ since 2026-10-03 (see "As implemented").
    - Athletes inactive for $> 1.5$ seasons receive provisional status flags.
 
 All model parameters live in `src/config.py` so they can be tuned without code changes.
 
 **As implemented (Phase 4, decisions of 2026-10-03 in `docs/progress/STATE.md`; evidence: `python -m src.cli elo --evaluate`):**
 - Initial rating 1500; the update is zero-sum per bout and symmetric in A / B (the sheets list the better-ranked athlete as A).
-- **Update order:** festivals in order `(date, fest_id)`; within a festival all bouts are scored against the pre-festival ratings and an athlete's changes are summed (`elo_update_mode = "festival"`). The Gang order is unreliable for ~2 % of the bouts and the sequential order predicts no better at these K-factors; `phase`, `gang` and `sequential` remain selectable.
-- **MoV:** `alpha = 1.0`, `BaselineDiff = 1.36` (the mean winner margin, so the average multiplier of a win is 1 and K keeps its meaning), wins only, grade of the winner minus grade of the loser, $\lambda$ clamped to $[0.5, 2.0]$: 0.64 / 0.89 / 1.14 for margins 1.00 / 1.25 / 1.50.
+- **Scale (decision of 2026-10-03 after the Phase 4 review, see `STATE.md`; the owner may overrule):** `elo_k_scale = 2.0` — every K-factor above is doubled (effective 96 / 80 / 64 / 48 / 48 / 32, tier ratios unchanged) — and `season_reversion_delta = 0.05`. With the original values (scale 1.0, $\delta = 0.10$) the ratings were compressed and under-confident: a favourite by 200–300 points was predicted 0.80 and scored 0.91 (now 0.80 vs 0.85), and the out-of-sample Brier score of the seasons 2021–26 was 0.1249 (now 0.1126). Cost: ratings move about twice as much per festival (established athletes: mean absolute change 26 instead of 13 points; a single ESAF or Bergkranzfest can move an athlete by more than 200 points, 101 such cases in the history, the largest 398). Reverting is a configuration change: `elo_k_scale = 1.0`, `season_reversion_delta = 0.10` reproduces the earlier ratings exactly.
+- **Update order (confirmed 2026-10-03):** festivals in order `(date, fest_id)`; within a festival all bouts are scored against the pre-festival ratings and an athlete's changes are summed (`elo_update_mode = "festival"`). The Gang order is unreliable for ~2 % of the bouts, and on equal information (predicting a festival from the ratings before it) the sequential order predicts no better, also at the doubled K (test Brier 0.1126 festival vs 0.1129 sequential); `phase`, `gang` and `sequential` remain selectable.
+- **MoV:** `alpha = 1.0`, `BaselineDiff = 1.36` (the mean winner margin, so the average multiplier of a win is 1 and K keeps its meaning; the term improves the Brier score by about 0.4 % at either scale), wins only, grade of the winner minus grade of the loser, $\lambda$ clamped to $[0.5, 2.0]$: 0.64 / 0.89 / 1.14 for margins 1.00 / 1.25 / 1.50.
 - **Seasons:** the reversion is applied to every athlete who already has a rating before the first festival on or after 1 April, once per 1 April crossed. The `season` shown in the outputs is the calendar year of the festival.
 - **Provisional:** fewer than 24 rated career bouts (`few_bouts`) or no bout for more than 1.5 seasons (`inactive`). Provisional athletes, `not_a_name` rows and athletes without bouts are rated but not ranked; 2011 is a burn-in season (rated, not ranked).
 - **Identity uncertainty:** every bout is rated; `athlete_ratings.parquet` marks athletes whose history rests on low-confidence identity rows (`identity_uncertain`).
@@ -172,7 +175,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`) |
 | `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse), then the identity evidence: `ranking_entries`, `portraits`, `clubs`, `athlete_evidence` |
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
-| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report) |
+| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/` |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |

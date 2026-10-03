@@ -26,7 +26,15 @@ Every stage is a subcommand of one CLI (used locally and in CI):
 
 ```bash
 python -m src.cli {crawl|parse|clean|elo|build|all|serve} [--sample] [--data-dir DIR]
+python -m src.cli elo --evaluate      # ratings + the evidence report behind the model parameters
 ```
+
+`elo --evaluate` re-runs the rating engine with other parameters (update order, MoV, K scale,
+mean reversion) and prints prediction error, calibration, rating drift and the identity
+sensitivity pass. The report is read-only (the ratings written are those of the configured
+model); one to two minutes on the full data. The model
+parameters live in `src/config.py` (`elo_k_scale`, `season_reversion_delta`, `mov_alpha`, ...) and
+can be overridden per run with `SCHWINGEN_<FIELD>` environment variables.
 
 ## Tests
 

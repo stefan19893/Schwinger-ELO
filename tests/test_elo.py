@@ -127,6 +127,57 @@ def test_k_factor_values_follow_spec_and_decisions() -> None:
                  "Gauverband": 24, "Regional": 16}
 
 
+@pytest.mark.parametrize("category, k", sorted(DEFAULT_K_FACTORS.items()))
+def test_k_scale_multiplies_every_k_factor(category: str, k: float) -> None:
+    """One multiplier for all tiers: effective K = k_scale * K[category]."""
+    r = final(frame(bout("a", "b", "WIN_A", cat=category)), k_scale=2.0)
+    assert r["a"] - 1500 == pytest.approx(2.0 * k * 0.5)
+    assert r["b"] - 1500 == pytest.approx(-2.0 * k * 0.5)
+    assert params(k_scale=2.0).k(category) == 2.0 * k
+    assert params().k(category) == k  # default scale 1: the spec's value
+
+
+def test_k_scale_two_gives_the_decided_effective_k_factors() -> None:
+    p = params(k_scale=2.0)
+    assert {c: p.k(c) for c in K} == {"ESAF": 96, "Bergkranz": 80, "Teilverband": 64,
+                                      "Kantonal": 48, "Gauverband": 48, "Regional": 32}
+    assert p.k_factors == K  # the base values stay as decided
+
+
+def test_k_scale_applies_to_the_step_by_step_rule_and_with_mov() -> None:
+    elo = SchwingElo(params(k_scale=2.0, mov_alpha=0.4, mov_baseline_diff=1.25))
+    elo.ratings = {"a": 1600.0, "b": 1500.0}
+    e = 1 / (1 + 10 ** (-100 / 400))
+    delta = elo.rate_bout("a", "b", "WIN_A", 10.0, 8.5, "Kantonal")
+    assert delta == pytest.approx(2.0 * 24 * 1.1 * (1 - e))
+    assert sum(elo.ratings.values()) == pytest.approx(3100.0)  # still zero-sum
+    draw = SchwingElo(params(k_scale=2.0))
+    draw.ratings = {"a": 1600.0, "b": 1500.0}
+    assert draw.rate_bout("a", "b", "DRAW") == pytest.approx(2.0 * 16 * (0.5 - e))
+
+
+@pytest.mark.parametrize("mode", ee.UPDATE_MODES)
+def test_k_scale_equals_scaled_k_factors_and_one_is_neutral(mode: str) -> None:
+    df = random_bouts()
+    kw = dict(update_mode=mode, mov_alpha=1.0, mov_baseline_diff=1.36)
+    plain = SchwingElo(params(**kw)).run(df)
+    one = SchwingElo(params(k_scale=1.0, **kw)).run(df)
+    pd.testing.assert_frame_equal(one.history, plain.history)  # k_scale = 1: unchanged
+    scaled = SchwingElo(params(k_scale=2.0, **kw)).run(df)
+    doubled = SchwingElo(params(k_factors={c: 2 * k for c, k in K.items()}, **kw)).run(df)
+    pd.testing.assert_frame_equal(scaled.history, doubled.history)
+    assert (scaled.bouts["k"] == 2 * plain.bouts["k"]).all()  # reported K is the effective one
+    change = (scaled.history["rating_after"] - scaled.history["rating_before"]).groupby(
+        scaled.history["fest_id"]).sum()
+    assert np.allclose(change, 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+def test_k_scale_must_be_positive_and_finite(bad: float) -> None:
+    with pytest.raises(ValueError, match="k scale"):
+        params(k_scale=bad)
+
+
 def test_unknown_category_is_an_error() -> None:
     with pytest.raises(ValueError, match="K-factor"):
         final(frame(bout("a", "b", cat="Dorffest")))
@@ -282,6 +333,10 @@ def test_params_validation_and_config() -> None:
         params(k_factors={"Regional": 0})
     p = EloParams.from_config(load_config(env={}))
     assert p.k_factors == K and p.initial == 1500 and p.scale == 400
+    # decision of 2026-10-03: K x 2 (tier ratios unchanged), delta 0.05
+    assert p.k_scale == 2.0 and p.reversion_delta == 0.05
+    assert p.k("ESAF") == 96 and p.k("Regional") == 32
+    assert p.update_mode == "festival" and p.mov_alpha == 1.0 and p.mov_baseline_diff == 1.36
     assert p.replace(update_mode="gang").update_mode == "gang"
     assert math.isclose(p.inactive_days, 1.5 * 365.25)
 
@@ -556,7 +611,8 @@ def test_burn_in_seasons_are_rated_but_not_ranked() -> None:
     result, table, seasons = er.compute(bouts, athletes_frame(("a", "x"), ("b", "x")), None, cfg)
     s = seasons.set_index(["season", "athlete_id"])
     assert s.loc[(2011, "a"), "burn_in"] and pd.isna(s.loc[(2011, "a"), "rank"])
-    assert s.loc[(2011, "a"), "rating_end"] == pytest.approx(1508.0)   # still rated
+    assert s.loc[(2011, "a"), "rating_end"] == pytest.approx(
+        1500 + cfg.elo_k_scale * 16 * 0.5)                             # still rated
     assert s.loc[(2012, "a"), "rank"] == 1 and not s.loc[(2012, "a"), "burn_in"]
     assert table.set_index("athlete_id").loc["a", "peak_fest_id"] == 2012  # peak outside burn-in
 
@@ -647,6 +703,37 @@ def test_sample_mode_lowers_the_provisional_threshold() -> None:
     assert load_config(env=env).provisional_min_bouts == 30
 
 
+def test_k_scale_and_delta_configuration() -> None:
+    cfg = load_config(env={})
+    assert cfg.elo_k_scale == 2.0 and cfg.season_reversion_delta == 0.05
+    assert cfg.k_factors == K                       # base values untouched by the scale
+    env = {"SCHWINGEN_ELO_K_SCALE": "1.0", "SCHWINGEN_SEASON_REVERSION_DELTA": "0.10"}
+    spec = load_config(env=env)
+    assert spec.elo_k_scale == 1.0 and spec.season_reversion_delta == 0.10
+    assert load_config({"elo_k_scale": 1.5}, env=env).elo_k_scale == 1.5  # override wins
+    for bad in ("0", "-2", "nan", "inf"):
+        with pytest.raises(ValueError, match="k scale"):
+            load_config(env={"SCHWINGEN_ELO_K_SCALE": bad})
+    with pytest.raises(ValueError, match="SCHWINGEN_ELO_K_SCALE"):
+        load_config(env={"SCHWINGEN_ELO_K_SCALE": "double"})
+
+
+def test_k_scale_one_reproduces_the_spec_numbers() -> None:
+    """Reverting = `elo_k_scale = 1.0` and delta 0.10: the values of the spec's rules."""
+    bouts = frame(bout("a", "b", date="2015-06-01", fest=1, cat="Regional"),
+                  bout("c", "d", date="2015-06-01", fest=1, cat="Regional"),
+                  bout("a", "c", date="2016-06-01", fest=2, cat="ESAF", ga=10.0, gb=8.5))
+    athletes = athletes_frame(*[(x, "unique_name") for x in "abcd"])
+    spec = cfg_with(elo_k_scale=1.0, season_reversion_delta=0.10, provisional_min_bouts=0)
+    r = er.compute(bouts, athletes, None, spec)[0].ratings
+    low, high = 1 + 1.0 * (1.25 - 1.36), 1 + 1.0 * (1.5 - 1.36)  # MoV 0.89 / 1.14
+    assert r["b"] == pytest.approx(1500 - 16 * low * 0.5 * 0.9)  # K 16, 10 % reversion
+    assert r["a"] == pytest.approx(1500 + 16 * low * 0.5 * 0.9 + 48 * high * 0.5)  # ESAF K 48
+    now = er.compute(bouts, athletes, None, cfg_with(provisional_min_bouts=0))[0].ratings
+    assert now["b"] == pytest.approx(1500 - 32 * low * 0.5 * 0.95)   # K 32, 5 % reversion
+    assert now["a"] == pytest.approx(1500 + 32 * low * 0.5 * 0.95 + 96 * high * 0.5)
+
+
 def test_invalid_elo_configuration_is_rejected() -> None:
     with pytest.raises(ValueError, match="update mode"):
         load_config(env={"SCHWINGEN_ELO_UPDATE_MODE": "bogus"})
@@ -723,6 +810,36 @@ def test_calibration_experience_and_drift_tables() -> None:
     assert set(ev.season_metrics(res.bouts).columns) == {"n", "brier", "log_loss"}
     scan = ev.parameter_scan(random_bouts(), params(), (1, 2), (0.0,))
     assert list(scan.index) == ["K x 1", "K x 2", "delta = 0"]
+    # the K scan uses absolute multipliers on the base K-factors, whatever is configured
+    again = ev.parameter_scan(random_bouts(), params(k_scale=2.0), (1, 2), ())
+    assert again.loc["K x 2", "train_brier"] == pytest.approx(scan.loc["K x 2", "train_brier"])
+    assert again.loc["K x 1", "train_brier"] == pytest.approx(scan.loc["K x 1", "train_brier"])
+    assert scan.loc["K x 1", "train_brier"] != scan.loc["K x 2", "train_brier"]
+
+
+def test_scale_grid_and_mode_comparison_by_scale() -> None:
+    df = random_bouts()
+    athletes = athletes_frame(*[(a, "unique_name") for a in sorted(
+        set(df["athlete_a_id"]) | set(df["athlete_b_id"]))])
+    cfg = cfg_with(provisional_min_bouts=8, elo_first_ranked_season=2012)
+    grid = ev.scale_grid(df, athletes, None, cfg, variants=((1.0, 0.10), (2.0, 0.05)),
+                         top_n=5)
+    assert list(grid.index) == [(1.0, 0.10), (2.0, 0.05)]
+    assert grid.loc[(1.0, 0.10), "top20_overlap"] == min(20, grid.loc[(1.0, 0.10), "ranked"])
+    # a doubled K moves the ratings more and spreads the scale
+    assert grid["max_fest_change"].is_monotonic_increasing
+    assert grid["sd_ranked"].is_monotonic_increasing
+    assert grid["top5_mean_abs_change"].is_monotonic_increasing
+    # the current configuration is one of the rows
+    _, table, _ = er.compute(df, athletes, None, cfg)
+    assert grid.loc[(2.0, 0.05), "rank1"] == pytest.approx(
+        table.loc[table["ranked"], "rating"].max())
+    modes = ev.compare_update_modes_by_scale(
+        df, params(mov_alpha=1.0, mov_baseline_diff=1.36), (1.0, 2.0))
+    assert list(modes.index) == [(c, m) for c in (1.0, 2.0) for m in ee.UPDATE_MODES]
+    fest = modes.xs("festival", level="mode")
+    assert np.allclose(fest["train_brier"], fest["train_brier_prefest"])  # same information
+    assert fest["train_brier"].nunique() == 2
 
 
 def test_identity_sensitivity_pass() -> None:
@@ -748,8 +865,10 @@ def test_cli_elo_evaluate_prints_report(sample_run: Path,
                                         capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["elo", "--sample", "--evaluate", "--data-dir", str(sample_run.parent)]) == 0
     out = capsys.readouterr().out
-    for section in ("update modes", "MoV grid", "calibration by rating gap",
-                    "identity sensitivity", "rating distribution"):
+    assert "K x 2" in out and "delta=0.05" in out
+    for section in ("update modes", "update modes by K scale", "MoV grid", "K scale x delta",
+                    "calibration by rating gap", "identity sensitivity",
+                    "rating distribution"):
         assert section in out
 
 
@@ -835,7 +954,8 @@ def test_real_esaf_winners_lead_after_their_festival(real: Real) -> None:
     fests = pd.read_parquet(real.cfg.processed_dir / "festivals.parquet")
     h = real.result.history
     for year, king in [(2013, "Sempach Matthias"), (2016, "Glarner Matthias"),
-                       (2019, "Stucki Christian"), (2022, "Wicki Joel")]:
+                       (2019, "Stucki Christian"), (2022, "Wicki Joel"),
+                       (2025, "Orlik Armon")]:
         fid = fests[(fests["eidg_type"] == "ESAF") & (fests["year"] == year)]["fest_id"].iloc[0]
         field = h[h["fest_id"] == fid].sort_values("rating_after", ascending=False)
         assert real.athlete(king) in set(field["athlete_id"].head(3)), (year, king)
@@ -849,7 +969,7 @@ def test_real_ratings_are_zero_sum_and_centred(real: Real) -> None:
     assert np.allclose(change, 0.0, atol=1e-6)
     assert np.mean(list(real.result.ratings.values())) == pytest.approx(1500.0, abs=1e-6)
     assert h[["rating_before", "rating_after"]].notna().all().all()
-    assert h["rating_after"].between(900, 2700).all()   # nothing runs away
+    assert h["rating_after"].between(800, 2900).all()   # nothing runs away (844 .. 2823)
 
 
 def test_real_rankings_exclude_garbage_and_provisional_athletes(real: Real) -> None:
@@ -872,7 +992,10 @@ def test_real_rankings_exclude_garbage_and_provisional_athletes(real: Real) -> N
 def test_real_no_inflation_after_burn_in(real: Real) -> None:
     drift = ev.season_drift(real.result.history, real.cfg.provisional_min_bouts)
     full = drift.loc[[y for y in drift.index if y >= 2016 and y != 2020]]
-    assert full["mean"].between(1500, 1560).all()
+    # the active athletes sit above 1500 (the mean of all rated athletes, retired ones
+    # included, is exactly 1500): 1545 .. 1578 at K x 2, delta 0.05
+    assert full["mean"].between(1500, 1600).all()
+    assert full["mean"].max() - full["mean"].min() < 40
     assert full["top20_mean"].max() - full["top20_mean"].min() < 120
     assert (drift["newcomer_mean"].loc[2012:] < 1500).all()  # newcomers are below average
 
@@ -880,7 +1003,7 @@ def test_real_no_inflation_after_burn_in(real: Real) -> None:
 def test_real_predictions_beat_a_coin_flip_and_are_monotone(real: Real) -> None:
     d = real.result.bouts
     test = ev.prediction_metrics(ev.in_seasons(d, ev.TEST))
-    assert test["brier"] < 0.14 and test["log_loss"] < 0.56   # E = 0.5: 0.20 / 0.693
+    assert test["brier"] < 0.12 and test["log_loss"] < 0.51   # E = 0.5: 0.20 / 0.693
     cal = ev.calibration_table(d[d["season"] >= 2013])
     assert cal["observed"].is_monotonic_increasing
     assert (cal["observed"] > 0.5).all()
@@ -899,3 +1022,43 @@ def test_real_model_is_symmetric_and_deterministic(real: Real) -> None:
     pd.testing.assert_frame_equal(again.history, real.result.history)
     swapped = SchwingElo(real.result.params).run(mirrored(real.bouts)).ratings
     assert max(abs(swapped[a] - r) for a, r in real.result.ratings.items()) < 1e-6
+
+
+def test_real_k_scale_decision(real: Real) -> None:
+    """K x 2 / delta 0.05 against the spec's values (`elo_k_scale = 1.0`, delta 0.10):
+    better predictions, a less under-confident and wider scale, about twice the
+    movement per festival - and nearly the same order of athletes."""
+    spec_params = real.result.params.replace(k_scale=1.0, reversion_delta=0.10)
+    spec, spec_table, _ = er.compute(real.bouts, real.athletes, real.identity_map, real.cfg,
+                                     spec_params)
+    assert real.result.params.k_scale == 2.0 and real.result.params.reversion_delta == 0.05
+
+    def brier(result: ee.EloResult) -> float:
+        return ev.prediction_metrics(ev.in_seasons(result.bouts, ev.TEST))["brier"]
+
+    def gap_error(result: ee.EloResult) -> float:
+        d = result.bouts
+        cal = ev.calibration_table(d[d["season"] >= 2013], bins=(200, 300))
+        return float((cal["observed"] - cal["predicted"]).iloc[0])
+
+    def moves(result: ee.EloResult) -> pd.Series:
+        h = result.history[result.history["bouts_before"] >= 24]
+        return (h["rating_after"] - h["rating_before"]).abs()
+
+    assert brier(real.result) < brier(spec) - 0.008          # 0.1126 vs 0.1249
+    assert 0 < gap_error(real.result) < 0.06 < gap_error(spec)   # +0.044 vs +0.111
+    ranked, spec_ranked = (t[t["ranked"]].sort_values("rank") for t in (real.table, spec_table))
+    assert 1.3 < ranked["rating"].std() / spec_ranked["rating"].std() < 1.6   # 295 vs 201
+    assert 1.8 < moves(real.result).mean() / moves(spec).mean() < 2.2         # 26.0 vs 12.9
+    assert moves(real.result).max() < 450                                     # 398 vs 172
+    assert len(set(ranked.head(20)["athlete_id"]) & set(spec_ranked.head(20)["athlete_id"])) >= 17
+    assert len(set(ranked.head(100)["athlete_id"])
+               & set(spec_ranked.head(100)["athlete_id"])) >= 90
+    # the numbers recorded in docs/progress (only comparable on the same data)
+    if str(real.result.as_of.date()) == "2026-09-27" and len(real.result.bouts) == 491_597:
+        assert brier(spec) == pytest.approx(0.12495, abs=5e-5)
+        assert spec_ranked["rating"].iloc[0] == pytest.approx(2408.6, abs=0.1)
+        assert spec_ranked["full_name"].iloc[0] == "Staudenmann Fabian"
+        assert brier(real.result) == pytest.approx(0.11263, abs=5e-5)
+        assert ranked["rating"].iloc[0] == pytest.approx(2703.4, abs=0.1)
+        assert ranked["full_name"].iloc[0] == "Giger Samuel"
