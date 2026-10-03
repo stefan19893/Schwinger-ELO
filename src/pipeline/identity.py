@@ -10,18 +10,23 @@ Teilverband, residence, birth year, schlussgang portrait). The cascade:
    evidence-only pseudo cluster (club, city, Teilverband, birth year, ESV namesake
    number), so the registry can anchor rows from the years before portraits were
    linked (2011-22). Duplicate portraits of one person are collapsed (:func:`_registry`).
-3. **Atoms.** Rows of one portrait are one person (hard). Other rows with the same
-   signature (club, residence, birth year, Teilverband, printed ordinal) form an
-   atom - unless the signature occurs twice on one date (namesakes with identical
-   evidence): those rows stay single.
+   An anchor is attached to rows only on evidence beyond the name
+   (:func:`anchor_supported`).
+3. **Atoms.** Rows of one portrait are one person (hard; a portrait linked to two
+   rows of one date is not trusted). Other rows with the same signature (club,
+   residence, birth year, Teilverband, printed ordinal) form an atom - unless the
+   signature occurs twice on one date (namesakes with identical evidence): those rows
+   stay single. A signature that returns after >= 5 seasons starts a new atom.
 4. **Agglomeration** inside the block, best pair first (:func:`agglomerate`,
    :func:`pair_score`). Hard cannot-links (:func:`cannot_link`): same festival or
    date, different portraits, birth years >= 2 apart, an implausible age (< 14 /
    > 60) at a festival. The score is a prior for "same name" plus / minus evidence;
    two clusters merge while the best score is > 0. Pairs with an established side go
-   first. A cluster that fits two persons of the block but can be neither is taken
-   apart and its rows are assigned one by one. Assignments with a nearly as good,
-   incompatible alternative are flagged ``ambiguous``.
+   first; an unusual age (< 16 / > 40) decides between candidates but does not split
+   off rows that have no other candidate. A cluster that fits two persons of the
+   block but collides with both by date is taken apart and its rows are assigned one
+   by one. Rows with a nearly as good alternative person are flagged ``ambiguous``
+   (:func:`_flag_ambiguous`, judged row by row on the final persons).
 5. **One portrait, several spellings** are merged (hard), then **spelling variants**:
    clusters of near-identical keys (``?`` wildcard, spacing, swapped order, nickname,
    one edit) merge only under the rules of :func:`_variant_allowed` - never when the
@@ -39,7 +44,10 @@ evidence. Nothing is tuned to individual names.
 
 Every raw row gets ``evidence`` (the strongest evidence it shares with the rest of
 its identity) and a ``confidence``; every athlete lists why its name block was split
-and which uncertainty flags apply (see :data:`CONFIDENCE`).
+and which uncertainty flags apply (see :data:`CONFIDENCE`). Rows capped at 0.4:
+``|ambiguous`` and ``|gap`` (the smaller side of a career gap of >= 8 seasons that no
+club, residence or birth year bridges). The resolver raises if an identity ends up
+with two rows on one date or with two portraits (:func:`_check_invariants`).
 """
 
 from __future__ import annotations

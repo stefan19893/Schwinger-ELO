@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 3 — Identity cleaning (in review, branch `phase-3-cleaning`)
-**Next action:** run phase-reviewer for Phase 3 (exit criteria in `phase-3-cleaning.md`); then ask the user before starting Phase 4. Items to confirm are marked **To confirm** in Decisions (Teilverband-only splits, `ambiguous` row assignment, portrait cache policy) and under Open questions.
+**Next action:** user sign-off on Phase 3, then Phase 4. (Phase review done 2026-10-03, review fixes applied — see "Review fixes" in `phase-3-cleaning.md`. Still marked **To confirm** in Decisions: Teilverband-only splits, `ambiguous` row assignment.)
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -115,6 +115,17 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — `ResolverInput.portraits` (optional registry frame) added to the resolver contract; `identity_map.parquet` columns unchanged (`evidence` = method, `confidence`).
 - 2026-10-03 — Portrait fixtures anonymised: birthdays reduced to `<birth year>-01-01`, ESV licence numbers replaced by `900000 + nid` (also in the `title` strings) in `tests/fixtures/schlussgang/portraits_page1.json` and `tests/fixtures/sample/schlussgang/portraits_sample.json` — public repo; tests only need the response structure and the birth year. Names, residences and clubs stay: they are printed in the public result lists that are fixtures anyway. New portrait fixtures must be anonymised the same way.
 - 2026-10-03 — `crawl --portraits-only` / `--no-portraits` and the club rule (canonical = ESV id or ≥ 20 observations and ≥ 20 Teilverband votes) kept as built.
+- 2026-10-03 — **Phase 3 review fixes (resolver parameters, `src/pipeline/identity.py`):** `OLD_AGE = 40`, `W_OLD = -2` (an implied age > 40 occurs on 0.6 % of portrait-linked rows); both age penalties (< 16, > 40) only decide between candidates — three agglomeration passes, the second one merges pairs that fail on the age penalty alone — reviewer S5 / M1; a plain penalty split 15-year-olds and veterans who had nobody else to belong to.
+- 2026-10-03 — A registry portrait is attached to rows only on evidence beyond the name (club, birth year, residence, ESV namesake number) — the registry also holds veterans, officials and children (median birth year 2011); 48 name-only anchors dropped, those athletes keep their rows but have no slug / registry birth year.
+- 2026-10-03 — `ambiguous` is judged row by row on the final persons of a name block (margin 0.75, shared opponents excluded, same-date rows only when interchangeable), not at merge time — the flag was order-dependent and got lost when the alternative was a registry anchor. 671 → 884 rows.
+- 2026-10-03 — Rows are taken apart ("assigned one by one") only when their cluster collides with two namesakes **by date**; signature atoms end at a gap of ≥ 5 seasons — fixes the chained Schmid Reto merge and father / son atoms.
+- 2026-10-03 — `UNBRIDGED_GAP_SEASONS = 8`: nothing shared across the gap → smaller side `|gap`, confidence ≤ 0.4, still one identity (the earlier finding stands: a gap rule that splits breaks unique names in sparse data). Gaps of 5–7 seasons remain a flag.
+- 2026-10-03 — A printed birth year implying age 8–13 is kept as evidence (`YOUTH_MIN_AGE = 8`, leaked youth entries, 22 rows); the row is exempt from the age rules. Below 8 it is treated as a misprint and ignored, as before.
+- 2026-10-03 — A Teilverband the other cluster already shows on ≥ 2 rows is no evidence against a merge (`TV_SEEN_ROWS = 2`; double membership is proven for 14 portrait-linked athletes); a first single row in another Teilverband still splits. Residence keys drop "& Environs" / "et environs" / "u. Umgebung".
+- 2026-10-03 — Blanket association codes are handled in the evidence build, not the resolver (`evidence.MIN_UNIFORM_ROWS = 15`): one code on all coded rows of a ranking list / statistic sheet → source `festival`, no club vote. Needs `parse` (offline) after the change; `athlete_evidence` and `clubs` are rebuilt on every `parse` anyway.
+- 2026-10-03 — Clubs: `clubs._KEY_ALIASES` (Zurzach = Zurzibiet, Mythenverband = am Mythen, Schangnau-Siehen = Siehen, Weite-Wartau = Wartau, Ticino = Tessin, Basel = Basel-Stadt); ESV clubs are displayed under the ESV's name; the resolver compares clubs by `club_key`; upper-case labels of ≤ 3 letters without ESV id (`TO`, `RO`, `RA`, `ST`) are linking evidence but never `athletes.club`. `Schaffhausen`, `Tessin`, `Basel-Stadt` stay as club labels (cantonal associations without an ESV club term; not verified).
+- 2026-10-03 — Uniqueness guard: the evidence resolver raises on an identity with two rows on one date, two portraits, or a split portrait; `assemble` only counts `same_festival_rows` / `same_date_rows` (and `report` warns) so that other resolvers' over-merges still end up as `self_bout` rejects instead of aborting the run. A portrait linked to two rows of one date loses both links.
+- 2026-10-03 — Phase 3 exit criterion and SPEC §4.1 "Handling Ambiguity" reworded to the portrait / registry rule (SPEC §3 tree updated) — review must-fix M2.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -127,11 +138,12 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.
 - How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
 
-- Phase 3: the portrait fixtures (`tests/fixtures/**/portraits_*.json`) contain birthdays, residences and ESV licence numbers of real athletes, copied from the public schlussgang API — fine to keep in the (public) repo, or reduce / pseudonymise before pushing? → confirm with user.
-- Phase 3: portrait list cache — 30-day refresh (current code) or cached forever? → confirm with user (see Decisions 2026-10-03).
+- ~~Phase 3: portrait fixtures with birthdays / licence numbers~~ — resolved 2026-10-03 (anonymised, see Decisions).
+- ~~Phase 3: portrait list cache policy~~ — resolved 2026-10-03 (30-day refresh kept, see Decisions).
 - Phase 3: 34 Schlussranglisten have no usable text layer (16 scans, 12 glyph-id layers incl. Zug Kantonal 2019 and Schwarzsee 2013, 6 one-off layouts; 1,316 raw athletes without residence/club) — accept, or invest in a text-order fallback parser?
 - ~~Phase 3: use the 10,184 portraits (name, birthday, club, ESV licence number) as an identity registry for rows without a `field_ref_portrait` link (everything before 2023)? 71.7 % of linked ranking rows have a name that is unique among the portraits, 8.0 % an ambiguous one → decide in task 2.~~ — resolved 2026-10-03: yes, as anchors (see Decisions).
-- Phase 3 → 4: how should the ELO engine treat low-confidence identity rows (`identity_map.confidence` ≤ 0.4: 1,396 rows; flags `ambiguous`, `fragment`, `career_gap`)? → decide in Phase 4.
+- Phase 3 → 4: how should the ELO engine treat low-confidence identity rows (`identity_map.confidence` ≤ 0.4: 1,416 rows after the review fixes = 878 `ambiguous`, 384 name-only rows among namesakes, 27 `gap`, 122 `not_a_name`, 5 other)? Reviewer's recommendation in `phase-4-elo.md` ("Known inputs from Phase 3 review") → decide in Phase 4.
+- Phase 3: 40 identity pairs are split on Teilverband alone (30 with a side of ≤ 2 rows) and `Schaffhausen` / `Tessin` / `Basel-Stadt` are shown as clubs for 58 athletes — accept, or review by hand?
 
 
 ## Blockers
