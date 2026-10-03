@@ -241,6 +241,268 @@ def test_one_portrait_under_two_spellings_is_one_person() -> None:
     assert ident["evidence"].tolist() == ["name+portrait", "variant:portrait|name+portrait"]
 
 
+# ------------------------------------------------------------------ review fixes (2026-10-03)
+def _same_club_portraits(birth_a: str, birth_b: str) -> list[dict]:
+    return [portrait(19828, "Christen", "Thomas", birth_a, "Nidwalden", "Ennetmoos", "Innerschweiz"),
+            portrait(38050, "Christen", "Thomas", birth_b, "Nidwalden", "Ennetmoos", "Innerschweiz")]
+
+
+def test_equally_fitting_anchors_are_chosen_by_age_not_by_portrait_id() -> None:
+    """M1: father (b. 1964) and son (b. 1992) with the same club and village."""
+    rows = [row(i, f"20{18 + i}-05-01", "Christen Thomas", club="Nidwalden", residence="Ennetmoos",
+                tv="ISV") for i in range(5)]
+    m, ident, ath = resolve(rows, _same_club_portraits("1964-12-26", "1992-06-17"))
+    assert set(m.values()) == {"christen-thomas-p38050"}       # aged 26-30, not 54-58
+    assert ath.iloc[0]["birth_year"] == 1992
+    assert not ident["evidence"].str.contains("ambiguous").any() and ident["confidence"].min() > 0.9
+    # the registry order must not matter
+    m2, _, _ = resolve(rows, list(reversed(_same_club_portraits("1964-12-26", "1992-06-17"))))
+    assert m2 == m
+
+
+def test_rows_between_two_equally_fitting_anchors_are_flagged() -> None:
+    """M1: the alternative is a registry anchor (no rows) - the flag goes to the rows."""
+    rows = [row(i, f"20{18 + i}-05-01", "Christen Thomas", club="Nidwalden", residence="Ennetmoos",
+                tv="ISV") for i in range(5)]
+    m, ident, ath = resolve(rows, _same_club_portraits("1990-12-26", "1992-06-17"))
+    assert len(set(m.values())) == 1
+    assert ident["evidence"].str.endswith("|ambiguous").all() and (ident["confidence"] <= 0.4).all()
+    assert "ambiguous_rows=5" in ath.iloc[0]["evidence"] and ath.iloc[0]["confidence"] <= 0.4
+
+
+def test_old_age_does_not_split_rows_that_have_nobody_else() -> None:
+    """The > 40 penalty decides between candidates; a veteran keeps his rows."""
+    reg = [portrait(504, "Dejung", "Anton", "1970-01-01", "Davos", "Davos", "Nordostschweiz")]
+    rows = [row(1, "2011-05-01", "Dejung Anton", residence="Davos", tv="NOSV"),
+            row(2, "2012-05-01", "Dejung Anton", residence="Davos", tv="NOSV"),
+            row(3, "2013-05-01", "Dejung Anton")]            # aged 43, no evidence at all
+    m, _, ath = resolve(rows, reg)
+    assert set(m.values()) == {"dejung-anton-p504"} and len(ath) == 1
+
+
+def test_registry_anchor_needs_more_than_the_name() -> None:
+    """Reviewer: 11 Buttisholz rows were attached by name only to a b. 1958 portrait."""
+    reg = [portrait(2849, "Arnold", "Thomas", "1958-12-21", "Bürglen", "Unterschächen", "Innerschweiz")]
+    rows = [row(i, f"201{i}-05-01", "Arnold Thomas", residence="Buttisholz", tv="ISV")
+            for i in range(1, 4)]
+    m, _, ath = resolve(rows, reg)
+    a = ath.iloc[0]
+    assert len(ath) == 1 and a.name == f"arnold-thomas-{rows[0]['athlete_raw_id']}"
+    assert pd.isna(a["birth_year"]) and pd.isna(a["slug"]) and a["evidence"] == "unique_name"
+    # with the village it is the registered person
+    reg[0]["city"] = "Buttisholz"
+    reg[0]["birthday"] = "1988-12-21"
+    assert set(resolve(rows, reg)[0].values()) == {"arnold-thomas-p2849"}
+
+
+def _schmid_reto() -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    reg = [portrait(2159, "Schmid", "Reto", "2007-06-05", "Frutigen", "Frutigen", "Bern"),
+           portrait(37904, "Schmid", "Reto", "2016-06-18", "Frutigen", "Frutigen", "Bern")]
+    dates = ["2011-06-05", "2012-06-24", "2013-08-04"]
+    frutigen = [row(10 + i, d, "Schmid Reto", residence="Frutigen", tv="BKSV", birth_year="1980")
+                for i, d in enumerate(dates)]
+    frutigen += [row(20, "2012-07-01", "Schmid Reto", residence="Frutigen"),       # no code
+                 row(21, "2013-07-01", "Schmid Reto", residence="Frutigen", tv="BKSV"),
+                 row(22, "2014-07-01", "Schmid Reto", club="Frutigen", residence="Frutigen", tv="BKSV"),
+                 row(23, "2016-07-01", "Schmid Reto", club="Frutigen", residence="Frutigen", tv="BKSV")]
+    muttenz = [row(30 + i, d, "Schmid Reto", club="Muttenz", residence="Münchenstein", tv="NWSV")
+               for i, d in enumerate(dates + ["2014-08-01"])]
+    son = [row(40 + i, f"202{3 + i}-05-01", "Schmid Reto", club="Frutigen", residence="Frutigen",
+               tv="BKSV") for i in range(4)]
+    loose = [row(50, "2013-09-01", "Schmid Reto")]
+    return reg, frutigen, muttenz, son, loose
+
+
+def test_no_chained_merge_across_a_same_date_collision() -> None:
+    """S1: Frutigen (b. 1980) and Muttenz meet on three dates. The Frutigen rows used
+    to be taken apart because they fit two registry namesakes (b. 2007 / 2016) they
+    cannot be; row by row they then chained into the Muttenz identity."""
+    reg, frutigen, muttenz, son, loose = _schmid_reto()
+    m, ident, ath = resolve(frutigen + muttenz + son + loose, reg)
+    assert len(set(ids(m, frutigen))) == 1 and len(set(ids(m, muttenz))) == 1
+    assert ids(m, frutigen)[0] != ids(m, muttenz)[0]            # incl. the colliding rows
+    assert set(ids(m, son)) == {"schmid-reto-p2159"}            # aged 16+, not the father at 43+
+    assert ids(m, son)[0] != ids(m, frutigen)[0]
+    assert ath.loc[ids(m, frutigen)[0], "birth_year"] == 1980
+    assert len(ath) == 3                                        # no fragment
+    per_athlete = pd.DataFrame(frutigen + muttenz + son + loose).assign(
+        a=ids(m, frutigen + muttenz + son + loose))
+    assert not per_athlete.duplicated(["a", "fest_date"]).any()
+    assert (per_athlete.groupby("a")["sub_association"].nunique() <= 1).all()
+    # the son's rows are decided by age, not flagged
+    assert not ident.loc[[r["athlete_raw_id"] for r in son], "evidence"].str.contains("ambiguous").any()
+
+
+def test_father_and_son_with_the_same_club_and_village() -> None:
+    """S2: rows 2011 and 2023+, registry portraits b. 1975 and b. 2007 (Beglinger)."""
+    reg = [portrait(490, "Beglinger", "Fridolin", "1975-03-06", "Niederurnen u. Umgebung", "Mollis",
+                    "Nordostschweiz"),
+           portrait(1970, "Beglinger", "Fridolin", "2007-01-31", "Niederurnen u. Umgebung", "Mollis",
+                    "Nordostschweiz")]
+    old = [row(i, f"2011-0{i}-01", "Beglinger Fridolin", residence="Mollis", tv="NOSV")
+           for i in range(4, 8)]
+    new = [row(10 + i, f"202{3 + i // 2}-0{5 + i % 2}-01", "Beglinger Fridolin",
+               club="Niederurnen u. Umgebung", residence="Mollis", tv="NOSV") for i in range(6)]
+    m, _, ath = resolve(old + new, reg)
+    assert set(ids(m, old)) == {"beglinger-fridolin-p490"}
+    assert set(ids(m, new)) == {"beglinger-fridolin-p1970"}
+    assert sorted(ath["birth_year"]) == [1975, 2007]
+    assert not ath["evidence"].str.contains("career_gap").any()
+
+
+def test_same_evidence_after_a_long_gap_is_not_glued_to_the_old_rows() -> None:
+    """S2: club and village are printed in both periods; only the son is registered."""
+    reg = [portrait(1970, "Beglinger", "Fridolin", "2007-01-31", "Niederurnen u. Umgebung", "Mollis",
+                    "Nordostschweiz")]
+    old = [row(i, f"201{i}-05-01", "Beglinger Fridolin", club="Niederurnen u. Umgebung",
+               residence="Mollis", tv="NOSV") for i in range(4, 7)]       # the son was 7-9
+    new = [row(10 + i, f"202{3 + i}-05-01", "Beglinger Fridolin", club="Niederurnen u. Umgebung",
+               residence="Mollis", tv="NOSV") for i in range(3)]
+    m, _, ath = resolve(old + new, reg)
+    assert set(ids(m, new)) == {"beglinger-fridolin-p1970"}
+    assert len(set(ids(m, old))) == 1 and ids(m, old)[0] != ids(m, new)[0]
+    assert "(age)" in ath.loc[ids(m, old)[0], "evidence"]
+
+
+def test_unbridged_gap_caps_the_smaller_side() -> None:
+    """S2: >= 8 seasons apart and nothing shared: still one identity (a plain gap rule
+    split unique names in sparse data), but the smaller side is capped at 0.4."""
+    old = [row(1, "2011-05-01", "Wicki Markus", residence="Sörenberg")]
+    new = [row(2 + i, f"202{1 + i}-05-01", "Wicki Markus", club="Rottal", residence="Ruswil")
+           for i in range(3)]
+    m, ident, ath = resolve(old + new)
+    assert len(set(m.values())) == 1
+    o = ident.loc[old[0]["athlete_raw_id"]]
+    assert o["evidence"].endswith("|gap") and o["confidence"] <= 0.4
+    assert ident.loc[[r["athlete_raw_id"] for r in new], "confidence"].min() >= 0.9
+    assert ath.iloc[0]["evidence"] == "career_gap=9;unbridged_gap_rows=1"
+    # a shared village bridges the gap
+    old[0]["residence"] = "Ruswil"
+    _, ident, ath = resolve(old + new)
+    assert ident["confidence"].min() >= 0.9 and ath.iloc[0]["evidence"] == "career_gap=9"
+    # 7 seasons: flag only
+    old[0].update(residence="Sörenberg", fest_date="2013-05-01", fest_year=2013)
+    _, ident, ath = resolve(old + new)
+    assert ident["confidence"].min() >= 0.85 and ath.iloc[0]["evidence"] == "career_gap=7"
+
+
+def test_fifteen_year_old_without_evidence_joins_his_only_candidate() -> None:
+    """S5: Hallenschwinget 2012 without any evidence; the career starts in 2013."""
+    reg = [portrait(853, "Schmid", "Patrick", "1997-03-01", "Wattwil", "Wattwil", "Nordostschweiz")]
+    career = [row(i, f"201{i}-05-01", "Schmid Patrick", residence="Wattwil", tv="NOSV")
+              for i in range(3, 7)]
+    young = [row(9, "2012-12-01", "Schmid Patrick")]             # aged 15
+    child = [row(8, "2010-12-01", "Schmid Patrick")]             # aged 13: cannot be him
+    m, ident, ath = resolve(career + young + child, reg)
+    assert set(ids(m, career + young)) == {"schmid-patrick-p853"}
+    assert ids(m, child) != ids(m, young) and len(ath) == 2
+    _, ident, _ = resolve(career + young, reg)
+    assert not ident["evidence"].str.contains("ambiguous").any()
+
+
+def test_fifteen_year_old_without_evidence_goes_to_the_other_candidate() -> None:
+    """S5: with a second candidate the age penalty decides."""
+    reg = [portrait(853, "Schmid", "Patrick", "1997-03-01", "Wattwil", "Wattwil", "Nordostschweiz")]
+    career = [row(i, f"201{i}-05-01", "Schmid Patrick", residence="Wattwil", tv="NOSV")
+              for i in range(3, 7)]
+    other = [row(20 + i, f"201{i}-06-01", "Schmid Patrick", residence="Thun", tv="BKSV",
+                 birth_year="1988") for i in range(1, 5)]
+    young = [row(9, "2012-12-01", "Schmid Patrick")]
+    m, _, ath = resolve(career + other + young, reg)
+    assert ids(m, young) == ids(m, other[:1]) and len(ath) == 2
+
+
+def test_leaked_youth_row_keeps_its_birth_year() -> None:
+    """Reviewer (Reichmuth Marco): an 11-year-old printed with his birth year in an
+    active list is the b. 2005 namesake, not the adult; later rows follow his club."""
+    reg = [portrait(13416, "Reichmuth", "Marco", "1997-11-06", "Cham-Ennetsee", "Uffikon", "Innerschweiz"),
+           portrait(1680, "Reichmuth", "Marco", "2005-05-04", "Einsiedeln", "Rothenthurm", "Innerschweiz")]
+    adult = [row(i, f"201{i}-05-01", "Reichmuth Marco", club="Cham-Ennetsee", residence="Cham",
+                 tv="ISV") for i in range(4, 9)]
+    youth = [row(20, "2016-08-01", "Reichmuth Marco (2005)", club="Einsiedeln",
+                 residence="Rothenthurm SZ", tv="ISV", birth_year="2005")]
+    later = [row(21 + i, f"202{1 + i}-06-01", "Reichmuth Marco", club="Einsiedeln",
+                 residence="Rothenthurm", tv="ISV") for i in range(3)]
+    m, _, ath = resolve(adult + youth + later, reg)
+    assert set(ids(m, adult)) == {"reichmuth-marco-p13416"}
+    assert set(ids(m, youth + later)) == {"reichmuth-marco-p1680"} and len(ath) == 2
+    # an impossible age (4) is still not evidence
+    typo = [row(30, "2016-09-01", "Reichmuth Marco (2012)", club="Cham-Ennetsee", birth_year="2012")]
+    m, _, _ = resolve(adult + typo, reg)
+    assert ids(m, typo) == ids(m, adult[:1])
+
+
+def test_one_portrait_twice_on_one_date_is_not_one_person() -> None:
+    """S6: a wrong portrait link must not put one athlete at two festivals in a day."""
+    reg = [portrait(5, "Kennel", "Stefan", "1995-01-01", "Rigiverband", "Arth", "Innerschweiz")]
+    known = [row(1, "2023-05-01", "Kennel Stefan", portrait_id=5.0, club="Rigiverband", tv="ISV")]
+    home = row(2, "2024-05-01", "Kennel Stefan", portrait_id=5.0, club="Rigiverband", tv="ISV")
+    away = row(3, "2024-05-01", "Kennel Stefan", portrait_id=5.0, club="Wil", tv="NOSV")
+    same_sheet = [row(4, "2025-05-01", "Kennel Stefan", portrait_id=5.0, club="Rigiverband"),
+                  row(4, "2025-05-01", "Kennel Stefan", portrait_id=5.0, club="Wil")]
+    rows = known + [home, away] + same_sheet
+    m, ident, ath = resolve(rows, reg)
+    assert m[home["athlete_raw_id"]] != m[away["athlete_raw_id"]]
+    assert ids(m, same_sheet)[0] != ids(m, same_sheet)[1]
+    assert ids(m, [home, same_sheet[0]]) == ids(m, known) * 2   # the club decides
+    assert len(ath) == 2
+    frame = pd.DataFrame(rows).assign(a=ids(m, rows))
+    assert not frame.duplicated(["a", "fest_date"]).any()
+    # the untrusted links are not reported as portrait evidence
+    assert ident.loc[away["athlete_raw_id"], "evidence"] != "name+portrait"
+
+
+def test_resolver_checks_its_own_invariants() -> None:
+    two = idn.Cluster(order=0, key="x", rows=[0, 1])
+    with pytest.raises(ValueError, match="two rows on one date"):
+        idn._check_invariants([two], ["2024-05-01"] * 2, [None, None], ["1-000", "2-000"])
+    with pytest.raises(ValueError, match="several portraits"):
+        idn._check_invariants([two], ["2024-05-01", "2024-06-01"], [1, 2], ["1-000", "2-000"])
+    a, b = idn.Cluster(order=0, key="x", rows=[0]), idn.Cluster(order=1, key="x", rows=[1])
+    with pytest.raises(ValueError, match="split over two identities"):
+        idn._check_invariants([a, b], ["2024-05-01", "2024-06-01"], [7, 7], ["1-000", "2-000"])
+
+
+def test_guest_starts_in_another_teilverband_stay_with_the_athlete() -> None:
+    """Reviewer (Teilverband-only splits): once an athlete has shown a second
+    Teilverband on several rows (double membership), a further row with it is no
+    evidence against him; a first, single one still is."""
+    home = [row(i, f"201{i}-05-01", "Schwander Severin", residence="Riggisberg", tv="BKSV")
+            for i in range(1, 9)]
+    away = [row(20 + i, f"201{4 + i}-07-01", "Schwander Severin", residence="Riggisberg", tv="SWSV")
+            for i in range(2)]
+    guest = [row(30, "2014-08-01", "Schwander Severin", residence="Lausanne & Environs", tv="SWSV")]
+    m, _, ath = resolve(home + away + guest)
+    assert len(set(m.values())) == 1 and "teilverbaende=BKSV/SWSV" in ath.iloc[0]["evidence"]
+    m, _, ath = resolve(home + guest)
+    assert len(set(m.values())) == 2 and ath["evidence"].str.contains("-teilverband").all()
+
+
+@pytest.mark.parametrize(("printed", "key"), [
+    ("Lausanne & Environs", "lausanne"), ("Fribourg et environs", "fribourg"),
+    ("Estavayer et Env.", "estavayer"), ("Oberriet SG", "oberriet"), ("Mollis", "mollis")])
+def test_residence_key(printed: str, key: str) -> None:
+    assert idn._residence_key(printed) == key
+
+
+def test_clubs_are_compared_by_key_and_region_codes_are_no_display_club() -> None:
+    """S4: an old club name is the same club; 'TO' (a NOSV region) is evidence only."""
+    reg = [portrait(9, "Meier", "Urs", "1990-01-01", "Zurzibiet", "Döttingen", "Nordwestschweiz"),
+           portrait(10, "Other", "Guy", "1990-01-01", "Wattwil", "Wattwil", "Nordostschweiz")]
+    rows = [row(1, "2012-05-01", "Meier Urs", club="Zurzach", tv="NWSV"),
+            row(2, "2018-05-01", "Meier Urs", club="Schwingklub Zurzibiet", tv="NWSV")]
+    m, ident, ath = resolve(rows, reg)
+    assert set(m.values()) == {"meier-urs-p9"} and set(ident["evidence"]) == {"name+club"}
+    rows = [row(1, "2012-05-01", "Forrer Hans", club="TO", tv="NOSV"),
+            row(2, "2013-05-01", "Forrer Hans", club="TO", tv="NOSV"),
+            row(3, "2014-05-01", "Forrer Hans", club="Wattwil", tv="NOSV")]
+    m, ident, ath = resolve(rows, reg)
+    assert len(ath) == 1 and ath.iloc[0]["club"] == "Wattwil"
+    assert ident["evidence"].tolist()[:2] == ["name+club"] * 2  # still linking evidence
+    m, _, ath = resolve(rows[:2], reg)
+    assert pd.isna(ath.iloc[0]["club"])
+
+
 # ------------------------------------------------------------------ spelling variants
 def test_accents_umlauts_and_case_share_a_key() -> None:
     rows = [row(1, "2012-05-01", "Rölli Loïc"), row(2, "2013-05-01", "Rolli Loic *"),

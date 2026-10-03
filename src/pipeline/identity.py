@@ -45,6 +45,7 @@ and which uncertainty flags apply (see :data:`CONFIDENCE`).
 from __future__ import annotations
 
 import copy
+import functools
 import heapq
 import logging
 import re
@@ -54,6 +55,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from src.pipeline import names
+from src.pipeline.clubs import club_key, is_region_code
 from src.pipeline.cleaner import NO_EVIDENCE_FLAGS, Resolution, ResolverInput, slugify
 
 log = logging.getLogger("schwingen.clean")
@@ -90,6 +92,7 @@ VARIANT_BIG_SIDE = 10      #: both spellings with >= this many rows need club / 
 ESTABLISHED_TOKEN_KEYS = 3  #: a name token used by >= this many keys is a real name, not a typo
 FRAGMENT_ROWS, FRAGMENT_NEXT_TO = 2, 10  #: flag `fragment`: <= 2 rows inside a >= 10-row namesake's career
 TV_MIN_SHARE = 0.25        #: a Teilverband counts for a cluster from this share of its rows
+TV_SEEN_ROWS = 2           #: ... and is no evidence against once it has this many rows
 STRONG_TV_SOURCES = frozenset({"code", "club", "portrait"})
 ANCHOR_EVIDENCE = frozenset({"club", "birth_year", "residence", "ordinal"})
 
@@ -106,6 +109,10 @@ CONFIDENCE_VARIANT = 0.9     #: factor for rows merged across spellings
 _PORTRAIT_TV = {"Innerschweiz": "ISV", "Nordostschweiz": "NOSV", "Bern": "BKSV",
                 "Suedwestschweiz": "SWSV", "Südwestschweiz": "SWSV", "Nordwestschweiz": "NWSV"}
 _CANTON_RE = re.compile(r"\s+[A-Z]{2}$")
+#: 'Lausanne & Environs', 'Fribourg et environs', 'Thun u. Umgebung': Romand lists print
+#: the club in the residence column - the place is what is compared
+_ENVIRONS_RE = re.compile(r"\s*(?:&|\bet\b|\bund\b|\bu\.?)\s*(?:environs|env\.?|umgebung|umg\.?)\s*$",
+                          re.I)
 _ESV_ORDINAL_RE = re.compile(r"\((\d)\)")
 
 
@@ -113,7 +120,7 @@ def _residence_key(value: object) -> str | None:
     """'Oberriet SG' / 'Oberriet' -> 'oberriet' (canton code dropped, folded)."""
     if not isinstance(value, str):
         return None
-    k = names.name_key(_CANTON_RE.sub("", value.strip()))
+    k = names.name_key(_ENVIRONS_RE.sub("", _CANTON_RE.sub("", value.strip())))
     return k or None
 
 
@@ -128,6 +135,13 @@ def _int(value: object) -> int | None:
 
 def _str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+@functools.lru_cache(maxsize=None)
+def _club_key(name: str) -> str:
+    """Comparison key of a club name (:func:`clubs.club_key`: spelling, generic words
+    and old names folded); a name without a key is its own key."""
+    return club_key(name) or name
 
 
 # ----------------------------------------------------------------------------- clusters
@@ -249,7 +263,11 @@ def pair_score(a: Cluster, b: Cluster, age_penalty: bool = True,
     if a.tvs & b.tvs:
         s += W_TV
         why.append("teilverband")
-    elif a.tvs and b.tvs:
+    elif a.tvs and b.tvs and not (
+            any(a.tv_n[t] >= TV_SEEN_ROWS for t in b.tvs)
+            or any(b.tv_n[t] >= TV_SEEN_ROWS for t in a.tvs)):
+        # a Teilverband the other side already shows on several rows (guest starts,
+        # double membership) is neither evidence for nor against
         s += W_TV_DISJOINT
         why.append("-teilverband")
     if a.ordinals & b.ordinals:
@@ -321,17 +339,18 @@ def agglomerate(clusters: list[Cluster],
     merged with each other - otherwise two such rows of different namesakes can
     form a cluster that fits none of them.
 
-    Two passes: the second one also merges pairs that failed only because of an
-    unusual age (15-year-olds, over-40s). The penalty therefore decides between
-    candidates but does not split off rows that have nobody else to belong to.
+    Three passes: (1) pairs with a core side; (2) the same, now also pairs that failed
+    only because of an unusual age (15-year-olds, over-40s) - the penalty therefore
+    decides between candidates but does not split off rows that have no other
+    established person to belong to; (3) all remaining pairs.
 
     ``singles``: one cluster per row (row position -> cluster), used to flag ambiguous
     assignments row by row (see :func:`_flag_ambiguous`)."""
     atoms = [copy.deepcopy(c) for c in clusters]
     live: dict[int, Cluster] = dict(enumerate(clusters))
     version = {i: 0 for i in live}
-    for relaxed in (False, True):
-        _agglomerate_pass(live, version, relaxed)
+    for relaxed, core_only in ((False, True), (True, True), (True, False)):
+        _agglomerate_pass(live, version, relaxed, core_only)
     done = sorted(live.values(), key=lambda c: c.order)
     _flag_ambiguous(atoms, done, singles or {})
     return done
@@ -415,7 +434,8 @@ def _flag_ambiguous(atoms: list[Cluster], done: list[Cluster],
                     break
 
 
-def _agglomerate_pass(live: dict[int, Cluster], version: dict[int, int], relaxed: bool) -> None:
+def _agglomerate_pass(live: dict[int, Cluster], version: dict[int, int], relaxed: bool,
+                      core_only: bool) -> None:
     heap: list[tuple[int, float, int, int, int, int, int, int]] = []
 
     def push(i: int, j: int) -> None:
@@ -424,6 +444,8 @@ def _agglomerate_pass(live: dict[int, Cluster], version: dict[int, int], relaxed
         if s is not None:
             lo, hi = sorted((a.order, b.order))
             tier = 0 if _is_core(a) or _is_core(b) else 1
+            if tier and core_only:
+                return
             heapq.heappush(heap, (tier, -s, lo, hi, i, j, version[i], version[j]))
 
     ids = sorted(live)
@@ -505,9 +527,9 @@ class EvidenceResolver:
             drop=True)
         n = len(raw)
         portraits = getattr(inp, "portraits", None)
-        esv_clubs: set[str] | None = None
+        esv_clubs: set[str] | None = None      # club keys with an ESV club id
         if portraits is not None and len(portraits):
-            esv_clubs = set(portraits["club_name"].dropna())
+            esv_clubs = {_club_key(v) for v in portraits["club_name"].dropna().unique()}
 
         # ---- per-row features
         cleaned = [names.clean_raw_name(r, y) for r, y in zip(raw["name_raw"], raw["fest_year"])]
@@ -532,7 +554,8 @@ class EvidenceResolver:
         if clash:
             log.warning("clean: %d rows share their portrait with another row of the same "
                         "date - portrait links ignored (e.g. %s)", len(clash), rid[clash[0]])
-        club = [_str(v) if u else None for v, u in zip(raw["club"], usable)]
+        club_name = [_str(v) if u else None for v, u in zip(raw["club"], usable)]
+        club = [_club_key(v) if v else None for v in club_name]  # compared by key
         tv_src = raw["sub_assoc_source"].tolist()
         tv = [_str(v) if u and s in STRONG_TV_SOURCES else None
               for v, u, s in zip(raw["sub_association"], usable, tv_src)]
@@ -700,7 +723,7 @@ class EvidenceResolver:
             info = pinfo.get(portrait, {}) if portrait is not None else {}
             if c.anchor is not None and not c.portraits:   # registry values count as support
                 if info.get("club"):
-                    club_n[str(info["club"])] += 1
+                    club_n[_club_key(str(info["club"]))] += 1
             cbirth = c.birth()
             seasons = sorted(c.years)
             gap, gap_at = max(((b - a - 1, b) for a, b in zip(seasons, seasons[1:])),
@@ -766,7 +789,9 @@ class EvidenceResolver:
                 notes.append("fragment")
             spell = Counter(display[i] for i in c.rows if keys[i] == c.key)
             full = min(spell, key=lambda s: (-spell[s], -sum(ord(ch) > 127 for ch in s), s))
-            last_club = [club[i] for i in c.rows if club[i]]
+            # display club: a Schwingklub, not a regional-association code ('TO', 'RO')
+            last_club = [club_name[i] for i in c.rows if club[i] and (
+                club[i] in (esv_clubs or ()) or not is_region_code(club_name[i]))]
             athletes.append({
                 "athlete_id": aid, "full_name": full,
                 "club": _latest_mode(last_club) or info.get("club"),
@@ -886,6 +911,7 @@ def _registry(portraits: pd.DataFrame | None, linked: set[int]
         birth = _int(day[:4])
         city = _residence_key(p.get("city"))
         club = _str(p.get("club_name"))
+        ckey = _club_key(club) if club else None
         tv = _PORTRAIT_TV.get(p.get("association_name"))  # type: ignore[arg-type]
         m = _ESV_ORDINAL_RE.search(f"{p['last_name']} {p['first_name']}")
         sigs = [(key, day)] if day else []
@@ -902,8 +928,8 @@ def _registry(portraits: pd.DataFrame | None, linked: set[int]
         for sg in sigs:
             seen.setdefault(sg, kept)
         person = people[kept]
-        if club:
-            person["clubs"].add(club)
+        if ckey:
+            person["clubs"].add(ckey)
         if city:
             person["cities"].add(city)
         if tv:

@@ -30,6 +30,11 @@ log = logging.getLogger("schwingen.evidence")
 # with this many observations; rarer names are parsing debris or stay unresolved.
 MIN_CLUB_OBS = 20
 
+# A code printed on every coded row of a sheet (>= this many rows) says "took part in
+# this festival", not where the athlete is from (Leukerbad 2013: `(SWS)` on all 78 rows
+# incl. the Bernese guests): it only counts like the weak `festival` source.
+MIN_UNIFORM_ROWS = 15
+
 # Festivals whose field is mostly the organising Teilverband's own athletes.
 _HOME_CATEGORIES = frozenset({"Kantonal", "Gauverband", "Regional", "Teilverband"})
 
@@ -42,6 +47,8 @@ class EvidenceReport:
     with_portrait: int = 0
     clubs: int = 0
     unresolved_clubs: Counter[str] = field(default_factory=Counter)
+    uniform_sheets: int = 0     # (festival, source) pairs with one blanket code
+    uniform_rows: int = 0       # rows whose code was downgraded to `festival`
 
 
 def _code_sub(code: str | None) -> str | None:
@@ -50,7 +57,40 @@ def _code_sub(code: str | None) -> str | None:
     return sub_association_for_code(code)
 
 
-def build_registry(conn: sqlite3.Connection) -> tuple[ClubRegistry, dict[int, str | None]]:
+def _ranking_code(code: str | None, club_raw: str | None) -> str | None:
+    """The association code of a ranking entry: its own column, else a code in the
+    club column ('(SWS)', 'La Gruyère ARLS'); the first one that names a Teilverband."""
+    for c in (code, code_in_club(club_raw), strip_code(club_raw)[0] if club_raw else None):
+        if _code_sub(c):
+            return c
+    return None
+
+
+def uniform_codes(conn: sqlite3.Connection) -> dict[tuple[int, str], str]:
+    """``{(fest_id, 'ranking' | 'sheet'): code}`` for the sheets that print one and the
+    same association code on all their coded rows (guest codes aside)."""
+    seen: dict[tuple[int, str], Counter[str]] = {}
+    for fid, code, club_raw in conn.execute(
+            "SELECT fest_id, assoc_code, club_raw FROM ranking_entries"):
+        c = _ranking_code(code, club_raw)
+        if c:
+            seen.setdefault((fid, "ranking"), Counter())[c.strip().upper()] += 1
+    for fid, code in conn.execute(
+            "SELECT fest_id, association FROM athletes_raw WHERE association IS NOT NULL"):
+        if _code_sub(code):
+            seen.setdefault((fid, "sheet"), Counter())[code.strip().upper()] += 1
+    return {k: next(iter(v)) for k, v in seen.items()
+            if len(v) == 1 and sum(v.values()) >= MIN_UNIFORM_ROWS}
+
+
+def _is_uniform(uniform: dict[tuple[int, str], str], fid: int, source: str,
+                code: str | None) -> bool:
+    return bool(code) and uniform.get((fid, source)) == code.strip().upper()  # type: ignore[union-attr]
+
+
+def build_registry(conn: sqlite3.Connection, uniform: dict[tuple[int, str], str] | None = None
+                   ) -> tuple[ClubRegistry, dict[int, str | None]]:
+    uniform = uniform or {}
     fests = load_festivals(conn)
     fest_sub = {fid: sub_association_for_festival(f.name, f.category, f.association)
                 for fid, f in fests.items()}
@@ -59,6 +99,8 @@ def build_registry(conn: sqlite3.Connection) -> tuple[ClubRegistry, dict[int, st
     for fid, club, code, n in conn.execute(
             "SELECT fest_id, club_raw, assoc_code, COUNT(*) FROM ranking_entries "
             "WHERE club_raw IS NOT NULL GROUP BY 1, 2, 3"):
+        if _is_uniform(uniform, fid, "ranking", _ranking_code(code, club)):
+            code = None                         # a blanket code is no vote for the club
         reg.add(club, code=code, festival_sub=fest_sub.get(fid) if fid in home else None, count=n)
     for club, assoc, esv, n in conn.execute(
             "SELECT club_name, association_name, club_esv_id, COUNT(*) FROM portraits "
@@ -70,7 +112,9 @@ def build_registry(conn: sqlite3.Connection) -> tuple[ClubRegistry, dict[int, st
 def build_evidence(conn: sqlite3.Connection) -> EvidenceReport:
     """Rebuild ``clubs`` and ``athlete_evidence`` (one transaction)."""
     rep = EvidenceReport()
-    reg, fest_sub = build_registry(conn)
+    uniform = uniform_codes(conn)
+    rep.uniform_sheets = len(uniform)
+    reg, fest_sub = build_registry(conn, uniform)
     clubs = reg.build()
     rep.clubs = len(clubs)
     entries = {r[0]: r[1:] for r in conn.execute(
@@ -92,16 +136,22 @@ def build_evidence(conn: sqlite3.Connection) -> EvidenceReport:
                 and not code_in_club(club_raw):
             rep.unresolved_clubs[club_raw] += 1
         sub, source = None, None
-        for cand, src in ((_code_sub(code) or pseudo_club_sub(club_raw)
-                           or _code_sub(strip_code(club_raw)[0] if club_raw else None), "code"),
-                          (_code_sub(assoc_stat), "code"),
+        rank_code = _ranking_code(code, club_raw)
+        codes = [None if _is_uniform(uniform, fid, src, c) else c
+                 for c, src in ((rank_code, "ranking"), (assoc_stat, "sheet"))]
+        blanket = _code_sub(rank_code if codes[0] is None else None) or _code_sub(
+            assoc_stat if codes[1] is None else None)
+        for cand, src in ((_code_sub(codes[0]), "code"),
+                          (_code_sub(codes[1]), "code"),
                           (club.sub_association if club else None, "club"),
                           (sub_association_for_name(p_assoc), "portrait"),
+                          (blanket, "festival"),
                           (fest_sub.get(fid) if fest_cat.get(fid) in _HOME_CATEGORIES else None,
                            "festival")):
             if cand:
                 sub, source = cand, src
                 break
+        rep.uniform_rows += bool(blanket) and source != "code"
         birth = by_rank or (int(by_stat) if by_stat and str(by_stat).isdigit() else None)
         rows.append((raw_id, fid, idx, residence, birth, code, club_raw,
                      club.key if club else None, club.name if club else None, sub, source,

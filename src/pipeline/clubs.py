@@ -100,6 +100,16 @@ _PREFIX_WORDS = frozenset({
 _NOT_CLUBS = frozenset({"k", "kk", "ek", "tk", "nk", "c", "n i", "gast", "gast ga"})  # "n i" = N.I.A
 _CONNECTOR_WORDS = frozenset({"u", "und", "et", "umgebung", "umg", "environs", "env",
                               "region", "regio", "ug"})
+# Other names of one club (old name, name of the club's own "Verband", language):
+# key as printed -> key of the club. Only pairs that are the same organisation.
+_KEY_ALIASES: dict[str, str] = {
+    "zurzach": "zurzibiet",            # Schwingklub Zurzach = today's SK Zurzibiet
+    "mythenverband": "mythen",         # Mythenverband = Schwingklub am Mythen
+    "schangnau siehen": "siehen",      # Schwingklub Siehen (Schangnau / Eggiwil)
+    "weite wartau": "wartau",
+    "ticino": "tessin",
+    "basel": "basel stadt",
+}
 
 
 def _fold(s: str) -> str:
@@ -136,7 +146,15 @@ def club_key(raw: str | None) -> str | None:
     tokens = [t for t in s.split() if t not in _PREFIX_WORDS and t not in _CONNECTOR_WORDS]
     tokens = [t for t in tokens if not t.isdigit()]
     key = " ".join(tokens)
+    key = _KEY_ALIASES.get(key, key)
     return key if len(re.sub(r"[^a-z]", "", key)) >= 2 and key not in _NOT_CLUBS else None
+
+
+def is_region_code(name: str | None) -> bool:
+    """'TO', 'RO', 'RA', 'ST': the NOSV lists print the regional association in the
+    club column. Such a label (an upper-case abbreviation of <= 3 letters) is evidence
+    for the Teilverband and for telling namesakes apart, but it is not a Schwingklub."""
+    return bool(name) and len(name) <= 3 and name.isalpha() and name.isupper()  # type: ignore[arg-type]
 
 
 def code_in_club(raw: str | None) -> str | None:
@@ -210,6 +228,7 @@ class _Obs:
     votes: Counter[str] = field(default_factory=Counter)
     n: int = 0
     esv_ids: Counter[int] = field(default_factory=Counter)
+    esv_spellings: Counter[str] = field(default_factory=Counter)  # as named by the ESV term
 
 
 def _top(o: _Obs) -> str | None:
@@ -255,6 +274,7 @@ class ClubRegistry:
             o.votes[festival_sub] += self.FESTIVAL_WEIGHT * count
         if esv_id is not None:
             o.esv_ids[esv_id] += count
+            o.esv_spellings[shown.strip()] += count
         for alias in club_aliases(raw):
             self._alias_of[alias].add(key)
 
@@ -323,6 +343,7 @@ class ClubRegistry:
         into.spellings.update(o.spellings)
         into.votes.update(o.votes)
         into.esv_ids.update(o.esv_ids)
+        into.esv_spellings.update(o.esv_spellings)
 
     @staticmethod
     def _club(key: str, o: _Obs) -> Club:
@@ -330,8 +351,10 @@ class ClubRegistry:
         sub = top[0][0] if top else None
         total = sum(o.votes.values())
         conflict = len(top) > 1 and top[1][1] >= 0.25 * total
-        # most frequent spelling; ties -> the one with diacritics, then longest
-        name = max(o.spellings.items(),
+        # the ESV's own name if the club has one (an alias such as 'Zurzach' may be
+        # printed more often), else the most frequent spelling; ties -> the one with
+        # diacritics, then longest
+        name = max((o.esv_spellings or o.spellings).items(),
                    key=lambda t: (t[1], t[0] != _fold(t[0]), len(t[0]), t[0]))[0]
         esv = o.esv_ids.most_common(1)[0][0] if o.esv_ids else None
         return Club(key, name, sub, o.n, dict(o.votes), conflict, [], esv)

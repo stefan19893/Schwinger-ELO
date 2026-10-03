@@ -209,6 +209,10 @@ def test_custom_resolver_plugs_in_and_over_merging_is_flagged(db: Path) -> None:
     assert isinstance(r, cl.Resolver)
     result = cl.assemble(inp, r.resolve(cl.ResolverInput(inp.raw, inp.bouts)), r.name)
     assert result.counts["self_bouts"] == len(BOUTS) and result.bouts.empty
+    # the same over-merge seen from the rows: one athlete on several rows of a festival / date
+    per_fest = inp.raw.groupby("fest_id").size()
+    assert result.counts["same_festival_rows"] == int((per_fest - 1).sum()) > 0
+    assert result.counts["same_date_rows"] >= result.counts["same_festival_rows"]
     assert result.athletes["n_bouts"].tolist() == [0]
     assert set(result.identity_map["resolver"]) == {"fixed"}
 

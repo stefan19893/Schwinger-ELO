@@ -124,3 +124,36 @@ def test_portrait_evidence_and_rebuild(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM athletes_raw WHERE athlete_raw_id = '3-001'")
     assert ev.build_evidence(conn).rows == 1
     assert conn.execute("SELECT COUNT(*) FROM athlete_evidence").fetchone()[0] == 1
+
+
+def test_code_printed_on_every_row_counts_like_the_festival(conn: sqlite3.Connection) -> None:
+    """Leukerbad 2013 prints `(SWS)` on all rows, Bernese guests included: a code that
+    is uniform across a sheet is downgraded to the weak `festival` source."""
+    upsert_festivals(conn, [fest(4, "Walliser Kantonalschwingfest Leukerbad 2013", "Kantonal"),
+                            fest(5, "Regionalschwingfest Oron 2012")])
+    n = ev.MIN_UNIFORM_ROWS
+    athletes(conn, 4, [(f"Gast {i}", None, "SWS", None) for i in range(n)])
+    rankings(conn, 4, [(i, "Leuk", None, "SWS", "(SWS)") for i in range(n - 1)]
+             + [(n - 1, "Thun", None, "SWS", "Thun und Umgebung")])
+    # festival 5: the ranking list varies (real codes), the statistic sheet does not
+    athletes(conn, 5, [(f"Lutteur {i}", None, "SWS", None) for i in range(n)])
+    rankings(conn, 5, [(i, "Oron", None, "VD", None) for i in range(n - 1)] + [(n - 1, "Thun", None, "BO", None)])
+    # festival 1: too few rows to call a single code a blanket
+    athletes(conn, 1, [("Wicki Joel", None, "LU", None)])
+    rankings(conn, 3, [(None, "Thun", None, "BO", "Thun und Umgebung")] * 3)
+    conn.commit()
+    assert ev.uniform_codes(conn) == {(4, "ranking"): "SWS", (4, "sheet"): "SWS", (5, "sheet"): "SWS"}
+    rep = ev.build_evidence(conn)
+    got = evidence(conn)
+    assert {(got[f"4-{i:03d}"]["sub_association"], got[f"4-{i:03d}"]["sub_assoc_source"])
+            for i in range(n - 1)} == {("SWSV", "festival")}
+    # the Bernese guest keeps his club's Teilverband; the blanket code is no vote for the club
+    guest = got[f"4-{n - 1:03d}"]
+    assert (guest["sub_association"], guest["sub_assoc_source"]) == ("BKSV", "club")
+    # (only the organiser's weak vote of 1 remains, not the code's 3)
+    assert dict(conn.execute("SELECT club_key, votes FROM clubs"))["thun"] == "BKSV:9,SWSV:1"
+    assert (got["5-000"]["sub_association"], got["5-000"]["sub_assoc_source"]) == ("SWSV", "code")
+    assert (got[f"5-{n - 1:03d}"]["sub_association"], got[f"5-{n - 1:03d}"]["sub_assoc_source"]) == (
+        "BKSV", "code")
+    assert (got["1-000"]["sub_association"], got["1-000"]["sub_assoc_source"]) == ("ISV", "code")
+    assert rep.uniform_sheets == 3 and rep.uniform_rows == n

@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from src.pipeline import clubs
+
 from src.pipeline.clubs import (CODE_TO_SUB, SUB_ASSOCIATIONS, ClubRegistry, club_aliases,
                                 club_key, code_in_club, pseudo_club_sub, strip_code,
                                 sub_association_for_code, sub_association_for_festival,
@@ -234,3 +236,30 @@ def test_truncated_names_fold_into_the_unique_esv_club() -> None:
     assert clubs["mumliswil ramiswil"].n == 230 and clubs["waldenburg"].n == 105
     assert reg.resolve("Mümliswil-Rami").esv_id == 278  # type: ignore[union-attr]
     assert reg.resolve("Oberwil", code="BL").esv_id == 268  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(("old", "club"), [
+    ("Zurzach", "Schwingklub Zurzibiet"), ("Mythenverband", "am Mythen"),
+    ("Schangnau-Siehen", "Siehen"), ("Weite-Wartau", "Wartau"), ("Ticino", "Tessin"),
+    ("Basel", "Basel-Stadt")])
+def test_other_names_of_one_club_share_its_key(old: str, club: str) -> None:
+    assert clubs.club_key(old) == clubs.club_key(club)
+
+
+def test_alias_folds_into_the_esv_club_under_the_esv_name() -> None:
+    """'Zurzach' is printed more often than 'Zurzibiet': the ESV's name is displayed."""
+    reg = ClubRegistry(min_obs=20)
+    reg.add("Zurzach", code="AG", count=300)
+    reg.add("Zurzibiet", portrait_sub="NWSV", esv_id=77, count=5)
+    reg.add("Schwingklub Zurzibiet", code="AG", count=40)
+    built = reg.build()
+    assert list(built) == ["zurzibiet"]
+    c = reg.resolve("Zurzach")
+    assert c is not None and (c.name, c.esv_id, c.sub_association, c.n) == ("Zurzibiet", 77, "NWSV", 345)
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("TO", True), ("RO", True), ("RA", True), ("ST", True), ("Wil", False), ("Thun", False),
+    ("Schaffhausen", False), ("", False), (None, False)])
+def test_region_codes_are_not_clubs(name: str | None, expected: bool) -> None:
+    assert clubs.is_region_code(name) is expected

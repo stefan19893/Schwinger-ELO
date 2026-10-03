@@ -359,8 +359,10 @@ def _parse_identity_evidence(cfg: Config, conn: sqlite3.Connection, client: Http
              dict(+prep.skipped))
     erep = build_evidence(conn)
     log.info("parse: athlete evidence: %d rows, %d with club (%d canonical clubs), "
-             "Teilverband by source %s, %d with portrait", erep.rows, erep.with_club,
-             erep.clubs, dict(erep.with_sub), erep.with_portrait)
+             "Teilverband by source %s, %d with portrait; %d rows of %d sheets with one "
+             "blanket association code count as `festival`", erep.rows, erep.with_club,
+             erep.clubs, dict(erep.with_sub), erep.with_portrait, erep.uniform_rows,
+             erep.uniform_sheets)
 
 
 def _parse_sample(cfg: Config, force: bool = False) -> int:
