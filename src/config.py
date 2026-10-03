@@ -22,6 +22,10 @@ REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 # touch the real SQLite db / Parquet files in data/.
 SAMPLE_DATA_DIR: Path = REPO_ROOT / "data" / "sample"
 
+# The --sample dataset has five festivals (at most ~20 bouts per athlete): a lower
+# provisional threshold keeps its rankings non-empty (explicit settings still win).
+SAMPLE_PROVISIONAL_MIN_BOUTS = 6
+
 # Politeness floor (spec §4.1): no configuration may go below this delay.
 MIN_REQUEST_DELAY = 0.5
 
@@ -90,14 +94,33 @@ class Config:
     # --- ELO (spec §4.2) -----------------------------------------------------
     elo_initial: float = 1500.0
     elo_scale: float = 400.0
-    # MoV multiplier: lambda = 1 + alpha * (grade_a - grade_b - baseline_diff).
-    # Unspecified in the spec -> neutral defaults until calibrated in Phase 4.
-    mov_alpha: float = 0.0
-    mov_baseline_diff: float = 0.0
+    # How a festival's bouts are applied (src/pipeline/elo_engine.py): "festival" = all
+    # bouts from the pre-festival ratings, "phase" = Gänge 1-4 then 5+, "gang" = Gang by
+    # Gang, "sequential" = bout by bout.
+    elo_update_mode: str = "festival"
+    elo_phase_split_gang: int = 4
+    # MoV multiplier for wins: lambda = 1 + alpha * (grade_winner - grade_loser -
+    # baseline_diff), clamped to [mov_lambda_min, mov_lambda_max]; NULL grade -> 1.
+    mov_alpha: float = 1.0
+    mov_baseline_diff: float = 1.36
+    mov_lambda_min: float = 0.5
+    mov_lambda_max: float = 2.0
+    # Mean reversion before the first festival on/after 1 <season_start_month>.
     season_start_month: int = 4
     season_reversion_delta: float = 0.10
     season_reversion_mean: float = 1500.0
+    # Provisional: no bout for more than this many seasons, or fewer rated career
+    # bouts than provisional_min_bouts.
     provisional_inactive_seasons: float = 1.5
+    provisional_min_bouts: int = 24
+    # Seasons (calendar years) before this one are rated but not ranked (burn-in).
+    elo_first_ranked_season: int = 2012
+    # Identity uncertainty (Phase 3): identity_map rows with confidence <= this value
+    # are "low confidence"; an athlete is marked uncertain with >= min_rows such rows
+    # or >= min_share of his rows.
+    identity_low_confidence: float = 0.4
+    identity_uncertain_min_rows: int = 10
+    identity_uncertain_min_share: float = 0.25
     k_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_K_FACTORS))
 
     # --- Serve ---------------------------------------------------------------
@@ -167,6 +190,8 @@ def load_config(
         values[key] = Path(val) if isinstance(getattr(defaults, key), Path) else val
     if values.get("sample") and "data_dir" not in values:
         values["data_dir"] = SAMPLE_DATA_DIR
+    if values.get("sample") and "provisional_min_bouts" not in values:
+        values["provisional_min_bouts"] = SAMPLE_PROVISIONAL_MIN_BOUTS
     cfg = Config(**values)
     if cfg.from_year > cfg.to_year:
         raise ValueError(f"from_year {cfg.from_year} > to_year {cfg.to_year}")
@@ -191,6 +216,11 @@ def load_config(
         raise ValueError("parse_min_pair_rate must be within 0..1")
     if cfg.retry_after_max <= 0:
         raise ValueError("retry_after_max must be > 0")
+    from src.pipeline.elo_engine import EloParams
+    EloParams.from_config(cfg)  # validates the ELO parameters (raises ValueError)
+    if cfg.provisional_min_bouts < 0 or cfg.provisional_inactive_seasons <= 0:
+        raise ValueError("provisional_min_bouts must be >= 0 and "
+                         "provisional_inactive_seasons > 0")
     if not 1 <= cfg.port <= 65535:
         raise ValueError(f"port {cfg.port} out of range 1-65535")
     return cfg
