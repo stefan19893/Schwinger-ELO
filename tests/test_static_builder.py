@@ -49,6 +49,28 @@ def tree_hash(root: Path) -> str:
     return h.hexdigest()
 
 
+def leaks(data: Path, needles: dict[str, str]) -> list[str]:
+    """Where the published JSON files contain one of ``needles`` (label -> text), as short
+    "<label> in <file>" lines; the labels are ids, never a withheld athlete's name.
+
+    The privacy tests assert on this list and not on ``needle not in text``: when such an
+    assertion fails, pytest explains it with a character diff (difflib) of the whole text,
+    which does not finish on megabytes of one-line JSON - a real leak would show up in CI
+    as a timeout instead of a message."""
+    out = []
+    for p in sorted(data.rglob("*.json")):
+        raw = p.read_text(encoding="utf-8")
+        out += [f"{label} in {p.relative_to(data)}" for label, needle in needles.items()
+                if needle in raw]
+    return out
+
+
+def no_leak(data: Path, needles: dict[str, str]) -> None:
+    found = leaks(data, needles)
+    n = len(found)
+    assert n == 0, f"{n} leaks in the published data, e.g. {'; '.join(found[:5])}"
+
+
 def keys_of(obj: Any) -> set[str]:
     if isinstance(obj, dict):
         out = set(obj)
@@ -555,7 +577,8 @@ def test_every_json_file_parses(sample: Site) -> None:
     for p in files:
         load(p)
         raw = p.read_text(encoding="utf-8")
-        assert "NaN" not in raw and "Infinity" not in raw and "\n" not in raw
+        bad = [t for t in ("NaN", "Infinity", "\n") if t in raw]   # not `not in raw`: see leaks()
+        assert bad == [], p.name
 
 
 def test_build_is_deterministic(sample: Site, tmp_path: Path) -> None:
@@ -644,12 +667,11 @@ def test_athlete_without_rating_is_listed_by_name_without_profile(
             (None, None, None, None, 0)
         assert r["w"] + r["d"] + r["l"] > 0
     searchable = {r[0] for r in load(data / "athletes.json")["rows"]}
-    text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
     for victim in victims:
         assert not (data / "bouts" / f"bouts_{victim}.json").exists()
         assert not (data / "history" / f"history_{victim}.json").exists()
-        assert victim not in searchable
-        assert f'"{victim}"' not in text                          # the id is not published
+        assert not searchable & {victim}, victim
+    no_leak(data, {f"id {v}": f'"{v}"' for v in victims})        # the id is not published
 
 
 def test_build_without_data_fails_unless_allowed(tmp_path: Path, sample: Site) -> None:
@@ -714,10 +736,9 @@ def test_unexportable_athletes_are_not_linked(tmp_path: Path, sample: Site) -> N
     assert victim not in {r[0] for r in load(dist / "data" / "athletes.json")["rows"]}
     # stays ranked in the Parquet file (we did not touch `ranked`) but must not be listed
     assert victim not in {r[1] for r in load(dist / "data" / "rankings_latest.json")["rows"]}
-    text = "".join(p.read_text(encoding="utf-8") for p in (dist / "data").rglob("*.json"))
-    assert victim not in text
-    # in his festivals the row stays (its bouts count) but without a name
-    assert json.dumps(victim_name, ensure_ascii=False) not in text
+    # in his festivals the row stays (its bouts count) but without id and name
+    no_leak(dist / "data", {f"id {victim}": victim,
+                            f"name of {victim}": json.dumps(victim_name, ensure_ascii=False)})
     fid = sample.history(victim)["history"]["rows"][0][1]
     nameless = [a for a in table(load(dist / "data" / "fests" / f"fest_{fid}.json")["athletes"])
                 if a["name"] is None]
@@ -758,9 +779,8 @@ def test_athletes_under_the_publication_age_are_not_published(tmp_path: Path,
     data = dist / "data"
     names = [json.dumps(r[2], ensure_ascii=False) for r in sample.rankings["rows"]
              if r[1] in young]
-    text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
-    for aid, name in zip(young, names):
-        assert aid not in text and name not in text      # neither id nor name, anywhere
+    for aid, name in zip(young, names):                  # neither id nor name, anywhere
+        no_leak(data, {f"id {aid}": aid, f"name of {aid}": name})
         assert not (data / "history" / f"history_{aid}.json").exists()
     # the comparison data: no file for them, and nobody's opponent list contains them -
     # their bouts are simply absent there (the festival file keeps them, unnamed)
@@ -857,10 +877,9 @@ def test_recent_debutants_without_birth_year_are_withheld(tmp_path: Path,
     assert meta["publish"]["withheld_from_first_season"] == year - 2
     # next year only the debutant of `year - 2` is released
     assert meta["publish"]["release_next_year"] == {"athletes": 1, "ranked": 1}
-    text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
     for aid in (new, edge_in):
-        assert aid not in text
-        assert json.dumps(by_id.at[aid, "full_name"], ensure_ascii=False) not in text
+        no_leak(data, {f"id {aid}": aid, f"name of {aid}": json.dumps(
+            by_id.at[aid, "full_name"], ensure_ascii=False)})
         assert not (data / "history" / f"history_{aid}.json").exists()
         assert not (data / "bouts" / f"bouts_{aid}.json").exists()
     for aid in (old, known):
@@ -996,16 +1015,18 @@ def test_real_bout_files_name_no_withheld_athlete(real: Site) -> None:
     ids_seen: set[str] = set()
     for p in (real.data / "bouts").iterdir():
         aid = p.stem.removeprefix("bouts_")
-        assert aid in published and aid not in real.withheld
+        listed, hidden = aid in published, aid in real.withheld
+        assert listed and not hidden, p.name            # booleans: no set of ids in the output
         obj = load(p)
         ids_seen |= set(obj["opps"]) | {obj["id"]}
         # the only strings in the file: ids, column names, names of unrated festivals
         strings = {v for fid_rows in obj["fests"] for r in fid_rows[1] for v in r
                    if isinstance(v, str)}
-        assert strings == set()
-        for row in obj["other"]["rows"]:
-            assert row[1] not in hidden_names
-    assert ids_seen <= published
+        assert len(strings) == 0, p.name
+        named = sum(1 for row in obj["other"]["rows"] if row[1] in hidden_names)
+        assert named == 0, f"{p.name} names a withheld athlete"   # the file, not the name
+    extra = sorted(ids_seen - published)
+    assert len(extra) == 0, f"{len(extra)} ids outside the search index, e.g. {extra[:3]}"
     # the bouts a published athlete had against withheld ones are absent, not anonymised:
     # the tally of two published athletes cannot include a third person
     b = real.bouts
