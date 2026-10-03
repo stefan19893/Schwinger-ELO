@@ -12,7 +12,7 @@ One canonical `athlete_id` per real person; clean Parquet outputs.
 
 ## Tasks
 - [x] 1. Analyse raw athletes: list name collisions and spelling variants
-- [ ] 2. Implement identity resolution + tests
+- [~] 2. Implement identity resolution + tests
 - [x] 3. Club / sub-association normalization + tests
 - [ ] 4. Write Parquet outputs via `cli clean`; record athlete/bout counts in handoff notes
 
