@@ -351,3 +351,119 @@ def test_run_reports_lambda_per_bout() -> None:
                bout("e", "f", "WIN_B", ga=8.75, gb=9.75), bout("g", "h", ga=None, gb=8.5))
     res = SchwingElo(params(mov_alpha=0.4, mov_baseline_diff=1.25)).run(df)
     assert res.bouts["mov_lambda"].tolist() == pytest.approx([1.1, 1.0, 0.9, 1.0])
+
+
+# =========================================================================== task 3: seasons
+def test_revert_to_mean_formula() -> None:
+    assert ee.revert_to_mean(1700.0, 0.10, 1500.0) == pytest.approx(1680.0)
+    assert ee.revert_to_mean(1300.0, 0.10, 1500.0) == pytest.approx(1320.0)
+    assert ee.revert_to_mean(1500.0, 0.10, 1500.0) == pytest.approx(1500.0)
+    assert ee.revert_to_mean(1700.0, 0.10, 1500.0, times=2) == pytest.approx(1662.0)
+    assert ee.revert_to_mean(1700.0, 0.10, 1500.0, times=0) == pytest.approx(1700.0)
+
+
+@pytest.mark.parametrize("date, year", [
+    ("2015-03-31", 2014), ("2015-04-01", 2015), ("2015-12-31", 2015), ("2016-01-02", 2015),
+    ("2016-02-20", 2015), ("2016-04-10", 2016)])
+def test_rating_year_starts_in_april(date: str, year: int) -> None:
+    assert ee.rating_year(date) == year
+    assert ee.rating_year(np.array([date], dtype="datetime64[D]")).tolist() == [year]
+
+
+def test_rating_year_start_month_is_configurable() -> None:
+    assert ee.rating_year("2016-02-20", start_month=1) == 2016
+
+
+def test_reversion_before_first_festival_of_the_season() -> None:
+    df = frame(bout("a", "b", date="2015-06-01", fest=1),
+               bout("a", "c", date="2015-09-01", fest=2),      # same season: no reversion
+               bout("a", "d", date="2016-02-10", fest=3),      # hall festival before April
+               bout("a", "e", date="2016-04-20", fest=4))      # first festival of 2016
+    h = SchwingElo(params()).run(df).history
+    a = h[h["athlete_id"] == "a"].reset_index(drop=True)
+    assert a.loc[1, "rating_before"] == pytest.approx(a.loc[0, "rating_after"])
+    assert a.loc[2, "rating_before"] == pytest.approx(a.loc[1, "rating_after"])
+    assert a.loc[3, "rating_before"] == pytest.approx(
+        a.loc[2, "rating_after"] * 0.9 + 1500 * 0.1)
+    assert a["season"].tolist() == [2015, 2015, 2016, 2016]  # `season` = calendar year
+
+
+def test_reversion_applies_to_inactive_athletes_too() -> None:
+    df = frame(bout("a", "b", date="2015-06-01", fest=1),
+               bout("c", "d", date="2016-06-01", fest=2))
+    res = SchwingElo(params()).run(df)
+    assert res.ratings["a"] == pytest.approx(1500 + 8 * 0.9)
+    assert res.ratings["b"] == pytest.approx(1500 - 8 * 0.9)
+    assert res.ratings["c"] == pytest.approx(1508.0)  # newcomers are not reverted
+
+
+def test_reversion_once_per_season_boundary_crossed() -> None:
+    """2020 had no season: two boundaries lie between autumn 2019 and summer 2021."""
+    df = frame(bout("a", "b", date="2019-08-01", fest=1),
+               bout("a", "c", "DRAW", date="2021-06-01", fest=2))
+    h = SchwingElo(params()).run(df).history
+    a = h[h["athlete_id"] == "a"]
+    assert a["rating_before"].iloc[1] == pytest.approx(1500 + 8 * 0.9 ** 2)
+
+
+def test_reversion_parameters() -> None:
+    df = frame(bout("a", "b", date="2015-06-01", fest=1),
+               bout("c", "d", date="2016-06-01", fest=2))
+    assert final(df, reversion_delta=0.0)["a"] == pytest.approx(1508.0)
+    assert final(df, reversion_delta=1.0)["a"] == pytest.approx(1500.0)
+    assert final(df, reversion_delta=0.5, reversion_mean=1400.0)["a"] == pytest.approx(1454.0)
+    late = frame(bout("a", "b", date="2015-08-01", fest=1),
+                 bout("c", "d", date="2016-06-01", fest=2))
+    assert final(late)["a"] == pytest.approx(1507.2)
+    assert final(late, season_start_month=7)["a"] == pytest.approx(1508.0)  # same rating year
+    with pytest.raises(ValueError, match="reversion delta"):
+        params(reversion_delta=1.5)
+    with pytest.raises(ValueError, match="start month"):
+        params(season_start_month=13)
+
+
+def test_reversion_keeps_the_mean_and_shrinks_the_spread() -> None:
+    elo = SchwingElo(params())
+    elo.ratings = {"a": 1800.0, "b": 1200.0, "c": 1500.0}
+    elo.apply_season_reversion()
+    assert elo.ratings == pytest.approx({"a": 1770.0, "b": 1230.0, "c": 1500.0})
+    elo.apply_season_reversion(times=2)
+    assert elo.ratings["a"] == pytest.approx(1500 + 270 * 0.81)
+
+
+def test_provisional_after_more_than_one_and_a_half_seasons_inactive() -> None:
+    limit = int(1.5 * 365.25)  # 547 days
+    first = dt.date(2015, 6, 1)
+    back_late = (first + dt.timedelta(days=limit + 1)).isoformat()
+    back_in_time = (first + dt.timedelta(days=limit)).isoformat()
+    df = frame(bout("a", "x", date="2015-06-01", fest=1),
+               bout("b", "y", date="2015-06-01", fest=1),
+               bout("b", "z", date=back_in_time, fest=2),
+               bout("a", "z", date=back_late, fest=3),
+               bout("a", "y", date="2017-06-01", fest=4))
+    h = SchwingElo(params()).run(df).history.set_index(["athlete_id", "fest_id"])
+    assert h.loc[("a", 3), "days_inactive"] == limit + 1
+    assert h.loc[("a", 3), "provisional"] and h.loc[("a", 3), "provisional_reason"] == "inactive"
+    assert not h.loc[("b", 2), "provisional"]                  # exactly 1.5 seasons: not yet
+    assert not h.loc[("a", 4), "provisional"]                  # active again
+    assert not h.loc[("a", 1), "provisional"] and pd.isna(h.loc[("a", 1), "days_inactive"])
+
+
+def test_provisional_until_minimum_number_of_bouts() -> None:
+    df = frame(*[bout("a", f"x{i}", date=f"2015-06-{i + 1:02d}", fest=i, gang=1)
+                 for i in range(5)])
+    h = SchwingElo(params(provisional_min_bouts=3)).run(df).history
+    a = h[h["athlete_id"] == "a"]
+    assert a["provisional"].tolist() == [True, True, False, False, False]
+    assert a["provisional_reason"].tolist() == ["few_bouts", "few_bouts", "", "", ""]
+    assert a["bouts_before"].tolist() == [0, 1, 2, 3, 4]
+    none = SchwingElo(params(provisional_min_bouts=0)).run(df).history
+    assert not none["provisional"].any()
+
+
+def test_provisional_reasons_combine() -> None:
+    df = frame(bout("a", "x", date="2015-06-01", fest=1),
+               bout("a", "y", date="2018-06-01", fest=2))
+    h = SchwingElo(params(provisional_min_bouts=5)).run(df).history
+    assert h[h["athlete_id"] == "a"]["provisional_reason"].tolist() == [
+        "few_bouts", "few_bouts,inactive"]

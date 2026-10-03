@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 4 — ELO engine (in progress, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
-**Next action:** Phase 4 task 3 (season reversion + provisional flag tests; elo-modeler; tasks 1-2 done) — see `phase-4-elo.md`, incl. "Known inputs" from the Phase 2 and Phase 3 reviews. At the end of Phase 4: phase-reviewer, then stop and ask the user before Phase 5.
+**Next action:** Phase 4 task 4 (wire `cli elo`, write ratings.parquet; elo-modeler; tasks 1-3 done) — see `phase-4-elo.md`, incl. "Known inputs" from the Phase 2 and Phase 3 reviews. At the end of Phase 4: phase-reviewer, then stop and ask the user before Phase 5.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
