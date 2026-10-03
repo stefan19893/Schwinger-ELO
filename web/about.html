@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Wie die ELO-Wertung der Schwinger berechnet wird, woher die Daten stammen und wo ihre Grenzen liegen.">
+  <title>Schwinger-ELO – Methodik und Grenzen</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="min-h-screen bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+  <header class="border-b border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
+    <div class="mx-auto flex max-w-4xl flex-wrap items-center gap-x-5 gap-y-2 px-3 py-3 sm:px-4">
+      <a href="index.html" class="text-lg font-bold tracking-tight">Schwinger<span class="text-red-700 dark:text-red-400">-ELO</span></a>
+      <nav class="flex gap-4 text-sm" aria-label="Hauptnavigation">
+        <a class="se-nav" href="index.html">Rangliste</a>
+        <a class="se-nav" href="fests.html">Feste</a>
+        <a class="se-nav" href="about.html" aria-current="page">Methodik</a>
+      </nav>
+      <div class="relative w-full sm:ml-auto sm:w-72" data-search>
+        <label class="sr-only" for="se-q">Schwinger suchen</label>
+        <input id="se-q" type="search" autocomplete="off" spellcheck="false" placeholder="Schwinger suchen (Name, Klub)" class="se-input w-full">
+        <div data-search-results class="absolute left-0 right-0 z-20 mt-1 hidden max-h-96 overflow-auto rounded-md border border-stone-300 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-900"></div>
+      </div>
+    </div>
+  </header>
+  <main class="mx-auto max-w-4xl px-3 py-5 sm:px-4">
+    <noscript><div class="se-note">Diese Seite braucht JavaScript, um die Ranglisten anzuzeigen.</div></noscript>
+    <div id="se-banner" class="mb-4 empty:hidden"></div>
+    <article class="se-prose text-sm sm:text-base">
+      <h1 class="text-2xl font-bold tracking-tight">Methodik und Grenzen</h1>
+      <p>Schwinger-ELO ist eine <strong>inoffizielle</strong> Auswertung öffentlich zugänglicher Resultate. Sie ist ein privates, nicht kommerzielles Projekt und steht in keiner Verbindung zum Eidgenössischen Schwingerverband (ESV) oder zu schlussgang.ch. Die Zahl sagt, wie stark ein Schwinger nach seinen bisherigen Gängen einzuschätzen ist – sie ersetzt weder Ranglisten noch Kränze.</p>
+      <p id="se-facts" class="text-stone-600 dark:text-stone-300"></p>
+
+      <h2 id="wertung">Was die Wertung bedeutet</h2>
+      <ul>
+        <li><strong>Start bei 1500.</strong> Jeder Schwinger beginnt mit 1500 Punkten. Nach jedem Fest wird verglichen, wie viele Punkte er geholt hat (Sieg 1, Gestellter ½, Niederlage 0) und wie viele gegen diese Gegner zu erwarten waren. Wer mehr holt als erwartet, steigt; wer weniger holt, fällt.</li>
+        <li><strong>Erwartung.</strong> Bei gleicher Wertung sind es 50 %. 200 Punkte Vorsprung entsprechen rund 76 %, 400 Punkte rund 91 %. Ein Sieg gegen einen viel stärkeren Gegner bringt deshalb viel, einer gegen einen schwächeren wenig.</li>
+        <li><strong>Gewicht des Fests.</strong> Je bedeutender das Fest, desto stärker bewegt ein Gang die Wertung: <span id="se-k">Eidgenössische Anlässe am stärksten, Regionalfeste am schwächsten</span>.</li>
+        <li><strong>Noten.</strong> Ein klarer Sieg (zum Beispiel 10.00 gegen 8.50) zählt etwas mehr als ein knapper. Bei Gestellten und bei Gängen ohne gedruckte Note zählt nur das Resultat.</li>
+        <li><strong>Pro Fest, nicht pro Gang.</strong> Alle Gänge eines Fests werden gemeinsam gegen die Wertung vor dem Fest verrechnet.</li>
+        <li><strong>Saisonwechsel.</strong> Am 1. April rückt jede Wertung <span id="se-delta">ein Stück</span> Richtung 1500. Im Verlauf eines Schwingers ist dieser Schritt gestrichelt eingezeichnet; er gehört zu keinem Fest.</li>
+        <li><strong>Rang.</strong> Einen Rang hat, wer mindestens <span id="se-minbouts">24</span> gewertete Gänge und in den letzten anderthalb Saisons gekämpft hat. Alle anderen haben eine Wertung, gelten aber als provisorisch oder nicht mehr aktiv.</li>
+      </ul>
+
+      <h2 id="quelle">Quelle der Daten</h2>
+      <p>Grundlage sind die Resultatlisten der Schwingfeste der Aktiven seit 2011, wie sie auf <a class="se-link" href="https://www.schlussgang.ch/" rel="noopener">schlussgang.ch</a> veröffentlicht sind («Statistische Tabelle» mit Gegner, Resultat und Note pro Gang). Klub, Teilverband und Jahrgang stammen aus den Schlussranglisten und den Schwingerporträts derselben Quelle. Bei jedem Fest ist die Quelle verlinkt.</p>
+      <p>Veröffentlicht werden nur Name, Klub, Teilverband und Jahrgang sowie die Gänge. Wohnorte, Geburtsdaten und Lizenznummern werden nicht veröffentlicht. Nachwuchs- und Frauenanlässe, Mannschaftsanlässe und Feste im Ausland sind nicht gewertet.</p>
+
+      <h2 id="grenzen">Grenzen – was die Zahlen nicht können</h2>
+      <ul>
+        <li><strong>Lücken in den Quellen.</strong> <span id="se-gaps">Nicht jedes Fest liegt vollständig vor.</span> Vor allem in den Jahren 2011 bis 2015 fehlen Listen oder sind nur teilweise lesbar (auch vom Eidgenössischen 2013 fehlt ein Teil der Gänge). Feste mit Lücken sind gekennzeichnet. Gänge, die wegen einer Verletzung nicht ausgetragen wurden, zählen nicht.</li>
+        <li><strong>2011 ist eine Einschwing-Saison.</strong> Alle starten bei 1500, und für 2011 sind nur wenige Regionalfeste erfasst. Die Saison wird gewertet, aber nicht rangiert und zählt nicht für Bestwerte.</li>
+        <li><strong>2020 fand kaum statt.</strong> Die Saison besteht aus wenigen Hallenschwinget; es gibt keine Saisonrangliste.</li>
+        <li><strong>Saisonranglisten</strong> zeigen nur Schwinger mit mindestens <span id="se-seasonbouts">12</span> Gängen in der Saison. Sonst reicht ein einziges gutes Fest für einen Spitzenplatz.</li>
+        <li><strong>Bestwerte sind keine Bestenliste aller Zeiten.</strong> Die Skala wächst bis etwa 2016 an und steigt an der Spitze danach leicht weiter. Höchstwerte der letzten Jahre liegen deshalb höher als jene von 2012 bis 2015 – unabhängig davon, wer besser war. Wer vor 2011 seine beste Zeit hatte, fehlt ganz.</li>
+        <li><strong>Teilverbände.</strong> Gut drei Viertel aller Gänge finden innerhalb eines Teilverbands statt. In den Begegnungen zwischen den Verbänden schneiden Schwinger aus der Südwest- und der Nordostschweiz etwas schlechter ab, als ihre Wertung erwarten lässt, Berner und Innerschweizer etwas besser. Vergleiche über Verbandsgrenzen sind also leicht verzerrt.</li>
+        <li><strong>Namensvetter.</strong> Die Resultatlisten enthalten nur Namen. Wo mehrere Schwinger gleich heissen, wurden sie über Klub, Jahrgang, Wohnort und Teilverband getrennt. Wo das nicht sicher gelang, steht ein <abbr class="se-badge se-badge-warn">?</abbr> («Identität unsicher»): Die Laufbahn kann dann Gänge von zwei Personen enthalten. Umgekehrt kann eine abweichende Schreibweise in einer alten Liste als eigener Schwinger mit wenigen Gängen erscheinen.</li>
+        <li><strong>Klub und Jahrgang</strong> fehlen bei rund einem Viertel der Schwinger. Der Klub ist der häufigste der Laufbahn, nicht zwingend der heutige.</li>
+        <li><strong>Neulinge</strong> starten bei 1500 und sind im Schnitt schwächer; ihre Wertung fällt in den ersten Festen meist. Darum gibt es einen Rang erst ab <span id="se-minbouts2">24</span> Gängen.</li>
+        <li><strong>Zurückgetretene.</strong> Ohne Kämpfe sinkt die Wertung jede Saison Richtung 1500. Im Profil stehen deshalb Bestwert und letzte Wertung im Vordergrund.</li>
+        <li><strong>Grosse Sprünge.</strong> Ein einzelnes Eidgenössisches oder Bergkranzfest kann eine Wertung um mehr als 200 Punkte verschieben. Das ist so gewollt (die Vorhersagen sind damit besser), macht den Verlauf aber unruhig.</li>
+        <li><strong>Schlussgang und Gangnummern.</strong> Der Schlussgang ist nur markiert, wo ihn die Quelle ausweist – fehlt die Markierung, heisst das nichts. Bei etwa 2 % der Gänge ist die Nummer des Gangs unsicher; für die Wertung spielt das keine Rolle.</li>
+      </ul>
+
+      <h2 id="kontakt">Fehler melden</h2>
+      <p>Fehler, verwechselte Personen oder Einwände gegen einen Eintrag bitte über <a class="se-link" href="https://github.com/stefan19893/Schwinger-ELO/issues" rel="noopener">GitHub (Issues)</a> melden. Dort liegen auch der Quellcode und die genaue Beschreibung des Modells.</p>
+    </article>
+  </main>
+  <footer class="mx-auto max-w-4xl px-3 pb-8 pt-4 text-xs text-stone-500 dark:text-stone-400 sm:px-4">
+    <p><span id="se-asof"></span> · Quelle: Resultatlisten auf <a class="se-link" href="https://www.schlussgang.ch/" rel="noopener">schlussgang.ch</a> · Inoffizielle Auswertung, keine Wertung des Eidgenössischen Schwingerverbands.</p>
+    <p class="mt-1"><a class="se-link" href="about.html">Methodik und Grenzen</a> · <a class="se-link" href="https://github.com/stefan19893/Schwinger-ELO/issues" rel="noopener">Fehler melden</a></p>
+  </footer>
+  <script src="js/app.js" defer></script>
+  <script src="js/about.js" defer></script>
+</body>
+</html>
