@@ -44,6 +44,12 @@ can be overridden per run with `SCHWINGEN_<FIELD>` environment variables.
 one `history/history_<athlete_id>.json` per athlete and one `fests/fest_<fest_id>.json`
 per festival. The same inputs give a byte-identical `dist/`.
 
+`build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with
+an empty `ratings.parquet`) it exits with status 1 and leaves an existing `dist/` untouched,
+so a deployment can never publish an empty site by accident. `build --allow-empty` writes
+the pages with empty data files instead (layout work on a fresh clone); `build --sample`
+and `./scripts/deploy_local.sh --sample` build their own demo data.
+
 Pages (German, static, relative URLs only, so they work under `/Schwinger-ELO/`):
 
 | Page | Shows |
