@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 5 — Exporter & frontend, in review (branch `phase-5-web`, local commits only); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
-**Next action:** run phase-reviewer for Phase 5 (all seven tasks done, branch `phase-5-web`, not pushed). Then stop and ask the user before Phase 6 (publication question on ESV data is open; athlete-id stability should be decided before the site is linked publicly).
+**Next action:** WAITING FOR THE USER — sign-off on Phase 5 and the open publication decisions before Phase 6 (phase-reviewer: ready for next phase; the six should-fixes are applied on branch `phase-5-web`, not pushed; open decisions listed in `phase-6-deploy.md`, "Known inputs from Phase 5 review").
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -149,6 +149,9 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 5: third-party code is vendored, no CDN, no Node** — ECharts 5.6.0 "common" build in `web/vendor/` (Apache-2.0, sha256 pinned in a test, loaded by `athlete.html` only); Tailwind v3.4.17 compiled once with the standalone CLI into the committed `web/css/style.css` (`scripts/build_css.sh`, sources in `tailwind/`). Reasons: offline `--sample` demo, a fresh clone needs only Python, no third-party requests from visitors, strict CSP (`script-src 'self'`). Cost: `scripts/build_css.sh` must be run after class changes (a test catches a stale stylesheet).
 - 2026-10-03 — **Phase 5: presentation rules** — UI in German (Swiss spelling); dark mode follows the system; identity-uncertain athletes carry a `?` / "Identität unsicher" wherever they are listed; inactive athletes' profiles lead with peak and last-active rating; the current ranking highlights a last bout older than 180 days; the 1 April reversion is drawn as its own step in the chart; `partial` festivals are labelled "mit Lücken"; "Schlussgang" only where the sheet marks it; bouts are shown from each athlete's side (no A / B); a methodology page (`about.html`) names source, meaning and limitations and links to GitHub issues for corrections; every footer says "Inoffizielle Auswertung".
 - 2026-10-03 — Pages were verified in headless Chrome 154 (Windows Chrome driven from WSL, phone width through a 390 px iframe); there is no JavaScript engine for pytest on this machine, so the scripts are not covered by automated tests (static checks only, `tests/test_web.py`).
+- 2026-10-03 — **Phase 5 review fix: `build` fails without rating data** (exit 1, `dist/` untouched) — supersedes "`build` without Parquet inputs writes an empty site"; the empty site is the explicit opt-in `build --allow-empty`; `build --sample` runs the sample pipeline first when its data are missing. Reason: a deploy job on a fresh runner must not publish an empty site with a green run.
+- 2026-10-03 — **Phase 5 review fix: athletes without rated bouts are listed by name in a festival** (name only; no id, club, Teilverband, profile or search entry; label "ohne Wertung") — narrows "only athletes with rated bouts are exported": 9 athletes of the unrated festival 46111 were shown as "Name nicht lesbar". `not_a_name` rows stay nameless. Schema unchanged (`SCHEMA_VERSION` 1): `name` may be set while `id` is null; `namesakes[]` and `seasons[].peak` gained `unc`.
+- 2026-10-03 — **Phase 5 review fix: day counts are worded relative to the data date** ("N Tage vor dem Datenstand"), not computed in the browser — rank, the inactive rule and the 180-day highlight are computed at the data date, so the page stays consistent with itself when it is not rebuilt.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -176,6 +179,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 5 → owner: **stable athlete ids** before the site is public (links and bookmarks break when an id changes) — registry of issued ids in the pipeline, or accept the not-found page with suggestions?
 - Phase 5 → owner: wording and handling of the correction route on `about.html` ("Fehler, verwechselte Personen oder Einwände gegen einen Eintrag bitte über GitHub melden") — confirm, or name another contact; what happens when an athlete objects to being listed?
 - Phase 5 → owner: season lists require 12 season bouts and 2011 / 2020 have no places (`SEASON_MIN_BOUTS`, `THIN_SEASON_FESTIVALS` in `static_builder.py`) — confirm.
+- Phase 5 → owner (review 2026-10-03), before any deployment: 478 athletes born 2009–2010 are listed by name (345 ranked) — acceptable?; the objection route is a public GitHub issue only — add an e-mail contact?; search-engine indexing — allow, or add `noindex` / `robots.txt`? (today: indexable).
 - Phase 5: the frontend scripts have no automated tests (no Node / browser in the test environment). Add a JS test runner in CI (Phase 6), or keep the manual headless-Chrome check?
 
 
