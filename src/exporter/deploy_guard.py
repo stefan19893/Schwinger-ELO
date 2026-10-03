@@ -10,6 +10,9 @@ Never acceptable (no override):
 
 * no ``meta.json``, an empty site (``meta.empty``), a count of athletes, ranked athletes,
   festivals or bouts that is zero, a missing page or core data file;
+* per-athlete files (``data/history``, ``data/bouts``) that do not match the published
+  athletes one to one: a selectable athlete would end in a 404 on his profile or on the
+  comparison page, and a file too many would be an athlete who is not in the search index;
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -53,6 +56,8 @@ from src.config import Config
 BASELINE_NAME = "published_meta.json"
 INPUTS_KEY = "guard_inputs"
 GUARDED_COUNTS = ("athletes", "ranked", "festivals", "bouts")
+# one file per published athlete: directory -> file name prefix
+PER_ATHLETE_FILES = {"data/history": "history_", "data/bouts": "bouts_"}
 REQUIRED_FILES = ("index.html", "athlete.html", "fests.html", "about.html",
                   "data/meta.json", "data/rankings_latest.json", "data/athletes.json",
                   "data/festivals.json", "data/seasons.json", "data/alltime_top200.json")
@@ -104,6 +109,24 @@ def db_inputs(cfg: Config) -> dict[str, int] | None:
     except sqlite3.DatabaseError:
         return None
     return {"portraits": int(n), "portraits_with_birthday": int(with_bd)}
+
+
+def _per_athlete_problem(dist: Path) -> str | None:
+    """The per-athlete directories must hold exactly the athletes of the search index."""
+    try:
+        index = json.loads((dist / "data" / "athletes.json").read_text(encoding="utf-8"))
+        ids = {str(r[0]) for r in index["rows"]}
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return None                                    # reported as a missing file
+    for folder, prefix in PER_ATHLETE_FILES.items():
+        path = dist / folder
+        have = {p.name[len(prefix):-len(".json")] for p in path.glob(f"{prefix}*.json")} \
+            if path.is_dir() else set()
+        if have != ids:
+            return (f"{folder}: {len(have)} files for {len(ids)} published athletes "
+                    f"({len(ids - have)} missing, {len(have - ids)} without a search entry) "
+                    f"- rebuild")
+    return None
 
 
 def _year(meta: dict[str, Any]) -> int | None:
@@ -201,6 +224,10 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
         rep.fatal.append(f"missing or empty files in {dist}: {', '.join(missing)}")
     if meta.get("empty") is not False:
         rep.fatal.append("the site is empty (meta.empty) - it has no rating data")
+    else:
+        problem = _per_athlete_problem(dist)
+        if problem:
+            rep.fatal.append(problem)
     if bool(meta.get("sample")) != cfg.sample:
         rep.fatal.append("the site holds the --sample demo data" if meta.get("sample")
                          else "the site holds real data but --sample was given")

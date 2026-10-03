@@ -102,6 +102,38 @@ class Site:
     def fest(self, fid: int) -> dict[str, Any]:
         return load(self.data / "fests" / f"fest_{fid}.json")
 
+    def bout_file(self, aid: str) -> dict[str, Any]:
+        return load(self.data / "bouts" / f"bouts_{aid}.json")
+
+
+def side_rows(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rows of a `bouts_<id>.json` as dicts, with `fest_id` and the opponent's id."""
+    assert obj["cols"] == sb.BOUT_SIDE_COLS
+    out = []
+    for fid, rows in obj["fests"]:
+        for r in rows:
+            d = dict(zip(obj["cols"], r), fest_id=fid)
+            d["opp"] = obj["opps"][d["opp"]]
+            out.append(d)
+    return out
+
+
+def expected_sides(site: "Site", published: set[str]) -> dict[str, list[tuple[Any, ...]]]:
+    """Independently of the builder: every athlete's bouts against published opponents as
+    (fest_id, gang, opponent, res, own grade, opponent's grade), straight from Parquet."""
+    b = site.bouts
+    both = b[b["athlete_a_id"].isin(published) & b["athlete_b_id"].isin(published)]
+    num = lambda g: None if pd.isna(g) else round(float(g), 2)  # noqa: E731
+    out: dict[str, list[tuple[Any, ...]]] = {a: [] for a in published}
+    for f, g, a, c, o, ga, gb in zip(both["fest_id"], both["gang_nr"], both["athlete_a_id"],
+                                     both["athlete_b_id"], both["outcome"], both["grade_a"],
+                                     both["grade_b"]):
+        mine = {"WIN_A": 1, "DRAW": 0, "WIN_B": 2}[o]
+        theirs = {"WIN_A": 2, "DRAW": 0, "WIN_B": 1}[o]
+        out[a].append((int(f), int(g), c, mine, num(ga), num(gb)))
+        out[c].append((int(f), int(g), a, theirs, num(gb), num(ga)))
+    return out
+
 
 def _clean_env() -> pytest.MonkeyPatch:
     mp = pytest.MonkeyPatch()
@@ -178,7 +210,7 @@ def test_top_level_files(site: Site) -> None:
     names = {p.name for p in site.data.iterdir()}
     assert names == {"meta.json", "rankings_latest.json", "athletes.json",
                      "alltime_top200.json", "seasons.json", "festivals.json", "fests",
-                     "history"}
+                     "history", "bouts"}
     assert (site.dist / sb.BUILD_MARKER).is_file()
 
 
@@ -414,6 +446,81 @@ def test_history_files(site: Site) -> None:
         site.ratings["athlete_id"].isin(ids).sum())
 
 
+def test_bout_files(site: Site) -> None:
+    """`bouts/bouts_<id>.json`: one per published athlete, his bouts against published
+    opponents from his side - compared with the Parquet bouts for every athlete."""
+    published = {r[0] for r in site.search["rows"]}
+    files = {p.name for p in (site.data / "bouts").iterdir()}
+    assert files == {f"bouts_{a}.json" for a in published}      # also for an empty list
+    want = expected_sides(site, published)
+    fest_date = {r[0]: r[2] for r in site.festivals["rows"]}
+    unrated_fests = {r[0] for r in site.festivals["rows"] if r[8] == "unrated"}
+    rated = site.ratings.groupby("athlete_id")["fest_id"].agg(lambda s: {int(x) for x in s})
+    key = lambda r: (r[0], r[1], r[2])  # noqa: E731
+    n_sides = n_unrated = 0
+    for aid in sorted(published):
+        obj = site.bout_file(aid)
+        assert set(obj) == {"id", "opps", "cols", "fests", "other"} and obj["id"] == aid
+        assert obj["opps"] == sorted(set(obj["opps"])) and aid not in obj["opps"]
+        assert set(obj["opps"]) <= published
+        rows = side_rows(obj)
+        assert set(obj["opps"]) == {r["opp"] for r in rows}      # no unused opponent
+        got = [(r["fest_id"], r["gang"], r["opp"], r["res"], r["g"], r["go"]) for r in rows]
+        assert sorted(got, key=key) == sorted(want[aid], key=key), aid
+        # festivals in order of date, each once; rows by Gang
+        fids = [f for f, _ in obj["fests"]]
+        assert len(fids) == len(set(fids))
+        assert [(fest_date[f], f) for f in fids] == sorted((fest_date[f], f) for f in fids)
+        for _, part in obj["fests"]:
+            assert part and [r[0] for r in part] == sorted(r[0] for r in part)
+        for r in rows:
+            assert r["res"] in (0, 1, 2) and 0 <= r["flags"] < 32
+            assert bool(r["flags"] & sb.B_UNRATED) == (r["fest_id"] in unrated_fests)
+            n_unrated += bool(r["flags"] & sb.B_UNRATED)
+            if r["g"] is None or r["go"] is None:
+                assert r["flags"] & (sb.B_EXTRA | sb.B_NO_GRADE)
+        # festivals the history file cannot name are named here
+        assert obj["other"]["cols"] == sb.OTHER_FEST_COLS
+        other = table(obj["other"])
+        assert [o["id"] for o in other] == [f for f in fids if f not in rated.get(aid, set())]
+        for o in other:
+            assert o["name"] and o["date"] == fest_date[o["id"]]
+        n_sides += len(rows)
+    assert n_sides > 0 and n_sides % 2 == 0
+    if not site.cfg.sample:
+        assert n_unrated > 0 and n_sides > 800_000
+
+
+def test_bout_files_agree_with_the_festival_files(site: Site) -> None:
+    """The same bout, read from either athlete's file and from the festival file."""
+    ids = [r[1] for r in site.rankings["rows"]][:25]
+    checked = 0
+    for aid in ids:
+        for r in side_rows(site.bout_file(aid)):
+            mirror = [m for m in side_rows(site.bout_file(r["opp"]))
+                      if m["opp"] == aid and m["fest_id"] == r["fest_id"]
+                      and m["gang"] == r["gang"]]
+            assert len(mirror) == 1, (aid, r)
+            m = mirror[0]
+            assert (m["res"], m["g"], m["go"], m["flags"]) == \
+                ({0: 0, 1: 2, 2: 1}[r["res"]], r["go"], r["g"], r["flags"])
+            checked += 1
+        fid = site.history(aid)["history"]["rows"][-1][1]
+        f = site.fest(fid)
+        names = [a[0] for a in f["athletes"]["rows"]]
+        me = names.index(aid)
+        in_fest = sorted(
+            (b[0], names[b[2] if b[1] == me else b[1]],
+             0 if b[3] == 0 else (1 if (b[3] == 1) == (b[1] == me) else 2),
+             b[4] if b[1] == me else b[5], b[5] if b[1] == me else b[4], b[6])
+            for b in f["bouts"]["rows"]
+            if me in (b[1], b[2]) and names[b[2] if b[1] == me else b[1]] is not None)
+        mine = sorted((r["gang"], r["opp"], r["res"], r["g"], r["go"], r["flags"] & 15)
+                      for r in side_rows(site.bout_file(aid)) if r["fest_id"] == fid)
+        assert mine == in_fest, (aid, fid)
+    assert checked > 100
+
+
 def test_reversion_in_history_matches_the_model(site: Site) -> None:
     """The chart draws the 1 April reversion from `rev`: after -> next before."""
     import datetime as dt
@@ -437,6 +544,7 @@ def test_nothing_private_is_exported(site: Site) -> None:
                                      "alltime_top200.json", "seasons.json", "festivals.json")]
     files += sorted((site.data / "history").iterdir())[:50]
     files += sorted((site.data / "fests").iterdir())[:20]
+    files += sorted((site.data / "bouts").iterdir())[:50]
     for p in files:
         assert not (keys_of(load(p)) & FORBIDDEN_KEYS), p
 
@@ -538,6 +646,7 @@ def test_athlete_without_rating_is_listed_by_name_without_profile(
     searchable = {r[0] for r in load(data / "athletes.json")["rows"]}
     text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
     for victim in victims:
+        assert not (data / "bouts" / f"bouts_{victim}.json").exists()
         assert not (data / "history" / f"history_{victim}.json").exists()
         assert victim not in searchable
         assert f'"{victim}"' not in text                          # the id is not published
@@ -601,6 +710,7 @@ def test_unexportable_athletes_are_not_linked(tmp_path: Path, sample: Site) -> N
                        "dist_dir": tmp_path / "dist"}, env={})
     dist = sb.build_site(cfg)
     assert not (dist / "data" / "history" / f"history_{victim}.json").exists()
+    assert not (dist / "data" / "bouts" / f"bouts_{victim}.json").exists()
     assert victim not in {r[0] for r in load(dist / "data" / "athletes.json")["rows"]}
     # stays ranked in the Parquet file (we did not touch `ranked`) but must not be listed
     assert victim not in {r[1] for r in load(dist / "data" / "rankings_latest.json")["rows"]}
@@ -652,6 +762,19 @@ def test_athletes_under_the_publication_age_are_not_published(tmp_path: Path,
     for aid, name in zip(young, names):
         assert aid not in text and name not in text      # neither id nor name, anywhere
         assert not (data / "history" / f"history_{aid}.json").exists()
+    # the comparison data: no file for them, and nobody's opponent list contains them -
+    # their bouts are simply absent there (the festival file keeps them, unnamed)
+    assert not any((data / "bouts" / f"bouts_{aid}.json").exists() for aid in young)
+    dropped = 0
+    for p in sorted((data / "bouts").iterdir()):
+        now = side_rows(load(p))
+        was = side_rows(sample.bout_file(p.stem.removeprefix("bouts_")))
+        assert [r for r in was if r["opp"] not in young] == now, p.name
+        dropped += len(was) - len(now)
+        assert not set(load(p)["opps"]) & set(young)
+    assert dropped == sum(len(side_rows(sample.bout_file(a))) for a in young) \
+        - 2 * sum(1 for r in side_rows(sample.bout_file(young[0])) if r["opp"] == young[1])
+    assert dropped > 0
     # ranks are the places among the published athletes: no gap, same order as before
     before = [r[1] for r in sample.rankings["rows"] if r[1] not in young]
     rows = load(data / "rankings_latest.json")["rows"]
@@ -739,8 +862,10 @@ def test_recent_debutants_without_birth_year_are_withheld(tmp_path: Path,
         assert aid not in text
         assert json.dumps(by_id.at[aid, "full_name"], ensure_ascii=False) not in text
         assert not (data / "history" / f"history_{aid}.json").exists()
+        assert not (data / "bouts" / f"bouts_{aid}.json").exists()
     for aid in (old, known):
         assert (data / "history" / f"history_{aid}.json").is_file()
+        assert (data / "bouts" / f"bouts_{aid}.json").is_file()
     assert sum(a[-1] for p in (data / "fests").iterdir()
                for a in load(p)["athletes"]["rows"]) >= 2
     # the rule is a switch of its own, and it is off when the age rule is off
@@ -770,7 +895,7 @@ def test_publish_min_age_zero_publishes_everyone(tmp_path: Path, sample: Site) -
 
 def test_noindex_is_on_every_page_and_switchable(tmp_path: Path, sample: Site) -> None:
     pages = sorted(p.name for p in sample.dist.glob("*.html"))
-    assert len(pages) == 4
+    assert len(pages) == len(list(sample.cfg.web_dir.glob("*.html"))) >= 4
     for name in pages:
         html = (sample.dist / name).read_text(encoding="utf-8")
         assert html.count(sb.ROBOTS_META) == 1
@@ -859,6 +984,39 @@ def test_real_withheld_rows_carry_no_rating(real: Site) -> None:
     assert n_anon > 5000
 
 
+def test_real_bout_files_name_no_withheld_athlete(real: Site) -> None:
+    """Every id in every comparison file is a published athlete, no file exists for a
+    withheld one, and no withheld name occurs in the files that carry names (`other`)."""
+    published = {r[0] for r in real.search["rows"]}
+    assert real.withheld and not (real.withheld & published)
+    a = real.athletes[real.athletes["athlete_id"].isin(real.withheld)]
+    published_names = {r[1] for r in real.search["rows"]}
+    hidden_names = set(a["full_name"]) - published_names        # namesakes may be published
+    assert len(hidden_names) > 300
+    ids_seen: set[str] = set()
+    for p in (real.data / "bouts").iterdir():
+        aid = p.stem.removeprefix("bouts_")
+        assert aid in published and aid not in real.withheld
+        obj = load(p)
+        ids_seen |= set(obj["opps"]) | {obj["id"]}
+        # the only strings in the file: ids, column names, names of unrated festivals
+        strings = {v for fid_rows in obj["fests"] for r in fid_rows[1] for v in r
+                   if isinstance(v, str)}
+        assert strings == set()
+        for row in obj["other"]["rows"]:
+            assert row[1] not in hidden_names
+    assert ids_seen <= published
+    # the bouts a published athlete had against withheld ones are absent, not anonymised:
+    # the tally of two published athletes cannot include a third person
+    b = real.bouts
+    mixed = b[b["athlete_a_id"].isin(real.withheld) ^ b["athlete_b_id"].isin(real.withheld)]
+    assert len(mixed) > 5000
+    both = b[b["athlete_a_id"].isin(published) & b["athlete_b_id"].isin(published)]
+    n_sides = sum(len(rows) for p in (real.data / "bouts").iterdir()
+                  for _, rows in load(p)["fests"])
+    assert n_sides == 2 * len(both) < 2 * (len(b) - len(mixed))
+
+
 def test_real_known_weaknesses_are_represented(real: Site) -> None:
     seasons = {s["season"]: s for s in real.seasons["seasons"]}
     assert seasons[2011]["status"] == "burn_in"
@@ -937,5 +1095,8 @@ def test_real_payload_sizes(real: Site) -> None:
     assert size("seasons.json") < 250_000 and size("festivals.json") < 300_000
     biggest = max(p.stat().st_size for p in (real.data / "history").iterdir())
     assert biggest < 40_000
+    # the comparison data: one on-demand file per athlete, a pair loads two of them
+    bout_sizes = [p.stat().st_size for p in (real.data / "bouts").iterdir()]
+    assert max(bout_sizes) < 70_000 and sum(bout_sizes) < 50_000_000
     n_files, n_bytes = sb.dist_stats(real.dist)
-    assert n_files < 12_000 and n_bytes < 80_000_000
+    assert n_files < 18_000 and n_bytes < 120_000_000

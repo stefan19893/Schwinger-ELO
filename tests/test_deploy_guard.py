@@ -367,3 +367,28 @@ def test_unknown_birth_year_setting_is_guarded(built: Path, tmp_path: Path,
             cfg.guard_max_drop_birth_known) == (0.03, 0.10, 0.02, 0.02)
     with pytest.raises(ValueError, match="guard_max_rise"):
         load_config({"guard_max_rise": 1.5}, env={})
+
+
+def test_per_athlete_files_must_match_the_search_index(built: Path, tmp_path: Path) -> None:
+    """A selectable athlete without profile / comparison file, or a file for somebody who
+    is not in the search index, is never deployable."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    assert dg.check_site(cfg, dist, meta).ok
+    victim = sorted((dist / "data" / "bouts").iterdir())[0]
+    moved = victim.with_name("bouts_niemand-p0.json")
+    victim.rename(moved)
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert not rep.ok and any("data/bouts" in f and "1 missing, 1 without" in f
+                              for f in rep.fatal), rep.fatal
+    moved.rename(victim)
+    assert dg.check_site(cfg, dist, meta).ok
+    sorted((dist / "data" / "history").iterdir())[0].unlink()
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert any("data/history" in f for f in rep.fatal), rep.fatal
+    shutil.rmtree(dist / "data" / "bouts")
+    shutil.copytree(built / "data" / "history", dist / "data" / "history", dirs_exist_ok=True)
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert any("data/bouts: 0 files" in f for f in rep.fatal), rep.fatal
