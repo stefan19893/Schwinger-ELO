@@ -329,7 +329,7 @@ def test_run_clean_writes_club_and_teilverband(db: Path, tmp_path: Path,
     add_evidence(db)
     # a caller-supplied frame has priority; the stored evidence fills its gaps
     override = pd.DataFrame({"athlete_raw_id": ["200-000"], "club": ["Thun und Umgebung"]})
-    res = cl.run_clean(db, out, extra_raw=[override])
+    res = cl.run_clean(db, out, resolver=cl.BaselineResolver(), extra_raw=[override])
     athletes = pq.read_table(out / "athletes.parquet").to_pandas().set_index("athlete_id")
     hans = athletes.loc["muster-hans"]
     assert (hans["club"], hans["sub_association"], hans["slug"], hans["birth_year"]) == (

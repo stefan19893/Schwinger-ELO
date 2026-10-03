@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 3 — Identity cleaning (in progress, branch `phase-3-cleaning`)
-**Next action:** Phase 3 task 2 — implement the real identity resolver behind `cleaner.default_resolver()` (inputs: `names.py`, `ResolverInput.raw` with the evidence columns from `athlete_evidence`; see phase-3 handoff notes 2026-10-01 "Recommended resolution" and 2026-10-03 "For task 2"), then task 4 (final Parquet counts).
+**Next action:** Phase 3 task 4 — final Parquet outputs with the evidence resolver (`python -m src.cli clean`, `--sample clean`), record counts in the phase-3 handoff notes; then run phase-reviewer.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -104,6 +104,15 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — Teilverband per raw row by source priority `code` > `club` > `portrait` > `festival`; guest codes (`GA`, `GST`) are no association; `festival` (organiser's Teilverband) is the weakest source and marked as such in `sub_assoc_source`.
 - 2026-10-03 — `clean` stays read-only on SQLite: it refuses a real db whose schema is older than the code (run `parse`), and rebuilds an outdated `--sample` db. `OPTIONAL_RAW_COLUMNS` extended by `club_key`, `sub_assoc_source`, `portrait_id`; `identity_map.parquet` gained `club`, `sub_association`, `residence`, `portrait_slug` (package C contract otherwise unchanged; baseline resolver untouched).
 - 2026-10-03 — `--sample` evidence fixtures: ranking lists as PDF (3) or positioned-line JSON (Brünig 2011 complete, ESAF 2019 only an 8-entry excerpt — the PDF is 194 KB), portraits as trimmed real API JSON (46 portraits); shared with the parser tests via `tests/fixture_paths.ranking_file`.
+- 2026-10-03 — **Deviation from spec §4.1 ("slug first, then name + club"):** the statistic sheets have no profile slug. The schlussgang portrait link (2023+) is the hard key; the portrait registry (10,184 portraits, duplicates collapsed) anchors older rows by name + club / city / birthday; then name + club, birth year, residence, Teilverband (`src/pipeline/identity.py`). Resolves the open question "use the portraits as a registry" (yes).
+- 2026-10-03 — Resolver rule order and thresholds (constants in `identity.py`): hard cannot-links = same date, different portraits, birth years ≥ 2 apart, age < 14 / > 60; score weights prior 1 / club +3, −0.5 / birth year +3, +1 / residence +2 / Teilverband +1, −2 (sources `code`, `club`, `portrait`; ≥ 25 % share) / ordinal +1, −2 / opponents +1 / age 14–15 −2 / gap ≥ 5 seasons −0.5; merge while score > 0; ambiguity margin 0.75. Chosen from measured rates (club agreement 98 %, 4 % of portraits with 2–3 clubs, 2.4 % with two Teilverbände, birth year off by ≥ 2 in 0.4 % of rows), not fitted to names.
+- 2026-10-03 — **To confirm:** a name whose rows fall into two Teilverbände with no shared club / residence / birth year is split (≈ 90 identity pairs, flagged `-teilverband`, small side often `fragment`) — evidence is roughly even (double membership vs. namesake); a wrong split costs a restart at the default rating, a wrong merge mixes two people.
+- 2026-10-03 — **To confirm:** rows that cannot be told apart between two known namesakes (same club and village, e.g. Gasser Dominik 1996 / 1998) are assigned to the best-fitting one and flagged `ambiguous` (confidence ≤ 0.4, 671 rows) instead of forming a third "unresolved" athlete — no phantom person, but the two histories are partly mixed. Phase 4 may want to down-weight or skip rows with confidence ≤ 0.4.
+- 2026-10-03 — A career gap ≥ 5 seasons is only a flag (`career_gap`), not a split rule — as a rule it split unique names in sparse data (the `--sample` set) without evidence of a second person.
+- 2026-10-03 — Sheet suffixes `1` / `2` (2011–22) are not used as identity evidence (they swap between festivals for the same pair); only the ESV `(n)` ordinals (2023+, also in the registry names) and roman `I` / `II` count.
+- 2026-10-03 — Spelling variants: wildcard / spacing / swap merge without evidence against; alias / one edit need a shared club, birth year or residence and never merge spellings that co-occur on a date; two established tokens (≥ 3 name keys each, e.g. Simon / Timon) need an equal birth year.
+- 2026-10-03 — `athlete_id` scheme: `<name-slug>-p<portrait_id>` (registry name) or `<name-slug>-<fest_id>-<idx>` of the identity's earliest row (that row's spelling); always suffixed so a later namesake does not rename an existing athlete. Changes only if the earliest row moves to another identity or a portrait gets attached / detached. `full_name` = most frequent spelling.
+- 2026-10-03 — `ResolverInput.portraits` (optional registry frame) added to the resolver contract; `identity_map.parquet` columns unchanged (`evidence` = method, `confidence`).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -119,7 +128,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 3: the portrait fixtures (`tests/fixtures/**/portraits_*.json`) contain birthdays, residences and ESV licence numbers of real athletes, copied from the public schlussgang API — fine to keep in the (public) repo, or reduce / pseudonymise before pushing? → confirm with user.
 - Phase 3: portrait list cache — 30-day refresh (current code) or cached forever? → confirm with user (see Decisions 2026-10-03).
 - Phase 3: 34 Schlussranglisten have no usable text layer (16 scans, 12 glyph-id layers incl. Zug Kantonal 2019 and Schwarzsee 2013, 6 one-off layouts; 1,316 raw athletes without residence/club) — accept, or invest in a text-order fallback parser?
-- Phase 3: use the 10,184 portraits (name, birthday, club, ESV licence number) as an identity registry for rows without a `field_ref_portrait` link (everything before 2023)? 71.7 % of linked ranking rows have a name that is unique among the portraits, 8.0 % an ambiguous one → decide in task 2.
+- ~~Phase 3: use the 10,184 portraits (name, birthday, club, ESV licence number) as an identity registry for rows without a `field_ref_portrait` link (everything before 2023)? 71.7 % of linked ranking rows have a name that is unique among the portraits, 8.0 % an ambiguous one → decide in task 2.~~ — resolved 2026-10-03: yes, as anchors (see Decisions).
+- Phase 3 → 4: how should the ELO engine treat low-confidence identity rows (`identity_map.confidence` ≤ 0.4: 1,396 rows; flags `ambiguous`, `fragment`, `career_gap`)? → decide in Phase 4.
 
 
 ## Blockers

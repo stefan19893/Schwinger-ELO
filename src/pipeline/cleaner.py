@@ -9,8 +9,8 @@ Flow (``run_clean``)::
 
 The resolver is pluggable: anything with a ``name`` and a
 ``resolve(ResolverInput) -> Resolution`` method (:class:`Resolver`). The
-shipped :class:`BaselineResolver` is a placeholder (exact cleaned-name key);
-the real resolver (names.py / clubs.py) replaces it via :func:`default_resolver`.
+default is :class:`src.pipeline.identity.EvidenceResolver` (:func:`default_resolver`);
+:class:`BaselineResolver` (exact cleaned-name key) is kept for comparison.
 
 Nothing is dropped silently: raw rows a resolver leaves unmapped stay in the
 identity map with ``athlete_id = NULL``; bouts whose sides are unmapped, or
@@ -56,6 +56,10 @@ OPTIONAL_RAW_COLUMNS: tuple[str, ...] = (
     "club_key", "sub_assoc_source", "portrait_id")
 #: athlete_evidence columns read by :func:`load_evidence` (schema v6, built by ``parse``)
 EVIDENCE_COLUMNS: tuple[str, ...] = (*OPTIONAL_RAW_COLUMNS, "birth_year")
+#: portraits columns passed to resolvers as the identity registry
+PORTRAIT_COLUMNS: tuple[str, ...] = (
+    "portrait_id", "slug", "last_name", "first_name", "birthday", "city", "club_name",
+    "association_name")
 BOUT_COLUMNS: tuple[str, ...] = (
     "bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
     "grade_a", "grade_b", "schlussgang", "flags")
@@ -76,6 +80,8 @@ class ResolverInput:
 
     raw: pd.DataFrame
     bouts: pd.DataFrame
+    #: schlussgang portrait registry (:data:`PORTRAIT_COLUMNS`) or None when not loaded
+    portraits: pd.DataFrame | None = None
 
 
 #: columns of Resolution.identity (confidence/evidence optional, default NULL)
@@ -198,8 +204,11 @@ class BaselineResolver:
 
 
 def default_resolver() -> Resolver:
-    """The resolver ``cli clean`` uses (swap in the real one in Phase 3 task 2)."""
-    return BaselineResolver()
+    """The resolver ``cli clean`` uses: the evidence-based resolver of
+    :mod:`src.pipeline.identity` (:class:`BaselineResolver` stays for comparison)."""
+    from src.pipeline.identity import EvidenceResolver
+
+    return EvidenceResolver()
 
 
 # ----------------------------------------------------------------------------- loading
@@ -219,6 +228,7 @@ class CleanInputs:
     raw: pd.DataFrame        # ResolverInput.raw
     bouts: pd.DataFrame      # bouts table
     festivals: pd.DataFrame  # festivals table + festival_parse status
+    portraits: pd.DataFrame | None = None  # portrait registry (schema v6), if present
 
 
 def load_inputs(conn: sqlite3.Connection,
@@ -240,6 +250,11 @@ def load_inputs(conn: sqlite3.Connection,
                  else pd.DataFrame(columns=["fest_id", "parse_status", "n_gaenge"]))
         raw = _table(conn, f"SELECT {', '.join(RAW_COLUMNS)} FROM athletes_raw")
         bouts = _table(conn, f"SELECT {', '.join(BOUT_COLUMNS)} FROM bouts ORDER BY bout_id")
+        portraits = None
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                        "AND name = 'portraits'").fetchone():
+            portraits = _table(conn, f"SELECT {', '.join(PORTRAIT_COLUMNS)} FROM portraits "
+                                     "ORDER BY portrait_id")
     finally:
         conn.rollback()
     fests = fests.merge(parse, on="fest_id", how="left")
@@ -263,7 +278,7 @@ def load_inputs(conn: sqlite3.Connection,
                 fill = fill.map(lambda v: None if pd.isna(v) else str(int(v))).astype(object)
             raw[c] = raw[c].where(raw[c].notna(), fill.to_numpy())
     raw = raw.sort_values(["fest_date", "fest_id", "idx"], kind="stable").reset_index(drop=True)
-    return CleanInputs(raw=raw, bouts=bouts, festivals=fests)
+    return CleanInputs(raw=raw, bouts=bouts, festivals=fests, portraits=portraits)
 
 
 def load_evidence(conn: sqlite3.Connection) -> pd.DataFrame | None:
@@ -434,7 +449,8 @@ def run_clean(db_path: Path, out_dir: Path, resolver: Resolver | None = None,
         log.info("clean: evidence per raw row: %s", ", ".join(
             f"{c} {100 * inputs.raw[c].notna().sum() / max(n, 1):.1f}%"
             for c in ("club", "sub_association", "residence", "birth_year", "portrait_slug")))
-    resolution = resolver.resolve(ResolverInput(raw=inputs.raw, bouts=inputs.bouts))
+    resolution = resolver.resolve(ResolverInput(raw=inputs.raw, bouts=inputs.bouts,
+                                                portraits=inputs.portraits))
     result = assemble(inputs, resolution, resolver.name)
     report(result)
     write_outputs(result, out_dir)

@@ -29,7 +29,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def out(tmp_path: Path) -> Path:
     db = make_db(tmp_path / "schwingen.db")
-    cl.run_clean(db, tmp_path / "processed")
+    cl.run_clean(db, tmp_path / "processed", resolver=cl.BaselineResolver())
     return tmp_path / "processed"
 
 
@@ -94,10 +94,12 @@ def test_rejects_written_not_dropped(tmp_path: Path) -> None:
 
 
 def test_idempotent(tmp_path: Path, out: Path) -> None:
-    before = {n: (out / f"{n}.parquet").read_bytes() for n in FILES}
-    cl.run_clean(tmp_path / "schwingen.db", out)
-    after = {n: (out / f"{n}.parquet").read_bytes() for n in FILES}
-    assert before == after
+    for resolver in (cl.BaselineResolver(), cl.default_resolver()):
+        cl.run_clean(tmp_path / "schwingen.db", out, resolver=resolver)
+        before = {n: (out / f"{n}.parquet").read_bytes() for n in FILES}
+        cl.run_clean(tmp_path / "schwingen.db", out, resolver=resolver)
+        after = {n: (out / f"{n}.parquet").read_bytes() for n in FILES}
+        assert before == after, resolver.name
 
 
 def test_atomic_write_keeps_old_file_on_failure(tmp_path: Path,
@@ -146,7 +148,8 @@ def test_clean_sample_end_to_end(tmp_path: Path, caplog: pytest.LogCaptureFixtur
     assert athletes["n_bouts"].sum() == 2 * len(bouts)
     # club / Teilverband / portrait from the sample ranking lists and portraits
     assert set(athletes["sub_association"].dropna()) <= {"BKSV", "ISV", "NOSV", "NWSV", "SWSV"}
-    fabian = athletes.set_index("athlete_id").loc["scherrer-fabian"]
+    fabian = athletes.set_index("full_name").loc["Scherrer Fabian"]
+    assert fabian["athlete_id"].startswith("scherrer-fabian-p")  # anchored to his portrait
     assert (fabian["club"], fabian["sub_association"], fabian["slug"]) == (
         "Surental", "ISV", "fabian-scherrer")
     assert ident["club"].notna().sum() > 100 and ident["residence"].notna().sum() > 300
