@@ -44,6 +44,7 @@ and which uncertainty flags apply (see :data:`CONFIDENCE`).
 
 from __future__ import annotations
 
+import copy
 import heapq
 import logging
 import re
@@ -73,10 +74,16 @@ W_OPPONENTS = 1.0          #: >= MIN_SHARED_OPPONENTS shared opponents, >= 30 % 
 W_GAP = -0.5               #: careers >= GAP_SEASONS seasons apart: tips the balance only
                            #: together with other evidence against; otherwise a flag
 GAP_SEASONS = 5
+UNBRIDGED_GAP_SEASONS = 8  #: a gap this long with no club / residence / birth year shared
+                           #: across it: the smaller side's rows are capped at 0.4
 MIN_SHARED_OPPONENTS = 3
 MIN_AGE, MAX_AGE = 14, 60  #: plausible age of an active athlete at a festival
+YOUTH_MIN_AGE = 8          #: a printed birth year implying age 8-13 is a leaked youth entry:
+                           #: the year is kept as evidence, the row is exempt from the age rules
 YOUNG_AGE = 16             #: below this age a link needs positive evidence (0.3 % of rows)
 W_YOUNG = -2.0
+OLD_AGE = 40               #: above this age a link is unlikely (0.6 % of the portrait-linked
+W_OLD = -2.0               #: rows, 17 of 794 persons): tips the choice between namesakes
 AMBIGUITY_MARGIN = 0.75    #: a cannot-linked alternative this close makes a merge ambiguous
 VARIANT_MAX_SPAN_GAP = 2   #: seasons between two spellings of one person
 VARIANT_BIG_SIDE = 10      #: both spellings with >= this many rows need club / birth year
@@ -84,6 +91,7 @@ ESTABLISHED_TOKEN_KEYS = 3  #: a name token used by >= this many keys is a real 
 FRAGMENT_ROWS, FRAGMENT_NEXT_TO = 2, 10  #: flag `fragment`: <= 2 rows inside a >= 10-row namesake's career
 TV_MIN_SHARE = 0.25        #: a Teilverband counts for a cluster from this share of its rows
 STRONG_TV_SOURCES = frozenset({"code", "club", "portrait"})
+ANCHOR_EVIDENCE = frozenset({"club", "birth_year", "residence", "ordinal"})
 
 #: per-row confidence by linking evidence: (name is unique, name has namesakes)
 CONFIDENCE: dict[str, tuple[float, float]] = {
@@ -92,6 +100,7 @@ CONFIDENCE: dict[str, tuple[float, float]] = {
     "not_a_name": (0.0, 0.0),
 }
 CONFIDENCE_AMBIGUOUS = 0.4   #: cap for rows whose assignment had a close alternative
+CONFIDENCE_UNBRIDGED = 0.4   #: cap for rows beyond an unbridged career gap (father / son?)
 CONFIDENCE_VARIANT = 0.9     #: factor for rows merged across spellings
 
 _PORTRAIT_TV = {"Innerschweiz": "ISV", "Nordostschweiz": "NOSV", "Bern": "BKSV",
@@ -139,6 +148,7 @@ class Cluster:
     ordinals: set[str] = field(default_factory=set)
     dates: set[str] = field(default_factory=set)
     years: set[int] = field(default_factory=set)
+    age_years: set[int] = field(default_factory=set)  # years minus those of leaked youth rows
     opponents: set[str] = field(default_factory=set)
     keys: Counter[str] = field(default_factory=Counter)
     ambiguous: set[int] = field(default_factory=set)
@@ -171,6 +181,7 @@ class Cluster:
         self.ordinals |= other.ordinals
         self.dates |= other.dates
         self.years |= other.years
+        self.age_years |= other.age_years
         self.opponents |= other.opponents
         self.keys.update(other.keys)
         self.ambiguous |= other.ambiguous
@@ -186,30 +197,36 @@ def _season_gap(a: Cluster, b: Cluster) -> int | None:
     return max(0, min(hi.years) - max(lo.years) - 1)
 
 
-def cannot_link(a: Cluster, b: Cluster) -> str | None:
-    """Reason why two clusters cannot be one person, or None."""
+def cannot_link(a: Cluster, b: Cluster, dates: bool = True) -> str | None:
+    """Reason why two clusters cannot be one person, or None (``dates=False``: leave
+    the same-date rule out)."""
     pa, pb = a.portraits | ({a.anchor} - {None}), b.portraits | ({b.anchor} - {None})
     if pa and pb:
         if pa != pb:
             return "portrait"
-    if not a.dates.isdisjoint(b.dates):
+    if dates and not a.dates.isdisjoint(b.dates):
         return "same_date"
     ba, bb = a.birth(), b.birth()
     if ba is not None and bb is not None and abs(ba - bb) >= 2:
         return "birth_year"
-    for birth, years in ((ba, b.years), (bb, a.years)):
+    for birth, years in ((ba, b.age_years), (bb, a.age_years)):
         if birth is not None and years and (
                 min(years) - birth < MIN_AGE or max(years) - birth > MAX_AGE):
             return "age"
     return None
 
 
-def pair_score(a: Cluster, b: Cluster) -> tuple[float, list[str]]:
+def pair_score(a: Cluster, b: Cluster, age_penalty: bool = True,
+               opponents: bool = True) -> tuple[float, list[str]]:
     """Evidence score for "a and b are one person" (callers check :func:`cannot_link`).
 
     Returns ``(score, reasons)``: reasons name the positive evidence (``club``,
     ``birth_year``, ``residence``, ``teilverband``, ``ordinal``, ``opponents``) and,
-    prefixed with ``-``, the evidence against."""
+    prefixed with ``-``, the evidence against. ``age_penalty=False`` leaves out the
+    penalty for an unusual age (< 16 / > 40): an unusual age only decides between
+    candidates (see :func:`agglomerate`). ``opponents=False`` leaves out the shared
+    opponents: they order merges, but namesakes of one club share them too, so they
+    do not make an assignment certain (see :func:`_flag_ambiguous`)."""
     s, why = PRIOR_SAME_NAME, []
     if a.clubs & b.clubs:
         s += W_CLUB
@@ -241,16 +258,17 @@ def pair_score(a: Cluster, b: Cluster) -> tuple[float, list[str]]:
     elif a.ordinals and b.ordinals:
         s += W_ORDINAL_DISJOINT
         why.append("-ordinal")
-    if a.opponents and b.opponents:
+    if opponents and a.opponents and b.opponents:
         shared = len(a.opponents & b.opponents)
         share = shared / min(len(a.opponents), len(b.opponents))
         if shared >= MIN_SHARED_OPPONENTS and share >= 0.3:
             s += W_OPPONENTS
             why.append("opponents")
         s += 0.3 * share                       # tie-break only
-    for birth, years in ((ba, b.years), (bb, a.years)):
-        if birth is not None and years and min(years) - birth < YOUNG_AGE and ba != bb:
-            s += W_YOUNG
+    for birth, years in ((ba, b.age_years), (bb, a.age_years)) if age_penalty else ():
+        if birth is not None and years and ba != bb and (
+                min(years) - birth < YOUNG_AGE or max(years) - birth > OLD_AGE):
+            s += W_YOUNG if min(years) - birth < YOUNG_AGE else W_OLD
             why.append("-age")
             break
     gap = _season_gap(a, b)
@@ -267,25 +285,146 @@ def _is_core(c: Cluster) -> bool:
     return not c.weak and bool(c.portraits or c.anchor is not None or c.clubs or c.births)
 
 
-def agglomerate(clusters: list[Cluster]) -> list[Cluster]:
+def anchor_supported(a: Cluster, b: Cluster, why: list[str]) -> bool:
+    """A registry portrait without linked rows is attached to rows only on evidence
+    beyond the name (club, birth year, residence, ESV namesake number): the registry
+    also lists veterans, officials and children with the same name."""
+    if bool(a.rows) == bool(b.rows):
+        return True
+    return bool(ANCHOR_EVIDENCE & set(why))
+
+
+def link_score(a: Cluster, b: Cluster, relaxed: bool = False) -> float | None:
+    """Score of a permitted merge, or None.
+
+    Normally the score must be > 0. ``relaxed``: a pair that fails only because of
+    the age penalty is permitted as well (ranked by its penalised score) - used once
+    every other merge is done, i.e. when the rows have no other candidate."""
+    if cannot_link(a, b) is not None:
+        return None
+    s, why = pair_score(a, b)
+    if not anchor_supported(a, b, why):
+        return None
+    if s > 0:
+        return s
+    if relaxed and "-age" in why and pair_score(a, b, age_penalty=False)[0] > 0:
+        return s
+    return None
+
+
+def agglomerate(clusters: list[Cluster],
+                singles: dict[int, Cluster] | None = None) -> list[Cluster]:
     """Greedy best-pair-first merging; deterministic (ties by cluster order).
 
     Pairs with a core side (see :func:`_is_core`) go first: rows without identifying
     evidence are attached to the established persons of the block before they are
     merged with each other - otherwise two such rows of different namesakes can
-    form a cluster that fits none of them."""
+    form a cluster that fits none of them.
+
+    Two passes: the second one also merges pairs that failed only because of an
+    unusual age (15-year-olds, over-40s). The penalty therefore decides between
+    candidates but does not split off rows that have nobody else to belong to.
+
+    ``singles``: one cluster per row (row position -> cluster), used to flag ambiguous
+    assignments row by row (see :func:`_flag_ambiguous`)."""
+    atoms = [copy.deepcopy(c) for c in clusters]
     live: dict[int, Cluster] = dict(enumerate(clusters))
     version = {i: 0 for i in live}
+    for relaxed in (False, True):
+        _agglomerate_pass(live, version, relaxed)
+    done = sorted(live.values(), key=lambda c: c.order)
+    _flag_ambiguous(atoms, done, singles or {})
+    return done
+
+
+def _flag_ambiguous(atoms: list[Cluster], done: list[Cluster],
+                    singles: dict[int, Cluster]) -> None:
+    """Flag the rows whose assignment had a nearly as good alternative.
+
+    Judged on the final persons of the block (not at merge time, when a person is
+    still in pieces): a row is ambiguous when another person - a cluster with rows or
+    an unused registry anchor - is a permitted link for it and fits within
+    :data:`AMBIGUITY_MARGIN` of how well the row's atom fits the rest of its own
+    person. Rows are judged one by one because an atom (rows with identical evidence)
+    of two namesakes sharing club and village may itself be a mix. A row that meets
+    the other person on its date is decided - unless that person's row of the day
+    could equally be swapped with it (both at the festival, nothing tells them
+    apart). The flag always goes to rows; a registry anchor has none."""
+    if len(done) < 2:
+        return
+    home: dict[int, Cluster] = {}
+    for c in done:
+        for i in c.rows:
+            home[i] = c
+        for p in c.portraits | ({c.anchor} - {None}):
+            home[-1 - p] = c
+    parts: dict[int, list[Cluster]] = defaultdict(list)
+    for t in atoms:
+        ref = t.rows[0] if t.rows else -1 - t.anchor  # type: ignore[operator]
+        if ref in home:
+            parts[id(home[ref])].append(t)
+    own: dict[int, float] = {}                 # row -> its fit to the rest of its own person
+    fixed: set[int] = set()                    # portrait-linked rows: never in question
+    as_row: dict[int, Cluster] = {}
+    for c in done:
+        mine = parts[id(c)]
+        for t in mine:
+            if t.portraits:
+                fixed.update(t.rows)
+            rest = Cluster(order=c.order, key=c.key)
+            for o in mine:
+                if o is not t:
+                    rest.absorb(copy.deepcopy(o))
+            rest.weak = False
+            for i in t.rows:                   # the row against its person without its atom
+                as_row[i] = singles.get(i, t)
+                own[i] = pair_score(as_row[i], rest, opponents=False)[0] if len(mine) > 1 else 0.0
+
+    def fits(i: int, g: Cluster, dates: bool) -> bool:
+        """Could row ``i`` be person ``g`` nearly as well as its own person?"""
+        row = as_row[i]
+        if cannot_link(row, g, dates=dates) is not None:
+            return False
+        s, why = pair_score(row, g, opponents=False)
+        if not anchor_supported(row, g, why):
+            return False
+        if s <= 0 and not ("-age" in why and pair_score(
+                row, g, age_penalty=False, opponents=False)[0] > 0):
+            return False
+        return s >= own[i] - AMBIGUITY_MARGIN
+
+    for c in done:
+        if len(parts[id(c)]) < 2:
+            continue
+        for i in c.rows:
+            if i in fixed:
+                continue
+            day = singles[i].dates if i in singles else set()
+            for g in done:
+                if g is c:
+                    continue
+                if fits(i, g, dates=True):
+                    c.ambiguous.add(i)
+                    break
+                if len(parts[id(g)]) < 2:      # a lone row is nobody to swap with
+                    continue
+                rivals = [j for j in g.rows if j in singles and singles[j].dates == day]
+                if rivals and fits(i, g, dates=False) and any(
+                        j not in fixed and fits(j, c, dates=False) for j in rivals):
+                    c.ambiguous.add(i)
+                    break
+
+
+def _agglomerate_pass(live: dict[int, Cluster], version: dict[int, int], relaxed: bool) -> None:
     heap: list[tuple[int, float, int, int, int, int, int, int]] = []
 
     def push(i: int, j: int) -> None:
         a, b = live[i], live[j]
-        if cannot_link(a, b) is None:
-            s, _ = pair_score(a, b)
-            if s > 0:
-                lo, hi = sorted((a.order, b.order))
-                tier = 0 if _is_core(a) or _is_core(b) else 1
-                heapq.heappush(heap, (tier, -s, lo, hi, i, j, version[i], version[j]))
+        s = link_score(a, b, relaxed)
+        if s is not None:
+            lo, hi = sorted((a.order, b.order))
+            tier = 0 if _is_core(a) or _is_core(b) else 1
+            heapq.heappush(heap, (tier, -s, lo, hi, i, j, version[i], version[j]))
 
     ids = sorted(live)
     for x, i in enumerate(ids):
@@ -296,22 +435,12 @@ def agglomerate(clusters: list[Cluster]) -> list[Cluster]:
         if i not in live or j not in live or version[i] != vi or version[j] != vj:
             continue
         a, b = live[i], live[j]
-        # a merge is ambiguous when one side had a nearly as good, incompatible alternative
-        for x, y in ((a, b), (b, a)):
-            for k, c in live.items():
-                if c is x or c is y or cannot_link(x, c) is not None:
-                    continue
-                if cannot_link(y, c) is not None and pair_score(x, c)[0] >= -neg - AMBIGUITY_MARGIN:
-                    small = x if len(x.rows) <= len(y.rows) else y
-                    small.ambiguous.update(small.rows)
-                    break
         a.absorb(b)
         del live[j]
         version[i] += 1
         for k in sorted(live):
             if k != i:
                 push(*sorted((i, k)))
-    return sorted(live.values(), key=lambda c: c.order)
 
 
 # ----------------------------------------------------------------------------- variants
@@ -394,15 +523,26 @@ class EvidenceResolver:
             int(v) for v in raw["portrait_id"].dropna()))
         pid = [canon.get(_int(v), _int(v)) if u and _int(v) is not None else None
                for v, u in zip(raw["portrait_id"], usable)]
+        # one person is at one festival per day: a portrait linked to two rows of one
+        # date is a wrong link on at least one of them - neither is trusted
+        per_day = Counter((p, d) for p, d in zip(pid, date) if p is not None)
+        clash = [i for i in range(n) if pid[i] is not None and per_day[(pid[i], date[i])] > 1]
+        for i in clash:
+            pid[i] = None
+        if clash:
+            log.warning("clean: %d rows share their portrait with another row of the same "
+                        "date - portrait links ignored (e.g. %s)", len(clash), rid[clash[0]])
         club = [_str(v) if u else None for v, u in zip(raw["club"], usable)]
         tv_src = raw["sub_assoc_source"].tolist()
         tv = [_str(v) if u and s in STRONG_TV_SOURCES else None
               for v, u, s in zip(raw["sub_association"], usable, tv_src)]
         res = [_residence_key(v) if u else None for v, u in zip(raw["residence"], usable)]
         birth: list[int | None] = []
+        youth: list[bool] = []                 # leaked youth entry (printed age 8-13)
         for v, c, y, u in zip(raw["birth_year"], cleaned, year, usable):
             b = _int(v) if _int(v) is not None else c[1].birth_year
-            birth.append(b if u and b is not None and MIN_AGE <= y - b <= MAX_AGE else None)
+            birth.append(b if u and b is not None and YOUTH_MIN_AGE <= y - b <= MAX_AGE else None)
+            youth.append(birth[-1] is not None and y - birth[-1] < MIN_AGE)
         ordinal: list[str | None] = []
         for r, c in zip(raw["name_raw"], cleaned):
             m = _ESV_ORDINAL_RE.search(r)       # ESV lists (2023+) number namesakes globally
@@ -417,7 +557,8 @@ class EvidenceResolver:
                 opp[j].add(keys[i])
 
         def row_cluster(i: int) -> Cluster:
-            c = Cluster(order=i, key=keys[i], rows=[i], dates={date[i]}, years={year[i]})
+            c = Cluster(order=i, key=keys[i], rows=[i], dates={date[i]}, years={year[i]},
+                        age_years=set() if youth[i] else {year[i]})
             c.keys[keys[i]] += 1
             if pid[i] is not None:
                 c.portraits.add(pid[i])
@@ -463,16 +604,25 @@ class EvidenceResolver:
         def build_block(k: str, explode: frozenset[int] = frozenset()) -> list[Cluster]:
             """Atoms + anchors of one name block; rows in ``explode`` stay single."""
             atoms: dict[tuple, Cluster] = {}
+            singles.clear()
             linked: set[int] = set()
             sigs: dict[int, tuple] = {}
             seen: dict[tuple, set[str]] = defaultdict(set)
             shared: set[tuple] = set()         # signatures used by two people at once
+            last: dict[tuple, int] = {}        # signature -> year of its latest row
+            run: Counter[tuple] = Counter()
             for i in blocks[k]:
                 if pid[i] is not None:
                     sigs[i] = ("p", pid[i])
                     linked.add(pid[i])
                 elif i not in explode and (club[i] or res[i] or birth[i] is not None):
-                    sigs[i] = sg = ("s", club[i], res[i], birth[i], tv[i], ordinal[i])
+                    sg = ("s", club[i], res[i], birth[i], tv[i], ordinal[i])
+                    # the same evidence after >= GAP_SEASONS seasons without it is a new
+                    # atom (father / son share club and village): the scores decide
+                    if year[i] - last.get(sg, year[i]) - 1 >= GAP_SEASONS:
+                        run[sg] += 1
+                    last[sg] = year[i]
+                    sigs[i] = sg = (*sg, run[sg])
                     if date[i] in seen[sg]:
                         shared.add(sg)
                     seen[sg].add(date[i])
@@ -480,6 +630,7 @@ class EvidenceResolver:
                     sigs[i] = ("r", i)
             for i in blocks[k]:
                 c = row_cluster(i)
+                singles[i] = row_cluster(i)
                 sg = sigs[i]
                 if sg in shared:               # namesakes with identical evidence
                     sg, c.weak = ("r", i), True
@@ -497,21 +648,24 @@ class EvidenceResolver:
                     block.append(a)
             return sorted(block, key=lambda c: c.order)
 
+        singles: dict[int, Cluster] = {}       # per-row clusters of the current block
         clusters: list[Cluster] = []
         splits: dict[str, Counter[str]] = {}
         n_exploded = 0
         for k in sorted(blocks):
-            done = agglomerate(build_block(k))
-            # a cluster that fits two persons of the block but can be neither mixes their
-            # rows (namesakes sharing club / village): assign its rows one by one instead
+            done = agglomerate(build_block(k), singles)
+            # a cluster that fits two persons of the block but collides with both by date
+            # mixes their rows (namesakes sharing club / village): assign its rows one by
+            # one instead. Only date collisions count: a cluster kept apart from two
+            # namesakes by birth year or age is a third person (a father), not a mix
             torn = frozenset(
                 i for u in done if len(u.rows) > 1 and not u.portraits and u.anchor is None
-                and sum(1 for v in done if v is not u and cannot_link(u, v) is not None
+                and sum(1 for v in done if v is not u and cannot_link(u, v) == "same_date"
                         and pair_score(u, v)[0] > PRIOR_SAME_NAME) >= 2
                 for i in u.rows)
             if torn:
                 n_exploded += len(torn)
-                done = agglomerate(build_block(k, torn))
+                done = agglomerate(build_block(k, torn), singles)
             real = [c for c in done if c.rows]
             if len(real) > 1:
                 splits[k] = Counter()
@@ -522,7 +676,7 @@ class EvidenceResolver:
                         splits[k][why] += 1
             clusters += done
 
-        clusters = _merge_same_portrait(clusters)
+        clusters = _merge_same_portrait(clusters, pid)
         clusters = self._merge_variants(clusters, blocks, date)
 
         # ---- output
@@ -548,6 +702,23 @@ class EvidenceResolver:
                 if info.get("club"):
                     club_n[str(info["club"])] += 1
             cbirth = c.birth()
+            seasons = sorted(c.years)
+            gap, gap_at = max(((b - a - 1, b) for a, b in zip(seasons, seasons[1:])),
+                              default=(0, 0))
+            beyond: set[int] = set()           # rows beyond a gap that nothing bridges
+            if gap >= UNBRIDGED_GAP_SEASONS:
+                sides = [[i for i in c.rows if year[i] < gap_at],
+                         [i for i in c.rows if year[i] >= gap_at]]
+                ev = [({club[i] for i in side} | {res[i] for i in side}
+                       | {birth[i] for i in side}) - {None} for side in sides]
+                reg = registry.get(portrait, {}) if portrait is not None else {}
+                known = reg.get("clubs", set()) | reg.get("cities", set()) | {reg.get("birth")}
+                if not ev[0] & ev[1] and not (ev[0] & known and ev[1] & known):
+                    linked = [any(pid[i] is not None for i in side) for side in sides]
+                    small = 0 if len(sides[0]) < len(sides[1]) else 1
+                    if linked[small] and not linked[1 - small]:
+                        small = 1 - small
+                    beyond = set(sides[small]) - {i for i in sides[small] if pid[i] is not None}
             confs: list[float] = []
             for i in c.rows:
                 if pid[i] is not None:
@@ -567,6 +738,8 @@ class EvidenceResolver:
                 label = "name" if how == "name" else f"name+{how}"
                 if i in c.ambiguous and how != "portrait":
                     conf, label = min(conf, CONFIDENCE_AMBIGUOUS), label + "|ambiguous"
+                if i in beyond:
+                    conf, label = min(conf, CONFIDENCE_UNBRIDGED), label + "|gap"
                 if i in c.variants:
                     conf, label = conf * CONFIDENCE_VARIANT, f"variant:{c.variants[i]}|{label}"
                 confs.append(conf)
@@ -583,10 +756,10 @@ class EvidenceResolver:
                 notes.append(f"ambiguous_rows={len(c.ambiguous)}")
             if len(c.tvs) > 1:
                 notes.append("teilverbaende=" + "/".join(sorted(c.tvs)))
-            seasons = sorted(c.years)
-            gap = max((b - a - 1 for a, b in zip(seasons, seasons[1:])), default=0)
             if gap >= GAP_SEASONS:
                 notes.append(f"career_gap={gap}")
+            if beyond:
+                notes.append(f"unbridged_gap_rows={len(beyond)}")
             if multi and len(c.rows) <= FRAGMENT_ROWS and c.key in long_careers and any(
                     lo - 1 <= min(c.years) and max(c.years) <= hi + 1
                     for lo, hi in long_careers[c.key]):
@@ -613,6 +786,7 @@ class EvidenceResolver:
                                  "confidence": 0.0, "evidence": "not_a_name"})
         identity = pd.DataFrame(ident_rows, columns=["athlete_raw_id", "athlete_id",
                                                      "confidence", "evidence"])
+        _check_invariants(real, date, pid, rid)
         order = {r: i for i, r in enumerate(rid)}
         identity = identity.sort_values("athlete_raw_id", key=lambda s: s.map(order),
                                         kind="stable").reset_index(drop=True)
@@ -651,6 +825,8 @@ class EvidenceResolver:
             established = diff is not None and all(
                 tokens[t] >= ESTABLISHED_TOKEN_KEYS for t in diff)
             s, why = pair_score(a, b)
+            if not anchor_supported(a, b, why):
+                return None
             ok = _variant_allowed(variant_kind(k, k2), a, b, s, why,
                                   not key_dates[k].isdisjoint(key_dates[k2]), established)
             return s if ok else None
@@ -735,9 +911,11 @@ def _registry(portraits: pd.DataFrame | None, linked: set[int]
     return people, canon
 
 
-def _merge_same_portrait(clusters: list[Cluster]) -> list[Cluster]:
+def _merge_same_portrait(clusters: list[Cluster], pid: list[int | None]) -> list[Cluster]:
     """One portrait = one person, also across name keys (a portrait whose rows are
-    printed under another spelling than the registry's)."""
+    printed under another spelling than the registry's). A cluster that meets the
+    portrait's other rows on a date contradicts the link: its rows stay apart and
+    lose the link (``pid`` is updated in place)."""
     seen: dict[int, Cluster] = {}
     out: list[Cluster] = []
     for c in sorted(clusters, key=lambda c: (not c.rows, c.order)):
@@ -753,8 +931,30 @@ def _merge_same_portrait(clusters: list[Cluster]) -> list[Cluster]:
             first.absorb(c)
         else:
             c.portraits, c.anchor = set(), None    # contradicting link: keep the rows apart
+            for i in c.rows:
+                pid[i] = None
             out.append(c)
     return sorted(out, key=lambda c: c.order)
+
+
+def _check_invariants(clusters: list[Cluster], date: list[str], pid: list[int | None],
+                      rid: list[str]) -> None:
+    """Hard guarantees of the resolver (a violation is a bug, not a data problem): an
+    athlete has one row per date (hence per festival) and one portrait; a portrait
+    belongs to one athlete."""
+    owner: dict[int, int] = {}
+    for n, c in enumerate(clusters):
+        days = Counter(date[i] for i in c.rows)
+        twice = [rid[i] for i in c.rows if days[date[i]] > 1]
+        if twice:
+            raise ValueError(f"identity with two rows on one date: {twice[:4]}")
+        linked = {pid[i] for i in c.rows} - {None}
+        if len(linked) > 1:
+            raise ValueError(f"identity with several portraits {sorted(linked)}: "
+                             f"{rid[c.rows[0]]}")
+        for p in linked:
+            if owner.setdefault(p, n) != n:
+                raise ValueError(f"portrait {p} split over two identities")
 
 
 def _latest_mode(values: list[str]) -> str | None:

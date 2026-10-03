@@ -411,6 +411,8 @@ def assemble(inputs: CleanInputs, resolution: Resolution, resolver_name: str) ->
     festivals["n_bouts"] = festivals["fest_id"].map(
         bouts["fest_id"].value_counts()).fillna(0).astype(int)
     self_bouts = remap.rejects[remap.rejects["reason"] == "self_bout"]
+    days = inputs.raw[["athlete_raw_id", "fest_id", "fest_date"]].merge(
+        res.identity, on="athlete_raw_id")
     counts = {
         "raw_athletes": len(inputs.raw),
         "raw_unmapped": int(ident["athlete_id"].isna().sum()),
@@ -418,6 +420,10 @@ def assemble(inputs: CleanInputs, resolution: Resolution, resolver_name: str) ->
         "festivals": len(festivals),
         **remap.counts,
         "self_bouts": len(self_bouts),
+        # an athlete twice in one festival / at two festivals on one day = two people
+        # merged (the evidence resolver raises on either; the baseline ignores dates)
+        "same_festival_rows": int(days.duplicated(["athlete_id", "fest_id"]).sum()),
+        "same_date_rows": int(days.duplicated(["athlete_id", "fest_date"]).sum()),
         "unmapped_bouts": int(remap.rejects["reason"].str.startswith("unmapped").sum()),
         "bouts_elo_eligible": int(bouts["elo_eligible"].astype(bool).sum()),
     }
@@ -469,6 +475,10 @@ def report(result: CleanResult) -> None:
                     c["raw_unmapped"])
     if c["unmapped_bouts"]:
         log.warning("clean: %d bouts with an unmapped side -> bout_rejects", c["unmapped_bouts"])
+    if c.get("same_date_rows"):
+        log.warning("clean: %d rows put an athlete a second time on one date (%d of them in "
+                    "the same festival): over-merged namesakes", c["same_date_rows"],
+                    c["same_festival_rows"])
     if c["self_bouts"]:
         sample = result.bout_rejects.loc[result.bout_rejects["reason"] == "self_bout",
                                          "athlete_a_id"].value_counts().head(5)
