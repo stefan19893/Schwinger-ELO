@@ -1,8 +1,8 @@
 # Project State
 
-**Last updated:** 2026-10-01
+**Last updated:** 2026-10-03
 **Current phase:** 3 — Identity cleaning (in progress, branch `phase-3-cleaning`)
-**Next action:** Phase 3 — parallel work packages A (analysis + name normalisation), B (schlussgang athlete source + club/association normalisation), C (bout remapping + Parquet export + `cli clean`); then task 2 identity resolution.
+**Next action:** Phase 3 — finish interrupted package B (task 3 `[~]`: ranking lists, portraits, clubs/evidence; see phase-3 handoff 2026-10-03), commit, merge package C (`worktree-agent-a3b62ca558defbd8b`), then task 2 identity resolution, then task 4.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
