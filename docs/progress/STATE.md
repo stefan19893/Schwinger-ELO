@@ -142,7 +142,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - ~~Phase 3: portrait list cache policy~~ — resolved 2026-10-03 (30-day refresh kept, see Decisions).
 - Phase 3: 34 Schlussranglisten have no usable text layer (16 scans, 12 glyph-id layers incl. Zug Kantonal 2019 and Schwarzsee 2013, 6 one-off layouts; 1,316 raw athletes without residence/club) — accept, or invest in a text-order fallback parser?
 - ~~Phase 3: use the 10,184 portraits (name, birthday, club, ESV licence number) as an identity registry for rows without a `field_ref_portrait` link (everything before 2023)? 71.7 % of linked ranking rows have a name that is unique among the portraits, 8.0 % an ambiguous one → decide in task 2.~~ — resolved 2026-10-03: yes, as anchors (see Decisions).
-- Phase 3 → 4: how should the ELO engine treat low-confidence identity rows (`identity_map.confidence` ≤ 0.4: 1,416 rows after the review fixes = 878 `ambiguous`, 384 name-only rows among namesakes, 27 `gap`, 122 `not_a_name`, 5 other)? Reviewer's recommendation in `phase-4-elo.md` ("Known inputs from Phase 3 review") → decide in Phase 4.
+- Phase 3 → 4: how should the ELO engine treat low-confidence identity rows (`identity_map.confidence` ≤ 0.4: 1,416 rows after the review fixes = 884 `ambiguous`, 384 name-only rows among namesakes, 26 `gap` only, 122 `not_a_name`)? Reviewer's recommendation in `phase-4-elo.md` ("Known inputs from Phase 3 review") → decide in Phase 4.
 - Phase 3: 40 identity pairs are split on Teilverband alone (30 with a side of ≤ 2 rows) and `Schaffhausen` / `Tessin` / `Basel-Stadt` are shown as clubs for 58 athletes — accept, or review by hand?
 
 
