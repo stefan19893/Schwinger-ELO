@@ -15,9 +15,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 5  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
+SCHEMA_VERSION = 6  # v2: festivals.eidg_type; v3: event_flags/elo_eligible + parse tables;
                     # v4: nullable bout grades (extra bouts) + schlussgang, festival_parse.n_gaenge;
-                    # v5: 'one_sided' NULL-grade flag, athletes_raw.flags
+                    # v5: 'one_sided' NULL-grade flag, athletes_raw.flags;
+                    # v6: identity evidence (ranking lists, portraits, clubs)
 
 CATEGORIES = ("ESAF", "Bergkranz", "Teilverband", "Kantonal", "Gauverband", "Regional")
 KINDS = ("active", "youth", "women", "non_competition")
@@ -144,6 +145,125 @@ CREATE TABLE IF NOT EXISTS parse_rejects (
     line            INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_parse_rejects_fest ON parse_rejects(fest_id);
+""" + """
+-- Phase 3 identity evidence (all rebuilt by `parse`, never edited by hand) ------------
+-- one row per festival whose Schlussrangliste PDF was looked at
+CREATE TABLE IF NOT EXISTS ranking_parse (
+    fest_id         INTEGER PRIMARY KEY REFERENCES festivals(fest_id),
+    pdf_url         TEXT,
+    pdf_sha256      TEXT,
+    parser_version  INTEGER NOT NULL,
+    layout          TEXT,               -- esv | header | plain
+    status          TEXT    NOT NULL,   -- ok|partial|failed|no_pdf|pdf_not_cached|pdf_error
+    n_entries       INTEGER NOT NULL DEFAULT 0,
+    n_rejects       INTEGER NOT NULL DEFAULT 0,
+    n_linked        INTEGER NOT NULL DEFAULT 0,  -- entries linked to athletes_raw
+    n_stat_athletes INTEGER NOT NULL DEFAULT 0,  -- athletes_raw rows of the festival
+    parsed_at       TEXT    NOT NULL
+);
+
+-- one row per athlete printed in a Schlussrangliste
+CREATE TABLE IF NOT EXISTS ranking_entries (
+    fest_id         INTEGER NOT NULL REFERENCES festivals(fest_id),
+    idx             INTEGER NOT NULL,
+    rank            TEXT,               -- normalised '1a', '12'
+    rank_num        INTEGER,
+    points          REAL,
+    result_str      TEXT,               -- '+' win, '-' gestellt, 'o' loss per Gang
+    schlussgang     INTEGER NOT NULL DEFAULT 0,
+    name_raw        TEXT    NOT NULL,   -- the printed line
+    name            TEXT    NOT NULL,
+    name_key        TEXT    NOT NULL,
+    sennen_turner   TEXT,
+    stars           TEXT,
+    birth_year      INTEGER,
+    residence       TEXT,
+    assoc_code      TEXT,               -- cantonal / sub-association code: 'LU', 'ONW', 'BO', 'NOS' ...
+    club_raw        TEXT,               -- Schwingklub as printed
+    club_nr         INTEGER,            -- Bernese lists: club number '(181)'
+    status          TEXT,               -- 'Kranz', 'Neukranzer', 'Unfall', ...
+    page            INTEGER,
+    line_no         INTEGER,
+    athlete_raw_id  TEXT,               -- linked athletes_raw row of the same festival (or NULL)
+    link_method     TEXT,               -- rank_points | rank_points_result | name | name_fuzzy | ...
+    link_score      REAL,
+    PRIMARY KEY (fest_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_ranking_entries_raw ON ranking_entries(athlete_raw_id);
+
+-- unparseable lines and unlinked entries (stage 'line' / 'link'), never dropped silently
+CREATE TABLE IF NOT EXISTS ranking_rejects (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fest_id         INTEGER NOT NULL,
+    stage           TEXT    NOT NULL,
+    reason          TEXT    NOT NULL,
+    detail          TEXT,
+    line            INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_ranking_rejects_fest ON ranking_rejects(fest_id);
+
+-- schlussgang.ch athlete portraits (JSON:API node--portrait)
+CREATE TABLE IF NOT EXISTS portraits (
+    portrait_id         INTEGER PRIMARY KEY,  -- drupal nid
+    slug                TEXT,                 -- 'joel-wicki' (URL /portraet/<slug>)
+    url                 TEXT,
+    title               TEXT,
+    last_name           TEXT,
+    first_name          TEXT,
+    name_key            TEXT,                 -- of 'Last First'
+    birthday            TEXT,
+    city                TEXT,
+    hknr                INTEGER,              -- ESV licence number
+    club_tid            INTEGER,
+    club_name           TEXT,
+    club_esv_id         INTEGER,
+    association_name    TEXT,                 -- Teilverband, e.g. 'Innerschweiz'
+    canton_association  TEXT,                 -- e.g. 'Luzern'
+    activity            TEXT,
+    end_of_career       TEXT,
+    fetched_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_portraits_key ON portraits(name_key);
+
+-- festival -> portrait (event field_ref_portrait, schlussgang 2023+), linked to athletes_raw
+CREATE TABLE IF NOT EXISTS portrait_appearances (
+    fest_id         INTEGER NOT NULL,
+    portrait_id     INTEGER NOT NULL,
+    athlete_raw_id  TEXT,
+    ranking_idx     INTEGER,
+    link_method     TEXT,
+    PRIMARY KEY (fest_id, portrait_id)
+);
+CREATE INDEX IF NOT EXISTS idx_portrait_app_raw ON portrait_appearances(athlete_raw_id);
+
+-- canonical Schwingklubs (src.pipeline.clubs.ClubRegistry) with their Teilverband
+CREATE TABLE IF NOT EXISTS clubs (
+    club_key        TEXT PRIMARY KEY,
+    name            TEXT    NOT NULL,   -- most frequent spelling
+    sub_association TEXT,               -- BKSV / ISV / NOSV / NWSV / SWSV (weighted vote)
+    n_obs           INTEGER NOT NULL,
+    conflict        INTEGER NOT NULL DEFAULT 0,  -- runner-up Teilverband has >= 25 % of votes
+    esv_id          INTEGER,            -- schlussgang club term's ESV id (from portraits)
+    votes           TEXT                -- e.g. 'ISV:42,NOSV:1'
+);
+
+-- per athletes_raw row: the identity evidence collected above, with normalised club
+CREATE TABLE IF NOT EXISTS athlete_evidence (
+    athlete_raw_id  TEXT PRIMARY KEY,
+    fest_id         INTEGER NOT NULL,
+    ranking_idx     INTEGER,
+    residence       TEXT,
+    birth_year      INTEGER,
+    assoc_code      TEXT,
+    club_raw        TEXT,
+    club_key        TEXT,               -- src.pipeline.clubs canonical key
+    club            TEXT,               -- canonical display name
+    sub_association TEXT,               -- BKSV / ISV / NOSV / NWSV / SWSV
+    sub_assoc_source TEXT,              -- code | club | portrait | festival
+    portrait_id     INTEGER,
+    portrait_slug   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_athlete_evidence_fest ON athlete_evidence(fest_id);
 """
 
 

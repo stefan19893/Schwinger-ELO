@@ -214,7 +214,7 @@ def test_migrates_v3_bouts_to_nullable_grades(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
     assert [tuple(r) for r in conn.execute("SELECT bout_id, grade_a FROM bouts")] == [("x", 9.0)]
     notnull = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(bouts)")}
     assert notnull["grade_a"] == notnull["grade_b"] == notnull["schlussgang"] == 0
@@ -241,3 +241,21 @@ def test_migrates_v4_to_v5(tmp_path: Path) -> None:
     assert "one_sided" in conn.execute("SELECT sql FROM sqlite_master WHERE name='bouts'").fetchone()[0]
     assert "flags" in {r[1] for r in conn.execute("PRAGMA table_info(athletes_raw)")}
 
+
+def test_migrates_v5_to_v6_keeps_data(tmp_path: Path) -> None:
+    """v6 only adds the Phase 3 evidence tables; existing rows are untouched."""
+    path = tmp_path / "v5.db"
+    conn = connect(path)
+    upsert_festivals(conn, [F])
+    v6 = ("ranking_parse", "ranking_entries", "ranking_rejects", "portraits",
+          "portrait_appearances", "clubs", "athlete_evidence")
+    for table in v6:
+        conn.execute(f"DROP TABLE {table}")
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert set(v6) <= tables
+    assert list(load_festivals(conn)) == [F.fest_id]

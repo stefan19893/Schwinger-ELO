@@ -24,3 +24,6 @@ dist/
 *.swp
 .idea/
 .vscode/
+
+# Claude Code agent worktrees
+.claude/worktrees/
