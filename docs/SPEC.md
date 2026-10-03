@@ -40,8 +40,11 @@ Schwinger-ELO/
 ├── data/                           # Generated, git-ignored
 │   ├── raw/                        # Raw HTML/cached JSON responses
 │   ├── processed/
-│   │   ├── bouts.parquet           # Canonical match history
+│   │   ├── bouts.parquet           # Canonical match history (canonical athlete ids)
 │   │   ├── athletes.parquet        # Athlete canonical master list
+│   │   ├── festivals.parquet       # Festivals + parse status and row / bout counts
+│   │   ├── identity_map.parquet    # Raw sheet row -> athlete_id, with evidence and confidence
+│   │   ├── bout_rejects.parquet    # Bouts not kept (unmapped side, self-bout) with a reason
 │   │   └── ratings.parquet         # Full rating history
 │   └── schwingen.db                # SQLite staging database
 ├── src/
@@ -52,12 +55,24 @@ Schwinger-ELO/
 │   │   ├── __init__.py
 │   │   ├── client.py               # Rate-limited HTTP client with caching
 │   │   ├── fests_crawler.py        # Discovers all festivals from 2011 to present
+│   │   ├── festival_reference.py   # Tier reference list (validates the category mapping)
 │   │   ├── statistic_pdfs.py       # Downloads + text-extracts the statistic PDFs
 │   │   ├── bouts_parser.py         # Parses statistic sheets: bouts, grades, raw athletes
-│   │   └── parse_runner.py         # Batch parse cached sheets into SQLite
+│   │   ├── parse_runner.py         # Batch parse cached sheets into SQLite
+│   │   ├── supplements.py          # Registry of interim sheets merged into a festival
+│   │   ├── ranking_pdfs.py         # Downloads the Schlussranglisten (residence, club per row)
+│   │   ├── pdf_layout.py           # Positioned text lines of a PDF page
+│   │   ├── ranking_parser.py       # Parses Schlussranglisten
+│   │   ├── ranking_runner.py       # Batch parse + link ranking entries to raw athletes
+│   │   ├── portraits.py            # schlussgang athlete portraits (registry + festival links)
+│   │   └── evidence.py             # Builds `clubs` and `athlete_evidence` (one row per raw athlete)
 │   ├── pipeline/
 │   │   ├── __init__.py
-│   │   ├── cleaner.py              # Identity resolution, club normalization
+│   │   ├── names.py                # Name cleaning, keys, spelling-variant candidates
+│   │   ├── clubs.py                # Club keys / aliases, codes -> Teilverband, club registry
+│   │   ├── identity.py             # Evidence-based identity resolver (one athlete_id per person)
+│   │   ├── cleaner.py              # Clean orchestration: load, resolve, validate, remap bouts
+│   │   ├── export.py               # Atomic Parquet writes of the clean outputs
 │   │   └── elo_engine.py           # Custom Schwingen ELO calculations
 │   └── exporter/
 │       ├── __init__.py
@@ -72,11 +87,13 @@ Schwinger-ELO/
 │   └── css/
 │       └── style.css
 ├── tests/
-│   ├── fixtures/                   # Saved HTML pages (committed)
+│   ├── fixtures/                   # Saved API JSON, PDFs / extracted text (committed)
 │   │   └── sample/                 # Small offline dataset for --sample runs
-│   ├── test_scraper.py
+│   ├── test_client.py, test_db.py, test_fests_crawler.py      # crawler
+│   ├── test_bouts_parser.py, test_parse_runner.py              # statistic sheets
+│   ├── test_ranking_parser.py, test_ranking_runner.py, test_portraits.py, test_evidence.py
+│   ├── test_names.py, test_clubs.py, test_identity.py, test_cleaner.py, test_export.py
 │   ├── test_elo.py
-│   ├── test_cleaner.py
 │   └── test_cli.py                 # End-to-end: `all --sample` produces a valid dist/
 ├── dist/                           # Built site, git-ignored
 ├── pyproject.toml                  # Project metadata + pytest config
@@ -99,7 +116,12 @@ Schwinger-ELO/
     - Grades are 8.25–10.00. A grade is NULL only for an **extra bout** (Zusatzgang: with an odd field one athlete fights one bout more than the festival has Gänge; his sheet line shows 0.00 / 0.25 / no grade — flag `extra_bout`) a line printed without grade (flag `grade_missing`), or the loser side of a Schlussgang whose loser line the sheet omits (flag `one_sided`, built from the winner's entry); enforced by a CHECK (user decisions 2026-10-01). Injury/forfeit bouts (`u`, `> unfall`, 0.00 in a regular Gang) are not bouts.
     - Extra columns: `flags` (e.g. `extra_bout`, `gang_inferred`, `gang_collision`) and `schlussgang` (1/0 only where the sheet marks it, else NULL = unknown).
   - `Athlete`: `athlete_id`, `full_name`, `club` (Schwingklub), `sub_association` (BKSV, ISV, NOSV, NWSV, SWSV), `active_years`.
-- **Handling Ambiguity:** Match keys must resolve athlete collisions (e.g., duplicate names) using Schwingklub and unique profile slug URLs.
+- **Handling Ambiguity:** athlete collisions (duplicate names) and spelling variants are resolved from the evidence attached to every sheet row. The statistic sheets carry no profile URL, so the original rule "profile slug first, then name + Schwingklub" is applied as follows (`src/pipeline/identity.py`, decisions of 2026-10-03):
+  1. **Portrait link** — the schlussgang portrait linked to a festival row (2023+ only, ~45 % of those rows) is the hard key: same portrait = same person, two portraits = two people; a portrait linked twice on one date is not trusted.
+  2. **Portrait registry** — the ~10,000 schlussgang portraits (name, birthday, club, residence, Teilverband) anchor rows without a link, but only on evidence beyond the name (club, birth year, residence or the ESV namesake number); between equally fitting namesakes the plausible age at the rows' festivals decides.
+  3. **Name + evidence** — rows with the same name key are merged by a score over Schwingklub, birth year, residence, Teilverband (from an athlete-specific source only), printed namesake ordinal and shared opponents. Hard cannot-links: two rows on one date, different portraits, birth years ≥ 2 apart, age < 14 / > 60.
+  4. **Spelling variants** (lossy glyphs, spacing, swapped order, nicknames, one edit) merge only with supporting evidence and never when both spellings occur on one date.
+  - Every row carries the evidence it was linked by and a `confidence` in `identity_map.parquet`; rows whose assignment is undecidable (namesakes sharing club and village, an unbridged career gap of ≥ 8 seasons) are capped at 0.4 and the athlete lists the flags (`ambiguous_rows`, `unbridged_gap_rows`, `career_gap`, `fragment`, `teilverbaende`). `athlete_id` is `<name>-p<portrait id>` or `<name>-<fest_id>-<idx>` of the identity's earliest row.
 
 ### 4.2 Schwingen-Specific ELO Model Specifications
 Standard chess ELO must be calibrated with the following domain parameters:
