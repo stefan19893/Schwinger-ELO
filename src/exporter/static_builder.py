@@ -141,6 +141,7 @@ def _int(v: Any) -> int | None:
     v = _clean(v)
     return None if v is None else int(round(v))
 
+
 def _r1(v: Any) -> float | None:
     v = _clean(v)
     return None if v is None else round(float(v), 1)
@@ -504,8 +505,9 @@ def write_data(cfg: Config, dist: Path) -> dict[str, Any]:
     if inp is None or inp.ratings.empty:
         meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": True, "as_of": None,
                 "first_season": None, "last_season": None,
-                "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "bouts": 0,
-                           "history_rows": 0}, "model": model}
+                "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "festivals_partial": 0,
+                           "festivals_missing": 0, "bouts": 0, "history_rows": 0},
+                "model": model}
         sizes["meta.json"] = _write_json(data / "meta.json", meta)
         sizes["rankings_latest.json"] = _write_json(
             data / "rankings_latest.json", {"as_of": None, "cols": RANKING_COLS, "rows": []})
@@ -549,6 +551,8 @@ def write_data(cfg: Config, dist: Path) -> dict[str, Any]:
             "first_season": min(all_seasons), "last_season": max(all_seasons),
             "counts": {"athletes": len(search), "ranked": len(rankings),
                        "festivals": sum(1 for r in fest_rows if r[8] != "none"),
+                       "festivals_partial": sum(1 for r in fest_rows if r[8] == "partial"),
+                       "festivals_missing": sum(1 for r in fest_rows if r[8] == "none"),
                        "bouts": int(inp.bouts["elo_eligible"].astype(bool).sum()),
                        "history_rows": hist_rows},
             "model": model}

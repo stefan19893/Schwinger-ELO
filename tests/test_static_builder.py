@@ -170,7 +170,12 @@ def test_meta(site: Site) -> None:
     assert m["schema"] == sb.SCHEMA_VERSION and m["empty"] is False
     assert m["sample"] is site.cfg.sample
     assert DATE_RE.match(m["as_of"]) and m["as_of"] == str(site.ratings["date"].max())
-    assert set(m["counts"]) == {"athletes", "ranked", "festivals", "bouts", "history_rows"}
+    assert set(m["counts"]) == {"athletes", "ranked", "festivals", "festivals_partial",
+                                "festivals_missing", "bouts", "history_rows"}
+    statuses = [r[8] for r in site.festivals["rows"]]
+    assert m["counts"]["festivals_partial"] == statuses.count("partial")
+    assert m["counts"]["festivals_missing"] == statuses.count("none")
+    assert m["counts"]["festivals"] == len(statuses) - statuses.count("none")
     assert m["counts"]["athletes"] == len(site.search["rows"])
     assert m["counts"]["ranked"] == len(site.rankings["rows"])
     model = m["model"]
