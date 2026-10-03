@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 6 — CI & deployment (**in review**, branch `phase-6-deploy`, local only — not pushed); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896)
-**Next action:** WAITING FOR THE USER — Phase 6 reviewed and fixed; owner decides on publication (README 'Hosted setup' checklist). Branch `phase-6-deploy` is local only.
+**Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
+**Next action:** Phase 7 task 1 (web-builder) — see `phase-7-compare.md`. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -13,7 +13,8 @@
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
-| 6 | CI & deployment | M5 | `phase-6-deploy.md` | in review |
+| 6 | CI & deployment | M5 | `phase-6-deploy.md` | done |
+| 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | in progress |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
@@ -170,6 +171,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6 review fix S8: hashed lock `requirements-lock.txt`** (26 distributions; made offline by `scripts/make_lock.py` from pip's cache, every wheel verified file by file against the installation) — installed with `--require-hashes` by the publishing workflows and by CI on Python 3.14; `requirements.txt` (ranges) stays for local use and CI on 3.11. Not verified: that a GitHub runner is offered the same binary wheels (fails loudly if not). A token-holding job without third-party code is not possible without a private channel between jobs (artifacts are public) — open item.
 - 2026-10-03 — **Phase 6 review: athlete ids / names are not logged above DEBUG** (ids are name slugs; Actions logs of a public repository are public): `clean` / `elo` messages reworded, the `elo` top-10 table is INFO only on a terminal. Workflows never pass `-v`.
 - 2026-10-03 — **Phase 6 review: the guard baseline stays recorded before the `deploy` job** (documented in the README, not changed) — recording after the deployment would need a third job moving the 0.5 GB state again; effect: an accepted change whose deployment failed is deployed by the next run without a second confirmation.
+- 2026-10-03 — **Phase 6 merged on the user's instruction** ("apply fixes then push and merge to gh if ready"): PR #5, first CI run on GitHub green on both Python legs, the hashed lock installs on the runner. Still only verifiable by the owner: the gate with a manual start, the draft-release commands, a real deploy and crawl.
+- 2026-10-03 — **Feature request (user): general comparison of athletes** (first asked as a multi-athlete rating chart, then widened) → Phase 7.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
