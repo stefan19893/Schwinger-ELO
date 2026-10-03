@@ -17,6 +17,7 @@ data/processed/
 data/*.db
 data/*.db-journal
 data/*.sqlite
+data/published_meta.json
 dist/
 
 # OS / editor
