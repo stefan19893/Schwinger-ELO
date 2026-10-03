@@ -166,6 +166,12 @@ crawl from scratch.
 
 ### Checklist for the owner
 
+**Shortcut:** once steps 1–5 below are done, `./scripts/go_live.sh` does steps 6–7 in one
+go: it checks the preparation (draft release with one bundle, Pages source, workflow),
+asks for one confirmation, sets `PUBLISH_ENABLED=true`, starts the first deploy and waits
+for it. `./scripts/go_live.sh --check` only checks; `./scripts/go_live.sh --off` switches
+the automation off again (the deployed site stays online until it is unpublished).
+
 Nothing below has been done; each step is yours.
 
 **1. Decide** (each default is the cautious one; `src/config.py` unless noted)
