@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 3 — Identity cleaning (in progress, branch `phase-3-cleaning`)
-**Next action:** Phase 3 task 4 — final Parquet outputs with the evidence resolver (`python -m src.cli clean`, `--sample clean`), record counts in the phase-3 handoff notes; then run phase-reviewer.
+**Current phase:** 3 — Identity cleaning (in review, branch `phase-3-cleaning`)
+**Next action:** run phase-reviewer for Phase 3 (exit criteria in `phase-3-cleaning.md`); then ask the user before starting Phase 4. Items to confirm are marked **To confirm** in Decisions (Teilverband-only splits, `ambiguous` row assignment, portrait cache policy) and under Open questions.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -10,7 +10,7 @@
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
-| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | in progress |
+| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | in review |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
