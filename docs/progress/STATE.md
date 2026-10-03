@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 4 — ELO engine (in review, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
-**Next action:** WAITING FOR THE USER — Phase 4 reviewed 2026-10-03 (ready for next phase, no must-fix; see phase-4 handoff note "Phase review"). User must decide before Phase 5: (1) K / δ: keep spec values, or K x 2 with δ = 0.05, or δ = 0.05 alone; (2) confirm festival-wise update order; (3) go-ahead for Phase 5 (web-builder). Do not start Phase 5 without that.
+**Current phase:** 5 — Exporter & frontend (branch `phase-5-web`); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
+**Next action:** (1) elo-modeler: apply the K / δ decision of 2026-10-03 (`elo_k_scale = 2.0`, δ = 0.05) and re-validate — Phase 4 follow-up task 7 in `phase-4-elo.md`; (2) then Phase 5 task 1 (web-builder). Stop and ask the user at the end of Phase 5 before Phase 6 (publication question on ESV data is open).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -11,8 +11,8 @@
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
-| 4 | ELO engine | M3b | `phase-4-elo.md` | in review |
-| 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
+| 4 | ELO engine | M3b | `phase-4-elo.md` | done (follow-up task 7 open) |
+| 5 | Exporter & frontend | M4 | `phase-5-web.md` | in progress |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
 
 Status values: `not started` · `in progress` · `in review` · `done`
@@ -135,6 +135,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 4: identity uncertainty** — all bouts are rated; `athlete_ratings.parquet` carries `identity_rows`, `identity_low_conf_rows` (identity_map confidence <= 0.4), `identity_low_conf_share`, `identity_flags` (resolver notes) and `identity_uncertain` (>= 10 such rows or >= 25 % of the rows; 307 athletes, 14 currently ranked, none in the top 96). Uncertain athletes stay in the rankings with the marker; `not_a_name` athletes and athletes without rated bouts are never ranked. Sensitivity pass without the low-confidence rows (6,313 bouts): top 20 identical, top-100 ratings move by 1.0-1.5 points.
 - 2026-10-03 — **Phase 4: seasons** — the history column `season` is the calendar year of the festival (as in `athletes.parquet`), while the mean reversion happens before the first festival on/after 1 April, once per 1 April crossed (so twice across the cancelled 2020 season), for every athlete who already has a rating; newcomers start at 1500. The start month has no measurable effect on prediction (Brier 0.1282 vs 0.1283).
 - 2026-10-03 — **Phase 4: outputs** — `elo` writes `ratings.parquet` (history; the exit criterion's `athlete` column is named `athlete_id`; extra columns `season, category, n_bouts, score, expected, bouts_before, days_inactive, provisional, provisional_reason`), plus `athlete_ratings.parquet` (current rating, peak, flags, rank) and `season_ratings.parquet` (season-end rating and rank). Explicit schemas, atomic writes, byte-identical re-runs. `elo --evaluate` prints the evidence report (`src/pipeline/elo_eval.py`).
+- 2026-10-03 — **User sign-off on Phase 4** ("merge everything to main … then go on"): Phases 3 and 4 merged and pushed. The Phase 4 choices marked "to confirm" stand as built: festival-wise update order, MoV α = 1.0 / BaselineDiff = 1.36, 2011 burn-in, provisional < 24 bouts, identity-uncertain marker.
+- 2026-10-03 — **K / δ: K x 2 (all tiers, ratios unchanged: 96 / 80 / 64 / 48 / 48 / 32) and δ = 0.05** — the user did not pick an option and told the main session to go on (earlier: "decide what is best"); chosen by the main session on the phase-reviewer's grid: test Brier 0.1249 → 0.1126, calibration at a 200–300 gap 0.80 predicted vs 0.85 observed (was 0.91), top-20 overlap 19 / 20, cost: about twice the per-festival volatility. Implemented as a multiplier (`elo_k_scale`) so the user-decided tier values stay visible; reverting = `elo_k_scale = 1.0`, δ = 0.10. **Owner may overrule.**
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
