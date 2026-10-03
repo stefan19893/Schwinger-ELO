@@ -90,14 +90,25 @@ class Config:
     # --- ELO (spec §4.2) -----------------------------------------------------
     elo_initial: float = 1500.0
     elo_scale: float = 400.0
-    # MoV multiplier: lambda = 1 + alpha * (grade_a - grade_b - baseline_diff).
-    # Unspecified in the spec -> neutral defaults until calibrated in Phase 4.
+    # How a festival's bouts are applied (src/pipeline/elo_engine.py): "festival" = all
+    # bouts from the pre-festival ratings, "phase" = Gänge 1-4 then 5+, "gang" = Gang by
+    # Gang, "sequential" = bout by bout.
+    elo_update_mode: str = "festival"
+    elo_phase_split_gang: int = 4
+    # MoV multiplier for wins: lambda = 1 + alpha * (grade_winner - grade_loser -
+    # baseline_diff), clamped to [mov_lambda_min, mov_lambda_max]; NULL grade -> 1.
     mov_alpha: float = 0.0
     mov_baseline_diff: float = 0.0
+    mov_lambda_min: float = 0.5
+    mov_lambda_max: float = 2.0
+    # Mean reversion before the first festival on/after 1 <season_start_month>.
     season_start_month: int = 4
     season_reversion_delta: float = 0.10
     season_reversion_mean: float = 1500.0
+    # Provisional: no bout for more than this many seasons, or fewer rated career
+    # bouts than provisional_min_bouts.
     provisional_inactive_seasons: float = 1.5
+    provisional_min_bouts: int = 0
     k_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_K_FACTORS))
 
     # --- Serve ---------------------------------------------------------------

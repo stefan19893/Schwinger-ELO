@@ -13,7 +13,7 @@
 - `python -m src.cli elo` writes `data/processed/ratings.parquet` (athlete, date, fest_id, rating_before, rating_after); works with `--sample`.
 
 ## Tasks
-- [ ] 1. Core update (expected score, win/draw/loss, K by category) + unit tests
+- [x] 1. Core update (expected score, win/draw/loss, K by category) + unit tests
 - [ ] 2. MoV multiplier + tests
 - [ ] 3. Season mean reversion + inactivity/provisional flag + tests
 - [ ] 4. Wire `cli elo`; run over full history, write `ratings.parquet`
@@ -21,6 +21,7 @@
 - [ ] 6. Sanity tests with known elite athletes; summarize top-20 per era in handoff notes
 
 ## Handoff notes
+- 2026-10-03 — **Task 1 done** (elo-modeler). `src/pipeline/elo_engine.py`: `EloParams` (frozen, `from_config`), pure formulas (`expected_score`, `mov_multiplier`, `bout_multiplier`, `revert_to_mean`, `rating_year`, `k_factor`), `SchwingElo` with the step-by-step reference (`rate_bout`, `apply_season_reversion`) and the vectorised `run(bouts) -> EloResult` (`history` = one row per athlete and festival with `rating_before` / `rating_after` + `season`, `category`, `n_bouts`, `score`, `expected`, `bouts_before`, `days_inactive`, `provisional`, `provisional_reason`; `bouts` = per-bout expected scores for evaluation; `ratings`; `as_of`). Four update modes (`festival` / `phase` / `gang` / `sequential`, config `elo_update_mode`) so task 5 can compare them; default `festival` for now. The whole file (incl. MoV and reversion code) was written in one go; tasks 2 and 3 add their tests and any fixes. `src/config.py`: new `elo_update_mode`, `elo_phase_split_gang`, `mov_lambda_min/max`, `provisional_min_bouts`. `tests/test_elo.py`: 40 tests (formula, W/D/L, K per category, zero-sum, A/B symmetry incl. partially mirrored tables, row-order independence, sequential run == bout-by-bout reference, festival mode independent of `gang_nr`, input validation). First real-data smoke run: 491,597 eligible bouts, 173,153 history rows, ~1.2 s per run in every mode. Unknown category / outcome, self-bouts and duplicate bout ids raise `ValueError` (CLI turns that into exit 1).
 
 ## Known inputs from Phase 3 review
 Notes only (2026-10-03, phase-reviewer + review fixes; data = `data/processed/*.parquet` written by `python -m src.cli clean`, resolver `evidence`; 7,397 athletes, 491,676 bouts, 174,176 raw rows).
