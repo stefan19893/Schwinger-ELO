@@ -392,3 +392,91 @@ def test_per_athlete_files_must_match_the_search_index(built: Path, tmp_path: Pa
     shutil.copytree(built / "data" / "history", dist / "data" / "history", dirs_exist_ok=True)
     rep = dg.check_site(cfg, dist, meta, accept_changes=True)
     assert any("data/bouts: 0 files" in f for f in rep.fatal), rep.fatal
+
+
+def _edit(path: Path, change: Any) -> None:
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    change(obj)
+    path.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+
+
+def _set_first_id(table: dict[str, Any], value: Any) -> None:
+    table["rows"][0][table["cols"].index("id")] = value
+
+
+GHOST = "niemand-geheim-p0"          # an id that is not in the search index
+REFERENCES = {
+    "opponent list": ("bouts", lambda o: o["opps"].append(GHOST)),
+    "ranking row": ("rankings_latest.json", lambda o: _set_first_id(o, GHOST)),
+    "all-time row": ("alltime_top200.json", lambda o: _set_first_id(o, GHOST)),
+    "season row": ("seasons.json", lambda o: _set_first_id(o["seasons"][0], GHOST)),
+    "season peak": ("seasons.json", lambda o: next(
+        s for s in o["seasons"] if s["peak"])["peak"].update(id=GHOST)),
+    "festival row": ("fests", lambda o: _set_first_id(o["athletes"], GHOST)),
+    "namesake": ("history", lambda o: o["namesakes"].append({"id": GHOST, "unc": 0})),
+    "not a string": ("bouts", lambda o: o["opps"].append(["x"])),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFERENCES))
+def test_every_referenced_athlete_must_be_published(built: Path, tmp_path: Path, case: str,
+                                                    caplog: pytest.LogCaptureFixture) -> None:
+    """The published athletes are the search index. A data file that names any other
+    athlete id - an opponent, a ranking row, a festival row - stops the deployment, also
+    when the per-athlete files match one to one, and no override lifts it."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    rep = dg.check_site(cfg, dist, meta)
+    assert rep.ok and any("athlete ids: every id in" in n for n in rep.notes), rep.notes
+    name, change = REFERENCES[case]
+    target = dist / "data" / name
+    if target.is_dir():
+        target = sorted(target.iterdir())[3]
+    _edit(target, change)
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    hits = [f for f in rep.fatal if f.startswith(f"data/{name}: 1 athlete id(s) in 1 file(s)")]
+    assert not rep.ok and len(hits) == 1 and len(rep.fatal) == 1, rep.fatal
+    # the line goes into a public workflow log: counts, not the id (a name slug)
+    named = GHOST in hits[0]
+    assert not named
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes", "--record"]) == 1
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    in_log = GHOST in logged
+    assert "must not be deployed" in logged and not in_log
+    assert dg.read_meta(tmp_path / "data" / dg.BASELINE_NAME) == meta   # nothing recorded
+
+
+def test_reference_check_reads_the_real_shapes(built: Path, tmp_path: Path) -> None:
+    """The check must not pass because it looked at nothing: it reads every file that
+    names athletes, accepts rows without an id (festival rows of athletes without a
+    profile) and fails on a file it cannot read or that holds somebody else's data."""
+    meta = _site(built, tmp_path)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    data = dist / "data"
+    problems, n_read = dg._reference_problems(dist)
+    per_athlete = len(json.loads((data / "athletes.json").read_text(encoding="utf-8"))["rows"])
+    assert problems == [] and per_athlete > 100
+    assert n_read == 3 + len(list((data / "fests").iterdir())) + 2 * per_athlete
+    anon = sum(1 for p in (data / "fests").iterdir() for r in json.loads(
+        p.read_text(encoding="utf-8"))["athletes"]["rows"] if r[0] is None)
+    assert anon > 0                                   # rows without an id exist and pass
+    # a bout file that holds another athlete's data (both are published)
+    first, second = sorted((data / "bouts").iterdir())[:2]
+    kept = first.read_bytes()
+    first.write_bytes(second.read_bytes())
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert rep.fatal == ["data/bouts: 1 file(s) missing, unreadable or not in the expected "
+                         "shape - rebuild"]
+    first.write_bytes(kept)
+    assert dg.check_site(cfg, dist, meta, accept_changes=True).ok
+    # a truncated file, and a list that lost its id column
+    victim = sorted((data / "history").iterdir())[0]
+    victim.write_bytes(victim.read_bytes()[:200])
+    _edit(data / "rankings_latest.json", lambda o: o["cols"].__setitem__(1, "athlete"))
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert sorted(f.split(":")[0] for f in rep.fatal) == ["data/history",
+                                                          "data/rankings_latest.json"]

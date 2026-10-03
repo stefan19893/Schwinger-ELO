@@ -13,6 +13,11 @@ Never acceptable (no override):
 * per-athlete files (``data/history``, ``data/bouts``) that do not match the published
   athletes one to one: a selectable athlete would end in a 404 on his profile or on the
   comparison page, and a file too many would be an athlete who is not in the search index;
+* a data file that refers to an athlete id which is not in the search index
+  (``athletes.json``): the ranking, the all-time and season lists, the athlete rows of the
+  festival files, the opponent lists of ``data/bouts`` and the namesakes of
+  ``data/history``. The published athletes are exactly the search index; any other id is
+  somebody the site must not name (withheld by the age rule, unnamed, unrated);
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -45,6 +50,7 @@ the database when the site was accepted; absent when there was no database).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -52,6 +58,8 @@ from pathlib import Path
 from typing import Any
 
 from src.config import Config
+
+log = logging.getLogger(__name__)
 
 BASELINE_NAME = "published_meta.json"
 INPUTS_KEY = "guard_inputs"
@@ -111,13 +119,22 @@ def db_inputs(cfg: Config) -> dict[str, int] | None:
     return {"portraits": int(n), "portraits_with_birthday": int(with_bd)}
 
 
+def _published_ids(dist: Path) -> set[str] | None:
+    """The athletes of the search index = everybody the site publishes; ``None`` when the
+    index is missing or unreadable (reported as a missing file)."""
+    try:
+        index = json.loads((dist / "data" / "athletes.json").read_bytes())
+        col = index["cols"].index("id")
+        return {str(r[col]) for r in index["rows"]}
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+        return None
+
+
 def _per_athlete_problem(dist: Path) -> str | None:
     """The per-athlete directories must hold exactly the athletes of the search index."""
-    try:
-        index = json.loads((dist / "data" / "athletes.json").read_text(encoding="utf-8"))
-        ids = {str(r[0]) for r in index["rows"]}
-    except (OSError, ValueError, KeyError, TypeError, IndexError):
-        return None                                    # reported as a missing file
+    ids = _published_ids(dist)
+    if ids is None:
+        return None
     for folder, prefix in PER_ATHLETE_FILES.items():
         path = dist / folder
         have = {p.name[len(prefix):-len(".json")] for p in path.glob(f"{prefix}*.json")} \
@@ -127,6 +144,92 @@ def _per_athlete_problem(dist: Path) -> str | None:
                     f"({len(ids - have)} missing, {len(have - ids)} without a search entry) "
                     f"- rebuild")
     return None
+
+
+def _table_ids(table: dict[str, Any]) -> list[Any]:
+    """The ``id`` column of a ``{cols, rows}`` table."""
+    col = table["cols"].index("id")
+    return [row[col] for row in table["rows"]]
+
+
+def _ranking_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+    return _table_ids(obj)
+
+
+def _season_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+    out: list[Any] = []
+    for season in obj["seasons"]:
+        out += _table_ids(season)
+        if season["peak"] is not None:
+            out.append(season["peak"]["id"])
+    return out
+
+
+def _fest_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+    return _table_ids(obj["athletes"])      # null = a row without profile, by design
+
+
+def _bout_file_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+    if f"bouts_{obj['id']}" != stem:
+        raise ValueError("the file holds another athlete's bouts")
+    return [obj["id"], *obj["opps"]]
+
+
+def _history_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+    if f"history_{obj['id']}" != stem:
+        raise ValueError("the file holds another athlete's history")
+    return [obj["id"], *(n["id"] for n in obj["namesakes"])]
+
+
+# every data file that names athletes by id: (path or directory below data/, file pattern,
+# reader). A festival row may carry no id (null); every id that is there must be published.
+ATHLETE_REFERENCES = (
+    ("rankings_latest.json", None, _ranking_ids),
+    ("alltime_top200.json", None, _ranking_ids),
+    ("seasons.json", None, _season_ids),
+    ("fests", "fest_*.json", _fest_ids),
+    ("bouts", "bouts_*.json", _bout_file_ids),
+    ("history", "history_*.json", _history_ids),
+)
+
+
+def _reference_problems(dist: Path) -> tuple[list[str], int]:
+    """Athlete ids in the data files that are not in the search index, as one line per
+    group of files, and the number of files read. The lines carry counts only: an id is a
+    name slug and the workflow log is public (the files are named at DEBUG)."""
+    ids = _published_ids(dist)
+    if ids is None:
+        return [], 0
+    problems, n_read = [], 0
+    for name, pattern, reader in ATHLETE_REFERENCES:
+        path = dist / "data" / name
+        files = sorted(path.glob(pattern)) if pattern else [path]
+        unknown: set[str] = set()
+        n_bad_files = n_unreadable = 0
+        for f in files:
+            try:
+                found = reader(json.loads(f.read_bytes()), f.stem)
+            except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+                n_unreadable += 1
+                log.debug("check-site: %s is unreadable or not in the expected shape", f)
+                continue
+            n_read += 1
+            bad = {repr(i) for i in found
+                   if i is not None and (not isinstance(i, str) or i not in ids)}
+            if bad:
+                n_bad_files += 1
+                unknown |= bad
+                log.debug("check-site: %s names %d athlete ids outside the search index",
+                          f, len(bad))
+        if n_unreadable:
+            problems.append(f"data/{name}: {n_unreadable} file(s) missing, unreadable or not "
+                            f"in the expected shape - rebuild")
+        if unknown:
+            problems.append(
+                f"data/{name}: {len(unknown)} athlete id(s) in {n_bad_files} file(s) are not "
+                f"in data/athletes.json - the site refers to athletes it does not publish "
+                f"(-v names the files); rebuild, never deploy this site")
+    return problems, n_read
 
 
 def _year(meta: dict[str, Any]) -> int | None:
@@ -228,6 +331,11 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
         problem = _per_athlete_problem(dist)
         if problem:
             rep.fatal.append(problem)
+        problems, n_read = _reference_problems(dist)
+        rep.fatal.extend(problems)
+        if not problems and n_read:
+            rep.notes.append(f"athlete ids: every id in {n_read} data files is in the "
+                             f"search index")
     if bool(meta.get("sample")) != cfg.sample:
         rep.fatal.append("the site holds the --sample demo data" if meta.get("sample")
                          else "the site holds real data but --sample was given")
