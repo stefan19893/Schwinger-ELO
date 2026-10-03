@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 3 — Identity cleaning (in progress, branch `phase-3-cleaning`)
-**Next action:** Phase 3 — finish interrupted package B (task 3 `[~]`: ranking lists, portraits, clubs/evidence; see phase-3 handoff 2026-10-03), commit, merge package C (`worktree-agent-a3b62ca558defbd8b`), then task 2 identity resolution, then task 4.
+**Next action:** Phase 3 task 2 — implement the real identity resolver behind `cleaner.default_resolver()` (inputs: `names.py`, `ResolverInput.raw` with the evidence columns from `athlete_evidence`; see phase-3 handoff notes 2026-10-01 "Recommended resolution" and 2026-10-03 "For task 2"), then task 4 (final Parquet counts).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -94,6 +94,16 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-01 — Reviewer suggestions applied: `schlussgang` NULL for a festival whose marked bout isn't imported; `entries_overflow` (> Gänge + 1 entries) disables extra-bout logic and flags the athlete; permanent duplicate-content check (`flag_duplicate_sheets`: same sha256 or ≥ 80 % identical bouts → status `duplicate_sheet`, verified header / earlier festival keeps the bouts).
 - 2026-10-01 — `one_sided` rule kept strict (winner rank 1, graded final-Gang win, loser list complete without that bout) — default taken, user did not object when merging PR #3.
 - 2026-10-01 — ESAF 2013 `nach 2/3 Gängen` interim sheets not fetched — no user OK for extra requests; ESAF 2013 stays incomplete (640 bouts).
+- 2026-10-03 — Schema v6 (migration only adds tables; statistic-sheet tables verified byte-identical on the real db): `ranking_parse`, `ranking_entries`, `ranking_rejects`, `portraits`, `portrait_appearances`, `clubs`, `athlete_evidence` — identity evidence for Phase 3, all rebuilt by `parse`, never edited by hand.
+- 2026-10-03 — Evidence sources (still schlussgang.ch only): Schlussrangliste PDFs (`festivals.ranking_pdf_url`, the only source with residence and club per festival) and the JSON:API portraits (`node/portrait` + `field_ref_portrait` on events, filled from the 2023 season only). Own request caps per crawl run: ranking PDFs 2,500 (`SCHWINGEN_RANKING_PDF_MAX_REQUESTS`), portraits 600 (`SCHWINGEN_PORTRAIT_MAX_REQUESTS`); ranking PDFs use the statistic-PDF cache policy.
+- 2026-10-03 — `crawl --portraits-only` (only portrait requests, no listing / PDF request) and `--no-portraits` (also on `all`) — the one-off portrait download had to run without re-checking the current season's listings and PDFs.
+- 2026-10-03 — **To confirm:** portrait list pages are re-fetched when older than 30 days (`PORTRAIT_MAX_AGE_DAYS`, as written by the interrupted session: new athletes, club changes) and the event→portrait listings follow the festival-listing policy (24 h until fetched 60 days after the season) — i.e. not "cached forever"; a later `crawl` will spend ~204 requests on portraits once a month. Alternative: cache forever and refresh only with `--refresh`.
+- 2026-10-03 — Ranking entries are linked 1:1 to `athletes_raw` by rank number + points + name, then by name; Gang result strings are not used (ties share them). Unlinked entries and unparsed lines are `ranking_rejects` rows.
+- 2026-10-03 — `pdf_layout`: fragments of one PDFium row are merged again when their font baselines agree within 4 pt (list rows are ≥ 9 pt apart); U+FFFE (PDFium's line-end hyphen) is read as `-`. `RANKING_PARSER_VERSION` 2.
+- 2026-10-03 — Canonical clubs = names with an ESV club id (portrait taxonomy) or ≥ 20 observations and ≥ 20 Teilverband votes (`evidence.MIN_CLUB_OBS`); everything else keeps `club_raw` but gets no `club` (never guessed). Club Teilverband = weighted vote (printed code / portrait 3, organising festival 1), `conflict` when the runner-up has ≥ 25 %.
+- 2026-10-03 — Teilverband per raw row by source priority `code` > `club` > `portrait` > `festival`; guest codes (`GA`, `GST`) are no association; `festival` (organiser's Teilverband) is the weakest source and marked as such in `sub_assoc_source`.
+- 2026-10-03 — `clean` stays read-only on SQLite: it refuses a real db whose schema is older than the code (run `parse`), and rebuilds an outdated `--sample` db. `OPTIONAL_RAW_COLUMNS` extended by `club_key`, `sub_assoc_source`, `portrait_id`; `identity_map.parquet` gained `club`, `sub_association`, `residence`, `portrait_slug` (package C contract otherwise unchanged; baseline resolver untouched).
+- 2026-10-03 — `--sample` evidence fixtures: ranking lists as PDF (3) or positioned-line JSON (Brünig 2011 complete, ESAF 2019 only an 8-entry excerpt — the PDF is 194 KB), portraits as trimmed real API JSON (46 portraits); shared with the parser tests via `tests/fixture_paths.ranking_file`.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -105,6 +115,11 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 5/6: is publishing athlete ratings on GitHub Pages fine, given the underlying results are ESV data (ESV terms claim ownership) obtained via schlussgang.ch? → confirm with user before deploying.
 - ELO parameters `alpha` and `BaselineDiff` (MoV multiplier) are unspecified → calibrate in Phase 4.
 - How does the scheduled GitHub Action keep state between runs (commit processed Parquet, release asset, or cache)? → decide in Phase 6.
+
+- Phase 3: the portrait fixtures (`tests/fixtures/**/portraits_*.json`) contain birthdays, residences and ESV licence numbers of real athletes, copied from the public schlussgang API — fine to keep in the (public) repo, or reduce / pseudonymise before pushing? → confirm with user.
+- Phase 3: portrait list cache — 30-day refresh (current code) or cached forever? → confirm with user (see Decisions 2026-10-03).
+- Phase 3: 34 Schlussranglisten have no usable text layer (16 scans, 12 glyph-id layers incl. Zug Kantonal 2019 and Schwarzsee 2013, 6 one-off layouts; 1,316 raw athletes without residence/club) — accept, or invest in a text-order fallback parser?
+- Phase 3: use the 10,184 portraits (name, birthday, club, ESV licence number) as an identity registry for rows without a `field_ref_portrait` link (everything before 2023)? 71.7 % of linked ranking rows have a name that is unique among the portraits, 8.0 % an ambiguous one → decide in task 2.
 
 
 ## Blockers
