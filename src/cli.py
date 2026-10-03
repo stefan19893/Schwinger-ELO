@@ -585,9 +585,11 @@ def cmd_build(cfg: Config, allow_empty: bool = False) -> int:
         log.warning("build: no rating data in %s - the site in %s has no content "
                     "(--allow-empty)", cfg.processed_dir, dist)
     else:
-        log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files",
+        log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files, "
+                 "%d bout files (%d bouts between published athletes)",
                  summary.get("athletes", 0), summary.get("ranked", 0),
-                 summary.get("history_files", 0), summary.get("fest_files", 0))
+                 summary.get("history_files", 0), summary.get("fest_files", 0),
+                 summary.get("bout_files", 0), summary.get("bout_pairs", 0))
         log.info("build: publish_min_age=%d, publish_unknown_recent_seasons=%d: %d athletes "
                  "(%d of them ranked; %d without a birth year) are not published by name; "
                  "noindex=%s; contact e-mail %s", cfg.publish_min_age,

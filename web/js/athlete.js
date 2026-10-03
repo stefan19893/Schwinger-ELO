@@ -116,6 +116,7 @@
     var sub = [SE.subline(h), years].filter(Boolean).join(' · ');
     var html = '<h1 class="text-2xl font-bold tracking-tight">' + SE.esc(h.name) + badges + '</h1>' +
       '<p class="mt-1 text-sm text-stone-600 dark:text-stone-300">' + sub + '</p>' +
+      '<p class="mt-2 text-sm"><a class="se-link" href="compare.html?ids=' + encodeURIComponent(h.id) + '">Mit anderen Schwingern vergleichen</a></p>' +
       cards(h) + notes(h) +
       '<h2 class="mt-8 text-lg font-bold">Verlauf</h2>' +
       '<div id="se-chart" class="mt-2 h-80 w-full sm:h-96" role="img" aria-label="Verlauf der ELO-Wertung von ' + SE.esc(h.name) +

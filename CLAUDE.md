@@ -17,6 +17,8 @@ Full specification: `docs/SPEC.md` (source of truth for schema, ELO formulas, K-
 - Fast offline demo: `./scripts/deploy_local.sh --sample`
 - Single stages: `python -m src.cli {crawl|parse|clean|elo|build|all|serve}`; global options `--sample --data-dir DIR --skip-crawl --refresh -v`; `crawl`/`all` take `--from-year/--to-year`; `serve` takes `--port/--host` (default 127.0.0.1)
 - Tests: `.venv/bin/python -m pytest` (or `pytest` inside the activated venv)
+- Deploy guard and state: `python -m src.cli check-site` (refuses an empty, shrunken or over-publishing site), `state-export OUTPUT` / `state-import SOURCE` (pipeline state bundle), global `--require-state` (`crawl` / `all`: fail before any request when the state is missing)
+- Going live is the owner's step: `./scripts/go_live.sh` (`--check`, `--off`)
 
 ## Conventions
 - Never put pipeline logic in the shell script or workflow YAML — add it to the CLI so local and CI stay identical.
@@ -25,6 +27,11 @@ Full specification: `docs/SPEC.md` (source of truth for schema, ELO formulas, K-
 - Scraping must be polite: 0.5–1.0 s delay between requests, cache every raw response in `data/raw/`, never re-fetch a cached page unless explicitly refreshing.
 - Generated data (`data/raw/`, `data/schwingen.db`, `dist/`) is not committed.
 - Never push to GitHub unless the user asks. Commit locally after each completed task.
+- Publishing is gated: the crawl / deploy workflows run only when the repository variable `PUBLISH_ENABLED` is `true`. Never set it, never start a deploy and never weaken the gate — that is the owner's decision.
+- The pipeline state bundle and `data/published_meta.json` are private (birthdays, licence numbers, third-party PDFs): never commit them, attach them to a public release or upload them as a workflow artifact. The `pipeline-state` release must stay a draft.
+- Athlete ids are name slugs and withheld athletes (`publish_min_age`) must stay unnamed: never log ids or names above DEBUG, never print them in CI output.
+- Regenerate `requirements-lock.txt` with `scripts/make_lock.py` when dependencies change. Workflow settings live in `src/config.py`, not as `SCHWINGEN_*` env in YAML.
+- The browser smoke test skips without a browser locally and is required in CI.
 
 ## Phased work & memory (read this first every session)
 Work is split into phases. Progress is persisted in `docs/progress/` so any session can resume after context/tokens run out.

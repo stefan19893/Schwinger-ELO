@@ -1,8 +1,8 @@
 # Project State
 
-**Last updated:** 2026-10-03
-**Current phase:** 6 — CI & deployment (**in review**, branch `phase-6-deploy`, local only — not pushed); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896)
-**Next action:** WAITING FOR THE USER — Phase 6 reviewed and fixed; owner decides on publication (README 'Hosted setup' checklist). Branch `phase-6-deploy` is local only.
+**Last updated:** 2026-10-04
+**Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
+**Next action:** main session: push `phase-7-compare`, PR, merge when CI is green; then publication preparation (baseline, state bundle on the draft release, Pages source) and hand the go-live step to the owner. (Phase 7 reviewed: ready, review fixes applied, 1,096 tests green; record in `phase-7-compare.md`.) Never set `PUBLISH_ENABLED` or enable Pages without the owner.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -13,7 +13,8 @@
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
-| 6 | CI & deployment | M5 | `phase-6-deploy.md` | in review |
+| 6 | CI & deployment | M5 | `phase-6-deploy.md` | done |
+| 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | done |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
@@ -170,6 +171,15 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6 review fix S8: hashed lock `requirements-lock.txt`** (26 distributions; made offline by `scripts/make_lock.py` from pip's cache, every wheel verified file by file against the installation) — installed with `--require-hashes` by the publishing workflows and by CI on Python 3.14; `requirements.txt` (ranges) stays for local use and CI on 3.11. Not verified: that a GitHub runner is offered the same binary wheels (fails loudly if not). A token-holding job without third-party code is not possible without a private channel between jobs (artifacts are public) — open item.
 - 2026-10-03 — **Phase 6 review: athlete ids / names are not logged above DEBUG** (ids are name slugs; Actions logs of a public repository are public): `clean` / `elo` messages reworded, the `elo` top-10 table is INFO only on a terminal. Workflows never pass `-v`.
 - 2026-10-03 — **Phase 6 review: the guard baseline stays recorded before the `deploy` job** (documented in the README, not changed) — recording after the deployment would need a third job moving the 0.5 GB state again; effect: an accepted change whose deployment failed is deployed by the next run without a second confirmation.
+- 2026-10-03 — **Phase 6 merged on the user's instruction** ("apply fixes then push and merge to gh if ready"): PR #5, first CI run on GitHub green on both Python legs, the hashed lock installs on the runner. Still only verifiable by the owner: the gate with a manual start, the draft-release commands, a real deploy and crawl.
+- 2026-10-03 — **Feature request (user): general comparison of athletes** (first asked as a multi-athlete rating chart, then widened) → Phase 7.
+- 2026-10-03 — **Phase 7: head-to-head data = one on-demand file per published athlete, `data/bouts/bouts_<athlete_id>.json`** (his bouts against published opponents, file-local opponent table, grouped by festival; + about 36 MB / 6,306 files in `dist/`, 11.6 MB gzip) — fetching the common festival files instead costs up to 141 requests / 2.2 MB for one pair, putting the bouts into the history files would double every profile. Bouts against withheld / unnamed / unrated opponents are not written at all. Common festivals are derived in the browser from the history files. `SCHEMA_VERSION` stays 1 (additive).
+- 2026-10-03 — **Phase 7: `check-site` also fails when `data/history` or `data/bouts` do not match the search index one to one** (no override) — a selectable athlete must never end in a 404, and a per-athlete file outside the index would be an athlete published by accident.
+- 2026-10-04 — **Phase 7: comparison page** `compare.html?ids=a,b,…` — at most 6 athletes (six colour-blind-safe colours + six point shapes); selection in the address; chart built like the profile's (steps, dashed 1 April reversion, dotted idle tail), HTML legend instead of the ECharts one (namesakes); head-to-head read from one athlete's bout file so that every bout counts once; common festivals from the history files (rated festivals only); notes for non-overlapping careers and for the scale that saturates around 2016. No new third-party code; `style.css` not rebuilt (Tailwind CLI not available offline), only existing classes used.
+- 2026-10-04 — **Phase 7: entry points** = navigation "Vergleich" on every page and one link on the profile; no control on ranking rows (clutter on a phone).
+- 2026-10-04 — **Phase 7 review: `check-site` fails on any athlete id outside the search index** (ranking, all-time and season lists, festival rows, opponent lists of `data/bouts`, own id and namesakes of `data/history`; no override; 0.6 s on the real build) — the guard itself, not only the tests, must stop a site that refers to an athlete who is not published. Its messages carry counts, not ids (public workflow log); files are named at DEBUG.
+- 2026-10-04 — **Phase 7 review: the scale note of the comparison appears only when best values lie on both sides of 2016 or a selected career ended before 2016 next to later ratings** — it was shown for almost every selection (any career that began before 2016), which teaches readers to skip it. Bouts at unrated festivals stay in the head-to-head tally; the footnote now says so in visible text.
+- 2026-10-04 — **Tests: privacy checks never assert `needle not in <large text>`** — pytest explains a failure with a difflib character diff of the whole text, which does not finish on megabytes of one-line JSON (a leak would be a CI timeout). Use `leaks()` / `no_leak()` of `tests/test_static_builder.py`; messages name ids and files, never a withheld name.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -209,6 +219,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
   - `contact_email`: none configured — objections go through public GitHub issues only until the owner sets one.
   - **Residual risks accepted by opting in** (README, "What you accept by opting in"): state one click from public and readable with write access; noindex covers the four HTML pages only; objections via public issues while `contact_email` is empty; switching the variable off stops updates only; an accepted change is consumed even if the deployment fails; the hashed lock is untested on a GitHub runner; `pip` and the actions are not hash-pinned; project code and dependencies run in the job that holds `contents: write`.
   - Action versions are major tags written from memory (`checkout@v5`, `setup-python@v6`, `upload-pages-artifact@v4`, `deploy-pages@v4`); verify on the first run and consider pinning to commit SHAs.
+
+- Phase 7 → owner: `dist/` grows from 50 MB to 87 MB (one bout file per athlete for the head-to-head) — fine, or prefer the slower variant without new data? Limit of six athletes, no compare control on ranking rows, bouts at unrated festivals counted in the head-to-head tally (badge "nicht gewertet") — confirm. `web/css/style.css` could not be regenerated offline (Tailwind CLI not cached); the comparison page uses existing classes only.
 
 ## Blockers
 - none (2026-09-29: esv.ch-terms blocker resolved by user decision to use schlussgang.ch only)

@@ -20,6 +20,11 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
     One festival: participants (rating before / after) and bouts.
 ``history/history_<athlete_id>.json``
     One athlete: profile, season table, rating history per festival.
+``bouts/bouts_<athlete_id>.json``
+    One athlete: his bouts against *published* opponents, from his side, grouped by
+    festival (read by the comparison page only, one file per selected athlete). ``opp`` is
+    an index into the file's own ``opps`` list of athlete ids. Bouts against anyone who is
+    not exportable are not written at all, so the file cannot name a withheld athlete.
 
 An athlete is *exportable* when he has rated bouts, is not a ``not_a_name`` row and is
 not *withheld*. Only name, club, Teilverband and birth year are published (no residence,
@@ -96,6 +101,8 @@ INPUTS = ("athletes", "athlete_ratings", "bouts", "festivals", "ratings", "seaso
 F_RANKED, F_FEW_BOUTS, F_INACTIVE, F_UNCERTAIN = 1, 2, 4, 8
 # bout flags
 B_SCHLUSSGANG, B_EXTRA, B_NO_GRADE, B_GANG_UNCERTAIN = 1, 2, 4, 8
+# bouts_<id>.json only: the festival does not count for the rating
+B_UNRATED = 16
 # history row flags
 H_PROVISIONAL, H_RETURN = 1, 2
 
@@ -113,6 +120,8 @@ FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags"]
 HISTORY_COLS = ["date", "fest_id", "fest", "cat", "before", "after", "n", "score", "exp",
                 "flags"]
 ATHLETE_SEASON_COLS = ["season", "rating", "peak", "bouts", "pos"]
+BOUT_SIDE_COLS = ["gang", "opp", "res", "g", "go", "flags"]
+OTHER_FEST_COLS = ["id", "name", "date", "cat"]
 
 ROBOTS_META = '<meta name="robots" content="noindex">'
 ROBOTS_TXT = """# Schwinger-ELO asks not to be indexed (site_noindex in src/config.py).
@@ -596,6 +605,77 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
     return n_files, n_bytes, n_rows
 
 
+_RES_OTHER_SIDE = {0: 0, 1: 2, 2: 1}
+
+
+def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
+                 out_dir: Path) -> tuple[int, int, int]:
+    """One file per exportable athlete with his bouts against exportable opponents;
+    returns (files, bytes, bouts written - each bout once).
+
+    A bout is written into both athletes' files, each from its own side (``res`` 1 won,
+    0 gestellt, 2 lost; ``g`` own grade, ``go`` the opponent's). Bouts with a withheld,
+    unnamed or unrated athlete on either side are skipped: the comparison page is the only
+    reader and it compares published athletes. Every exportable athlete gets a file, also
+    without rows, so that a selectable athlete never ends in a 404."""
+    meta = {int(r.fest_id): (_date(r.date) or "", _text(r.name) or "?", _text(r.category))
+            for r in fests.itertuples(index=False)}
+    in_history: dict[str, set[int]] = {}
+    for aid, fid in zip(inp.ratings["athlete_id"], inp.ratings["fest_id"]):
+        in_history.setdefault(aid, set()).add(int(fid))
+    exportable = {a for a, p in people.items() if p.exportable}
+    # athlete -> fest -> rows [gang, opponent id, res, g, go, flags]
+    sides: dict[str, dict[int, list[list[Any]]]] = {a: {} for a in exportable}
+    n_bouts = 0
+    b = inp.bouts
+    flag_cache: dict[tuple[Any, bool], int] = {}
+    # grades as JSON values (2 decimals, None for a missing one); NaN is not a dict key
+    # that can be found again, so missing grades are replaced before the loop
+    grade = {g: _r2(g) for g in pd.unique(pd.concat([b["grade_a"], b["grade_b"]]).dropna())}
+    grade_a = b["grade_a"].astype(object).where(b["grade_a"].notna(), None)
+    grade_b = b["grade_b"].astype(object).where(b["grade_b"].notna(), None)
+    for fid, gang, a, c, o, ga, gb, fl, sg, ok in zip(
+            b["fest_id"], b["gang_nr"], b["athlete_a_id"], b["athlete_b_id"], b["outcome"],
+            grade_a, grade_b, b["flags"], b["schlussgang"], b["elo_eligible"]):
+        fid = int(fid)
+        if a not in exportable or c not in exportable or fid not in meta:
+            continue
+        res = _RES[o]
+        key = (fl, sg is True or sg == 1)       # few distinct values: parse each once
+        flags = flag_cache.get(key)
+        if flags is None:
+            flags = flag_cache[key] = _bout_flags(fl, sg)
+        if not ok:
+            flags |= B_UNRATED
+        ga, gb = grade.get(ga, ga), grade.get(gb, gb)
+        sides[a].setdefault(fid, []).append([int(gang), c, res, ga, gb, flags])
+        sides[c].setdefault(fid, []).append([int(gang), a, _RES_OTHER_SIDE[res], gb, ga, flags])
+        n_bouts += 1
+    n_files = n_bytes = 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for aid in sorted(sides):
+        by_fest = sides[aid]
+        opps = sorted({r[1] for rows in by_fest.values() for r in rows})
+        index = {o: i for i, o in enumerate(opps)}
+        fest_rows = []
+        for fid in sorted(by_fest, key=lambda f: (meta[f][0], f)):
+            rows = sorted(by_fest[fid], key=lambda r: (r[0], r[1]))
+            fest_rows.append([fid, [[r[0], index[r[1]], r[2], r[3], r[4], r[5]] for r in rows]])
+        known = in_history.get(aid, set())
+        other = [[fid, meta[fid][1], meta[fid][0] or None, meta[fid][2]]
+                 for fid, _ in fest_rows if fid not in known]
+        obj = {"id": aid, "opps": opps, "cols": BOUT_SIDE_COLS, "fests": fest_rows,
+               "other": {"cols": OTHER_FEST_COLS, "rows": other}}
+        # plain Python values only (built above): skip the recursive `_clean` pass, which
+        # costs more than everything else here; `allow_nan=False` still guards the output
+        data = json.dumps(obj, ensure_ascii=False, separators=(",", ":"),
+                          allow_nan=False).encode("utf-8")
+        (out_dir / f"bouts_{aid}.json").write_bytes(data)
+        n_bytes += len(data)
+        n_files += 1
+    return n_files, n_bytes, n_bouts
+
+
 # --------------------------------------------------------------------------- build
 def _publish(cfg: Config, withhold_from: int | None, withhold_first_from: int | None = None,
              release: tuple[int, int] = (0, 0)) -> dict[str, Any]:
@@ -650,7 +730,8 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                                             {"min_bouts": min_bouts, "seasons": []})
         sizes["festivals.json"] = _write_json(data / "festivals.json",
                                               {"cols": FESTIVAL_COLS, "rows": []})
-        return {"sizes": sizes, "history_files": 0, "fest_files": 0, "empty": True}
+        return {"sizes": sizes, "history_files": 0, "fest_files": 0, "bout_files": 0,
+                "empty": True}
 
     as_of = _date(max(inp.ratings["date"].map(_date)))
     withhold_from = min_birth_year_withheld(as_of, cfg.publish_min_age)
@@ -695,6 +776,7 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     fest_files, fest_bytes = _write_fests(inp, people, fests, data / "fests")
     hist_files, hist_bytes, hist_rows = _write_histories(
         inp, people, fest_names, listed, placed, cfg, as_of, ranks, data / "history")
+    bout_files, bout_bytes, bout_pairs = _write_bouts(inp, people, fests, data / "bouts")
     all_seasons = [s["season"] for s in seasons]
     meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": False, "as_of": as_of,
             "first_season": min(all_seasons), "last_season": max(all_seasons),
@@ -714,6 +796,7 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     sizes["meta.json"] = _write_json(data / "meta.json", meta)
     return {"sizes": sizes, "history_files": hist_files, "history_bytes": hist_bytes,
             "fest_files": fest_files, "fest_bytes": fest_bytes, "empty": False,
+            "bout_files": bout_files, "bout_bytes": bout_bytes, "bout_pairs": bout_pairs,
             "athletes": len(search), "ranked": len(rankings), "withheld": withheld,
             "withheld_ranked": withheld_ranked, "withheld_unknown": withheld_unknown}
 

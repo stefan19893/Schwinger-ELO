@@ -90,7 +90,7 @@ def test_stub_stages_succeed(cmd: str, tmp_path: Path) -> None:
     assert cli.main([cmd, "--sample", "--data-dir", str(tmp_path / "data")]) == 0
 
 
-PAGES = ("index.html", "athlete.html", "fests.html", "about.html")
+PAGES = ("index.html", "athlete.html", "compare.html", "fests.html", "about.html")
 
 
 @pytest.fixture(scope="module")
@@ -126,7 +126,7 @@ def test_all_sample_pages_and_assets_resolve(sample_site: Path) -> None:
         page = check_page(sample_site / name)   # every href / src exists inside dist
         assert any(u == "css/style.css" for _, _, u in page.links)
     for asset in ("css/style.css", "js/app.js", "js/index.js", "js/athlete.js", "js/charts.js",
-                  "js/fests.js", "js/about.js", "vendor/echarts.common.min.js",
+                  "js/compare.js", "js/fests.js", "js/about.js", "vendor/echarts.common.min.js",
                   "vendor/echarts.LICENSE.txt"):
         assert (sample_site / asset).stat().st_size > 0, asset
     # sources of the stylesheet and notes for developers are not published
@@ -151,6 +151,7 @@ def test_all_sample_data_is_valid_and_linked(sample_site: Path) -> None:
     search = parsed[data / "athletes.json"]
     assert len(search["rows"]) == meta["counts"]["athletes"]
     assert len(list((data / "history").iterdir())) == len(search["rows"])
+    assert len(list((data / "bouts").iterdir())) == len(search["rows"])
     festivals = parsed[data / "festivals.json"]
     assert {f"fest_{r[0]}.json" for r in festivals["rows"]} == \
         {p.name for p in (data / "fests").iterdir()}

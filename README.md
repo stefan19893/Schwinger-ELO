@@ -53,7 +53,7 @@ python -m src.cli COMMAND [options]
 | `clean` | Identity resolution → `data/processed/*.parquet` |
 | `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`. `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
 | `build` | Static site → `dist/`. Exits 1 without rating data; `--allow-empty` writes pages without content (never for a deployment) |
-| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
+| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one. `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
 | `all` | `crawl → parse → clean → elo → build`. `--skip-crawl` leaves the crawl out |
 | `serve` | Serve `dist/` at `http://localhost:8000` (`--port`, `--host`) |
 | `state-export OUTPUT` | Bundle `data/raw`, the database, the Parquet files and the guard baseline into one `.tar.gz` (`OUTPUT` ending in `.tar.gz` is the file; anything else is a directory, created if missing, for a time-stamped name). The bundle is readable by you only (mode 0600). **Not for publication** |
@@ -82,17 +82,19 @@ configured model). The model parameters are `elo_k_scale`, `season_reversion_del
 | `site_noindex` | `True` | `<meta name="robots" content="noindex">` on every page and a `robots.txt`. Under `<user>.github.io/Schwinger-ELO/` crawlers do not read that `robots.txt` (only the one at the root of the host counts) and the JSON data files cannot carry the tag — the switch keeps the pages out of search results, it is not access control |
 | `contact_email` | `""` | When set, the about page shows the address as a non-public route for corrections and objections beside the GitHub issues link. Empty: nothing is shown |
 
-Athlete links (`athlete.html?id=…`) are not permanent: an id can change when the
-identity resolution changes. An outdated link shows "Schwinger nicht gefunden" with
-suggestions.
+Athlete links (`athlete.html?id=…`, `compare.html?ids=…`) are not permanent: an id can
+change when the identity resolution changes. An outdated link shows "Schwinger nicht
+gefunden" with suggestions (on the comparison page for the affected athlete only).
 
 ## Website
 
 `python -m src.cli build` copies `web/` to `dist/` and writes the data the pages read to
 `dist/data/` (`src/exporter/static_builder.py`): `meta.json`, `rankings_latest.json`,
 `athletes.json` (search index), `alltime_top200.json`, `seasons.json`, `festivals.json`,
-one `history/history_<athlete_id>.json` per athlete and one `fests/fest_<fest_id>.json`
-per festival. The same inputs give a byte-identical `dist/`.
+one `history/history_<athlete_id>.json` per athlete, one `fests/fest_<fest_id>.json`
+per festival and one `bouts/bouts_<athlete_id>.json` per athlete (his bouts against other
+published athletes; read only by the comparison page, one file per selected athlete).
+The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 87 MB).
 
 `build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with
 an empty `ratings.parquet`) it exits with status 1 and leaves an existing `dist/` untouched,
@@ -106,6 +108,7 @@ Pages (German, static, relative URLs only, so they work under `/Schwinger-ELO/`)
 |---|---|
 | `index.html` | current ranking with Teilverband filter, season lists (`#saison-2019`), highest ratings (`#bestwerte`), search |
 | `athlete.html?id=<athlete_id>` | profile, career chart, seasons, festivals |
+| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings over time in one chart, seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
 | `fests.html`, `fests.html?id=<fest_id>` | festival list and one festival with every athlete's bouts |
 | `about.html` | method, source, known limitations, how to report errors |
 
@@ -117,7 +120,8 @@ Third-party code is vendored, nothing is loaded from a CDN: Apache ECharts
 (`web/vendor/`, see its `README.md`) and a stylesheet generated by Tailwind CSS. After
 adding or removing classes in `web/*.html` or `web/js/*.js`, regenerate
 `web/css/style.css` (needs no Node; downloads the Tailwind standalone CLI once into
-`.cache/`):
+`.cache/`; `tests/test_web.py` fails when a class is used that the committed stylesheet
+does not define — the comparison page was built from the existing classes only):
 
 ```bash
 ./scripts/build_css.sh
@@ -162,6 +166,12 @@ crawl from scratch.
 
 ### Checklist for the owner
 
+**Shortcut:** once steps 1–5 below are done, `./scripts/go_live.sh` does steps 6–7 in one
+go: it checks the preparation (draft release with one bundle, Pages source, workflow),
+asks for one confirmation, sets `PUBLISH_ENABLED=true`, starts the first deploy and waits
+for it. `./scripts/go_live.sh --check` only checks; `./scripts/go_live.sh --off` switches
+the automation off again (the deployed site stays online until it is unpublished).
+
 Nothing below has been done; each step is yours.
 
 **1. Decide** (each default is the cautious one; `src/config.py` unless noted)
@@ -181,7 +191,7 @@ Nothing below has been done; each step is yours.
       without any rating. Laid beside the linked schlussgang.ch list, such a row can be
       matched to a person — the names are public there. Accept, or ask for these rows to
       be dropped (which also removes those bouts from the opponents' lists).
-- [ ] **`site_noindex`** (default on) — and its limits: the `noindex` tag covers the four
+- [ ] **`site_noindex`** (default on) — and its limits: the `noindex` tag covers the five
       HTML pages only. `robots.txt` is read by crawlers only at the root of a host; under
       `<user>.github.io/Schwinger-ELO/` it has no effect, and the JSON data files (names,
       ratings) cannot carry a tag. Enough, or use a custom domain (then `robots.txt` is
@@ -204,7 +214,7 @@ test fails if a workflow sets one).
 - The state bundle is **one click from public** ("Publish release" on the draft) and
   readable by anyone with write access to the repository. The workflows check that the
   release is a draft before every download and upload; they cannot stop the click.
-- **`noindex` covers the four HTML pages only**; `robots.txt` is ineffective under the
+- **`noindex` covers the five HTML pages only**; `robots.txt` is ineffective under the
   project path and the JSON files may be indexed.
 - **Objections go through public GitHub issues** as long as `contact_email` is empty.
 - **Switching `PUBLISH_ENABLED` off stops updates only.** The deployed site, the draft
