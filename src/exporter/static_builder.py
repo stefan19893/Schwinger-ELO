@@ -47,7 +47,7 @@ from src.config import REPO_ROOT, Config
 
 log = logging.getLogger(__name__)
 
-_IGNORED = shutil.ignore_patterns(".gitkeep", "__pycache__", "*.pyc")
+_IGNORED = shutil.ignore_patterns(".gitkeep", "__pycache__", "*.pyc", "*.md")
 
 # Written into every build; its presence marks a directory as safe to wipe.
 BUILD_MARKER = ".nojekyll"

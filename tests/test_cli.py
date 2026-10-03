@@ -90,14 +90,145 @@ def test_stub_stages_succeed(cmd: str, tmp_path: Path) -> None:
     assert cli.main([cmd, "--sample", "--data-dir", str(tmp_path / "data")]) == 0
 
 
-def test_all_sample_produces_dist(tmp_path: Path) -> None:
-    rc = cli.main(["all", "--sample", "--data-dir", str(tmp_path / "data")])
-    assert rc == 0
-    index = tmp_path / "dist" / "index.html"
+PAGES = ("index.html", "athlete.html", "fests.html", "about.html")
+
+
+@pytest.fixture(scope="module")
+def sample_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``python -m src.cli all --sample`` once: crawl -> parse -> clean -> elo -> build."""
+    root = tmp_path_factory.mktemp("all-sample")
+    mp = pytest.MonkeyPatch()
+    for key in list(__import__("os").environ):
+        if key.startswith("SCHWINGEN_"):
+            mp.delenv(key)
+    mp.setenv("SCHWINGEN_DIST_DIR", str(root / "dist"))
+    try:
+        assert cli.main(["all", "--sample", "--data-dir", str(root / "data")]) == 0
+    finally:
+        mp.undo()
+    return root / "dist"
+
+
+def test_all_sample_produces_dist(sample_site: Path) -> None:
+    index = sample_site / "index.html"
     assert index.is_file()
     html = index.read_text(encoding="utf-8")
     assert "Schwinger-ELO" in html
     assert 'href="/' not in html and 'src="/' not in html  # relative URLs only
+    assert (sample_site / ".nojekyll").is_file()
+
+
+def test_all_sample_pages_and_assets_resolve(sample_site: Path) -> None:
+    from tests.site_checks import check_page
+
+    assert sorted(p.name for p in sample_site.glob("*.html")) == sorted(PAGES)
+    for name in PAGES:
+        page = check_page(sample_site / name)   # every href / src exists inside dist
+        assert any(u == "css/style.css" for _, _, u in page.links)
+    for asset in ("css/style.css", "js/app.js", "js/index.js", "js/athlete.js", "js/charts.js",
+                  "js/fests.js", "js/about.js", "vendor/echarts.common.min.js",
+                  "vendor/echarts.LICENSE.txt"):
+        assert (sample_site / asset).stat().st_size > 0, asset
+    # sources of the stylesheet and notes for developers are not published
+    assert not list(sample_site.rglob("*.md")) and not (sample_site / "tailwind").exists()
+
+
+def test_all_sample_data_is_valid_and_linked(sample_site: Path) -> None:
+    import json
+
+    data = sample_site / "data"
+    files = sorted(data.rglob("*.json"))
+    parsed = {p: json.loads(p.read_text(encoding="utf-8")) for p in files}  # all parse
+    meta = parsed[data / "meta.json"]
+    assert meta["sample"] is True and meta["empty"] is False
+    assert meta["counts"]["festivals"] == 5 and meta["counts"]["athletes"] > 300
+    rankings = parsed[data / "rankings_latest.json"]
+    assert len(rankings["rows"]) == meta["counts"]["ranked"] > 50
+    cols = rankings["cols"]
+    ids = [r[cols.index("id")] for r in rankings["rows"]]
+    for aid in ids:                                    # every ranked athlete has a profile
+        assert (data / "history" / f"history_{aid}.json") in parsed
+    search = parsed[data / "athletes.json"]
+    assert len(search["rows"]) == meta["counts"]["athletes"]
+    assert len(list((data / "history").iterdir())) == len(search["rows"])
+    festivals = parsed[data / "festivals.json"]
+    assert {f"fest_{r[0]}.json" for r in festivals["rows"]} == \
+        {p.name for p in (data / "fests").iterdir()}
+    top = parsed[data / "history" / f"history_{ids[0]}.json"]
+    assert top["rank"] == 1 and top["history"]["rows"]
+    for row in top["history"]["rows"]:                 # profile -> festival links resolve
+        assert (data / "fests" / f"fest_{row[1]}.json") in parsed
+    assert len(parsed[data / "seasons.json"]["seasons"]) == 4
+    assert parsed[data / "alltime_top200.json"]["rows"]
+
+
+def test_site_works_under_a_sub_path(sample_site: Path, tmp_path: Path) -> None:
+    """Served as on GitHub Pages (/Schwinger-ELO/): every page, asset and data URL the
+    pages use resolves relative to the page and answers 200; unknown athletes give 404
+    (the not-found page of athlete.html relies on it)."""
+    import functools
+    import http.server
+    import json
+    import threading
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from tests.site_checks import Page, local_target
+
+    root = tmp_path / "www"
+    root.mkdir()
+    (root / "Schwinger-ELO").symlink_to(sample_site, target_is_directory=True)
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Quiet, directory=str(root)))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}/Schwinger-ELO/"
+
+    def get(url: str) -> tuple[int, bytes]:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as res:
+                return res.status, res.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, b""
+
+    try:
+        for name in PAGES:
+            page_url = urllib.parse.urljoin(base, name)
+            status, body = get(page_url)
+            assert status == 200 and b"Schwinger" in body
+            for _, _, url in Page(sample_site / name).links:
+                if local_target(url):
+                    resolved = urllib.parse.urljoin(page_url, url)
+                    assert resolved.startswith(base), resolved   # stays inside the sub-path
+                    assert get(resolved)[0] == 200, resolved
+        page_url = urllib.parse.urljoin(base, "athlete.html?id=x")
+        for rel in ("data/meta.json", "data/rankings_latest.json", "data/athletes.json",
+                    "data/seasons.json", "data/alltime_top200.json", "data/festivals.json"):
+            status, body = get(urllib.parse.urljoin(page_url, rel))
+            assert status == 200 and json.loads(body), rel
+        first = json.loads(get(urllib.parse.urljoin(page_url, "data/rankings_latest.json"))[1])
+        aid = first["rows"][0][first["cols"].index("id")]
+        assert get(urllib.parse.urljoin(page_url, f"data/history/history_{aid}.json"))[0] == 200
+        assert get(urllib.parse.urljoin(page_url, "data/history/history_nobody-p0.json"))[0] == 404
+        assert get(f"http://127.0.0.1:{httpd.server_address[1]}/data/meta.json")[0] == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_build_without_data_still_gives_a_site(tmp_path: Path) -> None:
+    assert cli.main(["build"]) == 0   # SCHWINGEN_DATA_DIR points to an empty temp dir
+    from tests.site_checks import check_page
+
+    for name in PAGES:
+        check_page(tmp_path / "dist" / name)
+    assert '"empty":true' in (tmp_path / "dist" / "data" / "meta.json").read_text()
 
 
 def test_build_is_idempotent(tmp_path: Path) -> None:
