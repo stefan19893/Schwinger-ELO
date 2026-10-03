@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task 3 (`scrape_and_update.yml`), then 4–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Next action:** Phase 6 task 4 (validate workflows: actionlint, local run of every CLI call), then 5–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -161,6 +161,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6: state between scheduled runs = one bundle (`state-export` / `state-import`, gzip tar with manifest, 504 MB) stored as an asset of a draft GitHub release `pipeline-state`** — the only GitHub-native store that is durable (no 7-day eviction like the Actions cache, no 90-day expiry like artifacts), not publicly downloadable (the state holds birthdays, licence numbers, residences and third-party PDFs; a data branch, a public release and artifacts would expose it) and can be seeded from the owner's machine without a secret. Costs: `contents: write` for the state job, and the draft must never be published (checked at the start of every run). Fallback if unwanted: a private store behind a secret. Resolves the open question "How does the scheduled GitHub Action keep state between runs".
 - 2026-10-03 — **Phase 6: a missing or incomplete state fails the run before any request** — `crawl` / `all --require-state` (`state_problems`: database, festivals, bouts, cache, ≥ 90 % of the known statistic PDFs cached); workflows always pass the flag. New bundles are uploaded under a new name and older generations deleted afterwards (never `--clobber`).
 - 2026-10-03 — **Phase 6: JavaScript is covered by a headless-browser smoke test inside pytest** (`tests/test_browser_smoke.py`, Chrome `--dump-dom` on the built sample site; no Node, no new dependency) — skipped without a browser, mandatory with `SCHWINGEN_REQUIRE_BROWSER=1` (CI). It checks that pages render without the error banner, not interactions.
+- 2026-10-03 — **Phase 6: workflows** — `ci.yml` (tests, ungated, read-only), `deploy_pages.yml` (manual only, rebuild from state without crawl) and `scrape_and_update.yml` (Tuesdays 03:17 UTC March–October, first of the month November–February, plus manual) — the two publishing workflows are skipped unless the repository variable `PUBLISH_ENABLED == 'true'` and the ref is `main`, share one concurrency group, and save the crawl's progress even when a later step fails. No push trigger for deployments: a merge must not change the public site by itself. Deploy Python = 3.14 (the version all results were produced with); CI also tests 3.11 (`requires-python`).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).

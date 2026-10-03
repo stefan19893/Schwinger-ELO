@@ -1,0 +1,119 @@
+# Scheduled update: incremental crawl of schlussgang.ch -> rebuild -> deploy to GitHub
+# Pages. Weekly during the season, monthly in winter (hall festivals).
+#
+# INERT UNTIL THE OWNER OPTS IN: every job is skipped unless the repository variable
+# PUBLISH_ENABLED is exactly 'true'. See README.md, "Hosted setup".
+#
+# Politeness: the crawl is incremental on the cache in the pipeline state (0.5-1.0 s
+# between requests, request caps per run, all in src/config.py). A run without that state
+# fails before the first request (`--require-state`) - a cold runner must never re-crawl
+# the archive. One run at a time (concurrency).
+#
+# All logic lives in the CLI (python -m src.cli ...). The only shell here moves the state
+# bundle to and from the draft release `pipeline-state`.
+name: Scrape and update
+
+on:
+  schedule:
+    - cron: "17 3 * 3-10 2"         # Tuesdays 03:17 UTC, March to October
+    - cron: "17 3 1 1,2,11,12 *"    # 1st of the month, November to February
+  workflow_dispatch:
+    inputs:
+      accept_changes:
+        description: >-
+          Accept an intended change the deploy guard would stop: first deployment (no
+          baseline), a smaller site, looser publication settings. Use for one run.
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One run at a time across both state-writing workflows; never cancel a run half-way.
+concurrency:
+  group: pipeline-state
+  cancel-in-progress: false
+
+env:
+  STATE_TAG: pipeline-state
+
+jobs:
+  update:
+    name: Crawl and rebuild
+    if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: write   # the state lives on a draft release, invisible to a read-only token
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Tests
+        env:
+          SCHWINGEN_REQUIRE_BROWSER: "1"
+        run: python -m pytest
+
+      - name: Download the pipeline state (must still be a draft release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true"
+          gh release download "$STATE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'schwingen-state-*.tar.gz' --dir "$RUNNER_TEMP/state-in"
+      - name: Import the state (fails when there is none)
+        id: state
+        run: python -m src.cli state-import "$RUNNER_TEMP/state-in"
+
+      - name: Incremental crawl
+        id: crawl
+        timeout-minutes: 180
+        run: python -m src.cli crawl --require-state
+      # Also after a failed or capped crawl: what was fetched is kept, so the next run
+      # resumes instead of requesting it again. Taken before the rebuild touches anything.
+      - name: Snapshot the state after the crawl
+        id: snapshot
+        if: always() && steps.state.outcome == 'success' && steps.crawl.outcome != 'skipped'
+        run: python -m src.cli state-export "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz"
+
+      - name: Rebuild offline (parse, clean, elo, build)
+        run: python -m src.cli all --skip-crawl --require-state
+      - name: Deploy guard
+        run: python -m src.cli check-site --record ${{ inputs.accept_changes && '--accept-changes' || '' }}
+      - name: Export the final state (replaces the snapshot)
+        run: python -m src.cli state-export "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz"
+
+      - name: Upload the new state, then remove the generations it replaces
+        if: always() && steps.snapshot.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$STATE_TAG" "$RUNNER_TEMP/state-out/schwingen-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.tar.gz" --repo "$GITHUB_REPOSITORY"
+          for old in "$RUNNER_TEMP"/state-in/schwingen-state-*.tar.gz; do
+            gh release delete-asset "$STATE_TAG" "$(basename "$old")" --repo "$GITHUB_REPOSITORY" --yes
+          done
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy
+    needs: update
+    if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
