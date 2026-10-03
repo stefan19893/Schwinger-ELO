@@ -16,6 +16,19 @@ One canonical `athlete_id` per real person; clean Parquet outputs.
 - [x] 3. Club / sub-association normalization + tests
 - [x] 4. Write Parquet outputs via `cli clean`; record athlete/bout counts in handoff notes
 
+## Review fixes (phase-reviewer 2026-10-03, verdict "needs fixes")
+- [~] M1. Ambiguity flag lost when the competing alternative is a registry anchor; choose between equally fitting anchors by age plausibility
+- [ ] M2. SPEC §4.1 "Handling Ambiguity" + §3 brought up to date; exit criterion reworded
+- [ ] S1. Chained merge across a proven same-date collision (Schmid Reto)
+- [ ] S2. Father / son merges across long gaps (Beglinger Fridolin); unbridged gap >= 8 seasons capped at 0.4
+- [ ] S3. Association code printed on every row of a sheet is not athlete evidence
+- [ ] S4. Club labels without ESV id as `athletes.club`
+- [ ] S5. `W_YOUNG` only when a second candidate exists
+- [ ] S6. Guard: one portrait twice on one date; per-festival / per-date uniqueness check
+- [ ] S7. Stale docs (STATE.md open questions / next action, 334 / 700 in the task-2 note)
+- [ ] O. Reviewer's remaining observations: name-only registry anchors, leaked-youth rows (Reichmuth Marco), Teilverband-only splits
+- [ ] V. Verification on real + sample data, before / after table, identity_map diff; Phase 4 notes
+
 ## Handoff notes
 - 2026-10-01 — **Parallel work packages** (A: names, B: clubs/portraits/ranking PDFs — network owner, C: remap + Parquet + `cli clean` in a worktree). Main session keeps this file and STATE.md.
 - 2026-10-01 — **Task 1 done (package A, commit a51d0b9).** 174,176 raw rows / 1,839 festivals → 8,090 parser keys → 7,202 cleaned name keys. Appearances per name: 1,413 once, 348 > 100 (top: Gwerder Andreas 256, Fankhauser Marco 252, Schuler Alex 249). Variant classes folded by `name_key`: accents/umlauts (93 spellings, e.g. Rolli/Rölli, Maridor Loïc/Loic), ae/oe/ue (10), hyphen vs space (6), case (17). Fuzzy index: 636 candidate pairs; 25 high-volume pairs are proven distinct (same festival/date), e.g. Walther/Walthert Marcel, Keller/Koller Markus, Stucki Simon/Timon, Kälin Remo/Reto. Nicknames (49 pairs, e.g. Odermatt Michi/Michael), swapped order (11), spacing (5), all 36 `?` names matched (a `?` can be 1–3 letters: ligatures ff/fl). **Same-name collisions:** 145 names show strong evidence of ≥ 2 people (≈ 297 persons, 12,201 rows ≈ 7 %): twice in one sheet (106 names), same date at two festivals (59; Gasser Dominik 27 dates), birth years ≥ 2 apart (46). **Correction:** suffixes `1`/`2` and roman `I`/`II` are NOT only per-sheet — Gasser Dominik 1/2 co-occur in 30 festivals with consistent numbering; useful evidence but not a key. Name leftovers inventoried (birth years ~14k rows, S/T markers ~13.5k, B/G French markers ~600, association codes 3,426, Gau codes 356, `SK <club>` 279, place 568, status letters 421, garbage 122 single-letter names). 20 rows with implausible ages (mostly Boveresse 2015 Nichtkranzer) look like leaked youth entries. `festivals.association` NULL for 1,453 of 1,839 festivals.
