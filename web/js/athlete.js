@@ -27,7 +27,7 @@
       out.push(card('Aktuelle Wertung', SE.rating(h.rating),
         (h.ranked ? 'Rang ' + SE.num(h.rank) : 'ohne Rang (provisorisch)') +
         ', letzter Kampf ' + SE.esc(SE.date(h.last_date)) +
-        (h.idle > 180 ? ' <span class="se-idle">seit ' + SE.num(h.idle) + ' Tagen</span>' : '')));
+        (h.idle > 180 ? ' <span class="se-idle">' + SE.num(h.idle) + ' Tage vor dem Datenstand</span>' : '')));
       if (peak) { out.push(peak); }
     }
     if (h.record) {
@@ -41,8 +41,9 @@
     var out = [];
     if (has(h, 'inactive')) {
       out.push(SE.note('Seit dem ' + SE.esc(SE.date(h.last_date)) + ' ohne erfassten Kampf (' + SE.num(h.idle) +
-        ' Tage) und deshalb nicht mehr in der Rangliste. Ohne Kämpfe wird die Wertung jede Saison ein Stück Richtung 1500 zurückgeführt; ' +
-        'rechnerisch steht sie heute bei ' + SE.rating(h.rating) + '. Aussagekräftiger sind Bestwert und letzte Wertung.', 'info'));
+        ' Tage bis zum Datenstand vom ' + SE.esc(SE.date(h.as_of)) + ') und deshalb nicht mehr in der Rangliste. ' +
+        'Ohne Kämpfe wird die Wertung jede Saison ein Stück Richtung 1500 zurückgeführt; ' +
+        'rechnerisch steht sie am Datenstand bei ' + SE.rating(h.rating) + '. Aussagekräftiger sind Bestwert und letzte Wertung.', 'info'));
     }
     if (has(h, 'few_bouts')) {
       out.push(SE.note('Provisorische Wertung: erst ' + SE.num(h.bouts) +
@@ -55,7 +56,7 @@
     }
     if (h.namesakes.length) {
       var list = h.namesakes.map(function (n) {
-        return '<li><a class="se-link" href="' + SE.athleteUrl(n.id) + '">' + SE.esc(n.name) + '</a> <span class="text-xs">(' +
+        return '<li><a class="se-link" href="' + SE.athleteUrl(n.id) + '">' + SE.esc(n.name) + '</a>' + SE.uncertainMark(n.unc) + ' <span class="text-xs">(' +
           (SE.subline(n, true) || 'ohne weitere Angaben') + ')</span></li>';
       }).join('');
       out.push('<details class="se-details"' + (h.namesakes.length <= 3 ? ' open' : '') + '><summary>Gleicher Name, anderer Schwinger (' +

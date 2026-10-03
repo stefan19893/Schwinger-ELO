@@ -120,7 +120,7 @@
     if (o.by) { parts.push('Jg. ' + SE.esc(o.by)); }
     if (o.tv) { parts.push('<abbr title="' + SE.esc(SE.TV[o.tv] || o.tv) + '">' + SE.esc(o.tv) + '</abbr>'); }
     if (withYears && o.first) {
-      parts.push(o.first === o.last ? SE.esc(o.first) : SE.esc(o.first) + '–' + SE.esc(o.last));
+      parts.push('Feste ' + (o.first === o.last ? SE.esc(o.first) : SE.esc(o.first) + '–' + SE.esc(o.last)));
     }
     return parts.join(' · ');
   };
@@ -130,7 +130,13 @@
     return ' <abbr class="se-badge se-badge-warn" title="Identität unsicher: Namensvetter liessen sich in den Ranglisten nicht sicher trennen">?</abbr>';
   };
 
+  /* No id = no profile: an athlete without rated bouts is shown by name ("ohne Wertung"),
+   * a row whose name could not be read has no name either. */
   SE.athleteLink = function (o) {
+    if (!o.id && o.name) {
+      return '<span class="font-medium">' + SE.esc(o.name) + '</span> <span class="se-badge se-badge-muted" ' +
+        'title="Nur an Festen angetreten, die nicht für die Wertung zählen; deshalb ohne Wertung und ohne Profil">ohne Wertung</span>';
+    }
     if (!o.id) { return '<span class="text-stone-500 dark:text-stone-400">Name nicht lesbar</span>'; }
     return '<a class="se-link font-medium" href="' + SE.athleteUrl(o.id) + '">' + SE.esc(o.name) + '</a>' +
       SE.uncertainMark(o.unc);
@@ -199,7 +205,7 @@
   SE.searchStatus = function (a) {
     if (a.rank !== null) { return 'Rang ' + SE.num(a.rank) + ' · ' + SE.rating(a.rating); }
     if (a.flags & SE.F_INACTIVE) {
-      return 'nicht mehr aktiv' + (a.peak ? ' · Bestwert ' + SE.rating(a.peak) : '');
+      return 'nicht mehr aktiv · ' + (a.peak ? 'Bestwert ' + SE.rating(a.peak) : 'Wertung ' + SE.rating(a.rating));
     }
     return 'provisorisch · ' + SE.rating(a.rating);
   };

@@ -23,7 +23,12 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
 
 An athlete is *exportable* when he has rated bouts and is not a ``not_a_name`` row.
 Only name, club, Teilverband and birth year are published (no residence, birthday,
-licence number or portrait slug).
+licence number or portrait slug). A festival file lists every participant: an athlete
+without rated bouts (he only appears at an unrated festival) by name only, without id or
+profile; a ``not_a_name`` row without id and name.
+
+``build`` refuses to write a site without rating data (:class:`EmptyBuildError`) unless
+``allow_empty`` is set - a deployment must never publish an empty site by accident.
 
 The build is deterministic: the same Parquet inputs give byte-identical output (no
 timestamps; "as of" is the date of the last rated festival).
@@ -185,16 +190,37 @@ class Inputs:
     season_ratings: pd.DataFrame
 
 
-def load_inputs(processed_dir: Path) -> Inputs | None:
-    """Read the Parquet files of ``clean`` and ``elo``; ``None`` when any is missing."""
-    paths = {name: processed_dir / f"{name}.parquet" for name in INPUTS}
-    missing = [p.name for p in paths.values() if not p.is_file()]
+class EmptyBuildError(ValueError):
+    """There is no rating data to publish and an empty site was not asked for."""
+
+
+def missing_inputs(processed_dir: Path) -> list[str]:
+    """File names of the Parquet inputs that do not exist in ``processed_dir``."""
+    return [f"{name}.parquet" for name in INPUTS
+            if not (processed_dir / f"{name}.parquet").is_file()]
+
+
+def load_inputs(processed_dir: Path, allow_empty: bool = False) -> Inputs | None:
+    """Read the Parquet files of ``clean`` and ``elo``.
+
+    Without rating data (a file is missing, or ``ratings`` has no rows) this raises
+    :class:`EmptyBuildError`; with ``allow_empty`` it returns ``None`` instead and the
+    caller writes a site without content."""
+    missing = missing_inputs(processed_dir)
     if missing:
-        log.warning("build: %s missing in %s - writing a site without data "
-                    "(run `python -m src.cli clean` and `elo` first)",
-                    ", ".join(missing), processed_dir)
-        return None
-    return Inputs(**{name: pd.read_parquet(p) for name, p in paths.items()})
+        reason = f"{', '.join(missing)} missing in {processed_dir}"
+    else:
+        inp = Inputs(**{name: pd.read_parquet(processed_dir / f"{name}.parquet")
+                        for name in INPUTS})
+        if not inp.ratings.empty:
+            return inp
+        reason = f"ratings.parquet in {processed_dir} has no rows"
+    if not allow_empty:
+        raise EmptyBuildError(
+            f"no rating data: {reason} - run `python -m src.cli clean` and `elo` first "
+            f"(or `build --allow-empty` for a site without content)")
+    log.warning("build: %s - writing a site without data (--allow-empty)", reason)
+    return None
 
 
 @dataclass
@@ -209,6 +235,7 @@ class _Person:
     last: int | None
     exportable: bool
     unc: int
+    nameable: bool = True   # False for `not_a_name` rows: never shown by name
 
 
 def _people(inp: Inputs) -> dict[str, _Person]:
@@ -225,7 +252,7 @@ def _people(inp: Inputs) -> dict[str, _Person]:
             id=aid, name=_text(row.full_name) or "?", club=_text(row.club),
             tv=_text(row.sub_association), by=_int(row.birth_year),
             first=_int(row.first_season), last=_int(row.last_season),
-            exportable=bool(rated and not garbage),
+            exportable=bool(rated and not garbage), nameable=not garbage,
             unc=int(bool(ar.at[aid, "identity_uncertain"])) if aid in ar.index else 0)
     return out
 
@@ -314,8 +341,9 @@ def _seasons(inp: Inputs, people: dict[str, _Person], listed: pd.DataFrame,
         peak = None
         if len(part):
             top = part.sort_values(["rating_peak", "athlete_id"], ascending=[False, True]).iloc[0]
-            peak = {"id": top["athlete_id"], "name": people[top["athlete_id"]].name,
-                    "rating": _int(top["rating_peak"])}
+            best = people[top["athlete_id"]]
+            peak = {"id": best.id, "name": best.name, "rating": _int(top["rating_peak"]),
+                    "unc": best.unc}
         out.append({"season": season, "status": status, "n_festivals": n_fests,
                     "n_athletes": int(athletes_per_season.get(season, 0)),
                     "n_listed": int(len(part)), "peak": peak, "cols": SEASON_COLS, "rows": rows})
@@ -396,7 +424,8 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         for a in ids:
             p = people[a]
             before, after = rated.get((a, fest_id), (None, None))
-            athletes.append([p.id if p.exportable else None, p.name if p.exportable else None,
+            # no profile: the name alone (unrated athlete) or nothing (`not_a_name`)
+            athletes.append([p.id if p.exportable else None, p.name if p.nameable else None,
                              p.club if p.exportable else None, p.tv if p.exportable else None,
                              _int(before), _int(after), int(w[a]), int(d[a]), int(l[a]),
                              _r2(pts[a]), p.unc if p.exportable else 0])
@@ -466,7 +495,7 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
             "unc_rows": [_int(a["identity_low_conf_rows"]), _int(a["identity_rows"])],
             "namesakes": [
                 {"id": q.id, "name": q.name, "club": q.club, "tv": q.tv, "by": q.by,
-                 "first": q.first, "last": q.last}
+                 "first": q.first, "last": q.last, "unc": q.unc}
                 for q in (people[i] for i in sorted(by_name.get(p.name.casefold(), [])))
                 if q.id != p.id],
             "rev": [cfg.season_reversion_delta, cfg.season_reversion_mean,
@@ -494,15 +523,15 @@ def _model(cfg: Config, min_bouts: int, thin: int) -> dict[str, Any]:
     }
 
 
-def write_data(cfg: Config, dist: Path) -> dict[str, Any]:
-    """Write ``dist/data/**``; returns a summary (file counts and bytes per slice)."""
+def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
+    """Write ``dist/data/**``; returns a summary (file counts and bytes per slice).
+    ``inp`` None writes the data files of a site without content (``meta.empty``)."""
     data = dist / DATA_DIR
     min_bouts = SAMPLE_SEASON_MIN_BOUTS if cfg.sample else SEASON_MIN_BOUTS
     thin = SAMPLE_THIN_SEASON_FESTIVALS if cfg.sample else THIN_SEASON_FESTIVALS
     model = _model(cfg, min_bouts, thin)
-    inp = load_inputs(cfg.processed_dir)
     sizes: dict[str, Any] = {}
-    if inp is None or inp.ratings.empty:
+    if inp is None:
         meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": True, "as_of": None,
                 "first_season": None, "last_season": None,
                 "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "festivals_partial": 0,
@@ -580,13 +609,18 @@ def _prepare_dist(cfg: Config) -> Path:
     return dist
 
 
-def build_site(cfg: Config) -> Path:
+def build_site(cfg: Config, allow_empty: bool = False) -> Path:
     """(Re)build ``cfg.dist_dir`` and return its path.
 
     Copies ``web/`` and writes the JSON slices to ``dist/data/``. Only relative URLs
     are used (spec §6.3). An existing ``dist`` is only deleted if it is empty or carries
     the :data:`BUILD_MARKER` of a previous build; otherwise ``ValueError``.
+
+    Without rating data nothing is written and :class:`EmptyBuildError` is raised (a
+    previous build stays in place); ``allow_empty`` writes the pages with empty data
+    files instead (``meta.empty``).
     """
+    inp = load_inputs(cfg.processed_dir, allow_empty=allow_empty)  # before dist is wiped
     dist = _prepare_dist(cfg)
     if cfg.web_dir.is_dir():
         shutil.copytree(cfg.web_dir, dist, ignore=_IGNORED)
@@ -595,7 +629,7 @@ def build_site(cfg: Config) -> Path:
     index = dist / "index.html"
     if not index.exists():
         index.write_text(PLACEHOLDER_HTML, encoding="utf-8")
-    summary = write_data(cfg, dist)
+    summary = write_data(cfg, dist, inp)
     # GitHub Pages: serve files as-is (no Jekyll processing).
     (dist / BUILD_MARKER).touch()
     build_site.last_summary = summary  # type: ignore[attr-defined]

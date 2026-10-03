@@ -222,24 +222,64 @@ def test_site_works_under_a_sub_path(sample_site: Path, tmp_path: Path) -> None:
         httpd.server_close()
 
 
-def test_build_without_data_still_gives_a_site(tmp_path: Path) -> None:
-    assert cli.main(["build"]) == 0   # SCHWINGEN_DATA_DIR points to an empty temp dir
+# `build` without rating data fails; the tests below that only need *a* site pass
+# --allow-empty (SCHWINGEN_DATA_DIR points to an empty temp dir).
+EMPTY_BUILD = ["build", "--allow-empty"]
+
+
+def test_build_without_data_fails_and_writes_nothing(
+        tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A deploy job on a fresh runner must not publish an empty site with a green run."""
+    assert cli.main(["build"]) == 1
+    assert not (tmp_path / "dist").exists() and not (tmp_path / "data").exists()
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "no rating data" in msg and "--allow-empty" in msg and "missing" in msg
+
+
+def test_failed_build_keeps_the_previous_site(tmp_path: Path) -> None:
+    assert cli.main(EMPTY_BUILD) == 0
+    (tmp_path / "dist" / "marker.txt").write_text("previous build")
+    assert cli.main(["build"]) == 1
+    assert (tmp_path / "dist" / "marker.txt").read_text() == "previous build"
+
+
+def test_all_stops_before_build_without_data(tmp_path: Path) -> None:
+    """`all --skip-crawl` on a fresh clone: an earlier stage fails, no site is written."""
+    assert cli.main(["all", "--skip-crawl"]) != 0
+    assert not (tmp_path / "dist").exists()
+
+
+def test_build_sample_makes_its_own_data(tmp_path: Path) -> None:
+    """`build --sample` on a fresh clone keeps working: it runs the sample pipeline."""
+    import json
+
+    assert cli.main(["build", "--sample", "--data-dir", str(tmp_path / "s")]) == 0
+    meta = json.loads((tmp_path / "dist" / "data" / "meta.json").read_text())
+    assert meta["empty"] is False and meta["sample"] is True and meta["counts"]["ranked"] > 0
+
+
+def test_build_allow_empty_gives_a_site_without_content(tmp_path: Path) -> None:
+    assert cli.main(EMPTY_BUILD) == 0
     from tests.site_checks import check_page
 
     for name in PAGES:
         check_page(tmp_path / "dist" / name)
     assert '"empty":true' in (tmp_path / "dist" / "data" / "meta.json").read_text()
+    # --sample --allow-empty: explicit opt-in wins, no pipeline is run
+    assert cli.main(["build", "--allow-empty", "--sample", "--data-dir",
+                     str(tmp_path / "s")]) == 0
+    assert not (tmp_path / "s").exists()
 
 
 def test_build_is_idempotent(tmp_path: Path) -> None:
-    assert cli.main(["build"]) == 0
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     assert (tmp_path / "dist" / "index.html").is_file()
 
 
 def test_build_refuses_unsafe_dist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(REPO_ROOT))
-    assert cli.main(["build"]) == 1
+    assert cli.main(EMPTY_BUILD) == 1
     assert (REPO_ROOT / "src").is_dir()
 
 
@@ -248,16 +288,16 @@ def test_build_refuses_foreign_nonempty_dir(monkeypatch: pytest.MonkeyPatch, tmp
     target.mkdir()
     (target / "keep.txt").write_text("x")
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(target))
-    assert cli.main(["build"]) == 1
+    assert cli.main(EMPTY_BUILD) == 1
     assert (target / "keep.txt").is_file()
 
 
 def test_build_replaces_previous_build_and_empty_dir(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()  # empty dir is fine
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     (dist / "stale.json").write_text("{}")
-    assert cli.main(["build"]) == 0  # previous build (has marker) is replaced
+    assert cli.main(EMPTY_BUILD) == 0  # previous build (has marker) is replaced
     assert not (dist / "stale.json").exists()
 
 
@@ -273,7 +313,7 @@ def test_serve_rejects_invalid_port(port: str) -> None:
 def test_serve_port_in_use_fails_cleanly(tmp_path: Path) -> None:
     import socket
 
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         s.listen()

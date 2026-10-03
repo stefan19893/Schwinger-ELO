@@ -267,7 +267,9 @@ def test_seasons(site: Site) -> None:
             assert not row["provisional"] and r["rating"] == round(row["rating_end"])
         if rows:
             assert x["peak"]["rating"] >= max(r["peak"] for r in rows)
-            assert set(x["peak"]) == {"id", "name", "rating"}
+            assert set(x["peak"]) == {"id", "name", "rating", "unc"}
+            assert x["peak"]["unc"] == int(site.ar.set_index("athlete_id").at[
+                x["peak"]["id"], "identity_uncertain"])
     assert seasons[0]["status"] == "current"
 
 
@@ -308,6 +310,11 @@ def test_festival_index_and_files(site: Site) -> None:
         for i, a in enumerate(athletes):
             assert (a["w"], a["d"], a["l"]) == (w[i], d[i], l[i])
             assert a["id"] is None or a["id"] in searchable
+            if a["id"] is None:   # no profile: at most the name is shown
+                assert (a["club"], a["tv"], a["before"], a["after"], a["unc"]) == \
+                    (None, None, None, None, 0)
+            else:
+                assert isinstance(a["name"], str) and a["name"]
             if a["id"] is not None and f["status"] != "unrated":
                 row = rated.loc[(a["id"], fid)]
                 assert a["before"] == round(row["rating_before"])
@@ -347,6 +354,8 @@ def test_history_files(site: Site) -> None:
         for s in table(h["seasons"]):
             assert s["pos"] is None or s["pos"] >= 1
         for n in h["namesakes"]:
+            assert set(n) == {"id", "name", "club", "tv", "by", "first", "last", "unc"}
+            assert n["unc"] == int(by_id.at[n["id"], "identity_uncertain"])
             assert n["id"] != aid and n["name"].casefold() == h["name"].casefold()
             assert (site.data / "history" / f"history_{n['id']}.json").is_file()
         n_rows += len(rows)
@@ -400,9 +409,122 @@ def test_build_is_deterministic(sample: Site, tmp_path: Path) -> None:
     assert tree_hash(tmp_path / "again") == tree_hash(sample.dist)
 
 
-def test_build_without_data_writes_an_empty_site(tmp_path: Path) -> None:
+def _copy_inputs(src: Path, dst: Path, change: Any = None) -> None:
+    """Copy the builder's Parquet inputs; ``change(name, df)`` may return a modified frame."""
+    dst.mkdir(parents=True)
+    for name in sb.INPUTS:
+        df = pd.read_parquet(src / f"{name}.parquet")
+        if change is not None:
+            df = change(name, df)
+        df.to_parquet(dst / f"{name}.parquet")
+
+
+def test_namesakes_of_an_uncertain_athlete_carry_the_marker(tmp_path: Path, sample: Site) -> None:
+    """Two athletes of one name, one identity-uncertain: his entry in the other's
+    namesake list has `unc` 1 (the page draws the `?` from it), and vice versa 0."""
+    a, b = sample.rankings["rows"][0][1], sample.rankings["rows"][1][1]
+
+    def change(name: str, df: pd.DataFrame) -> pd.DataFrame:
+        if name == "athletes":
+            df.loc[df["athlete_id"].isin([a, b]), "full_name"] = "Muster Hans"
+        if name == "athlete_ratings":
+            df.loc[df["athlete_id"] == b, "identity_uncertain"] = True
+            df.loc[df["athlete_id"] == a, "identity_uncertain"] = False
+        return df
+
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "data" / "processed", change)
+    cfg = load_config({"sample": True, "data_dir": tmp_path / "data",
+                       "dist_dir": tmp_path / "dist"}, env={})
+    hist = sb.build_site(cfg) / "data" / "history"
+    ha, hb = load(hist / f"history_{a}.json"), load(hist / f"history_{b}.json")
+    assert [(n["id"], n["unc"]) for n in ha["namesakes"]] == [(b, 1)]
+    assert [(n["id"], n["unc"]) for n in hb["namesakes"]] == [(a, 0)]
+    assert (ha["unc"], hb["unc"]) == (0, 1)
+    # ... and on the season-peak link of the start page
+    peaks = [s["peak"] for s in load(tmp_path / "dist" / "data" / "seasons.json")["seasons"]
+             if s["peak"]]
+    assert peaks and all(p["unc"] == int(p["id"] == b) for p in peaks if p["id"] in (a, b))
+
+
+def test_athlete_without_rating_is_listed_by_name_without_profile(
+        tmp_path: Path, sample: Site) -> None:
+    """Someone who fought only at an unrated festival (abroad, team event): the festival
+    shows his name - no id, club, rating or profile - instead of "name not readable"."""
+    fid = int(sample.festivals["rows"][0][0])
+    present = {a["id"] for a in table(sample.fest(fid)["athletes"])}
+    # everybody whose only festival this is ends up without rated bouts
+    victims = {r["id"]: r["name"] for r in table(sample.search)
+               if r["id"] in present and sample.history(r["id"])["festivals"] == 1}
+    assert len(victims) >= 3
+
+    def change(name: str, df: pd.DataFrame) -> pd.DataFrame:
+        if name in ("festivals", "bouts"):      # the festival does not count
+            df.loc[df["fest_id"] == fid, "elo_eligible"] = False
+        if name == "ratings":
+            df = df[df["fest_id"] != fid]
+        if name == "season_ratings":
+            df = df[~df["athlete_id"].isin(victims)]
+        if name == "athlete_ratings":
+            sel = df["athlete_id"].isin(victims)
+            df.loc[sel, ["rating", "rating_peak"]] = np.nan
+            df.loc[sel, ["n_bouts", "n_festivals"]] = 0
+            df.loc[sel, "ranked"] = False
+        return df
+
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "data" / "processed", change)
+    cfg = load_config({"sample": True, "data_dir": tmp_path / "data",
+                       "dist_dir": tmp_path / "dist"}, env={})
+    data = sb.build_site(cfg) / "data"
+    fest = load(data / "fests" / f"fest_{fid}.json")
+    assert fest["status"] == "unrated"
+    rows = table(fest["athletes"])
+    assert all(r["name"] for r in rows)                           # nobody is "unreadable"
+    without = [r for r in rows if r["id"] is None]
+    assert sorted(r["name"] for r in without) == sorted(victims.values())
+    for r in without:
+        assert (r["club"], r["tv"], r["before"], r["after"], r["unc"]) == \
+            (None, None, None, None, 0)
+        assert r["w"] + r["d"] + r["l"] > 0
+    searchable = {r[0] for r in load(data / "athletes.json")["rows"]}
+    text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
+    for victim in victims:
+        assert not (data / "history" / f"history_{victim}.json").exists()
+        assert victim not in searchable
+        assert f'"{victim}"' not in text                          # the id is not published
+
+
+def test_build_without_data_fails_unless_allowed(tmp_path: Path, sample: Site) -> None:
     cfg = load_config({"data_dir": tmp_path / "nodata", "dist_dir": tmp_path / "dist"}, env={})
-    dist = sb.build_site(cfg)
+    with pytest.raises(sb.EmptyBuildError, match="missing"):
+        sb.build_site(cfg)
+    assert not (tmp_path / "dist").exists() and not (tmp_path / "nodata").exists()
+    # a previous build survives a failed one
+    old = load_config({"sample": True, "data_dir": sample.cfg.data_dir,
+                       "dist_dir": tmp_path / "dist"}, env={})
+    sb.build_site(old)
+    before = tree_hash(tmp_path / "dist")
+    with pytest.raises(sb.EmptyBuildError):
+        sb.build_site(cfg)
+    assert tree_hash(tmp_path / "dist") == before
+    # one missing file is enough
+    part = tmp_path / "part" / "processed"
+    _copy_inputs(sample.cfg.processed_dir, part)
+    (part / "season_ratings.parquet").unlink()
+    with pytest.raises(sb.EmptyBuildError, match="season_ratings.parquet missing"):
+        sb.build_site(load_config({"data_dir": tmp_path / "part",
+                                   "dist_dir": tmp_path / "d2"}, env={}))
+    # all files present but no rating rows (e.g. `elo` on an empty database)
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "norows" / "processed",
+                 lambda name, df: df.iloc[0:0] if name == "ratings" else df)
+    cfg0 = load_config({"data_dir": tmp_path / "norows", "dist_dir": tmp_path / "d3"}, env={})
+    with pytest.raises(sb.EmptyBuildError, match="no rows"):
+        sb.build_site(cfg0)
+    assert load(sb.build_site(cfg0, allow_empty=True) / "data" / "meta.json")["empty"] is True
+
+
+def test_build_allow_empty_writes_an_empty_site(tmp_path: Path) -> None:
+    cfg = load_config({"data_dir": tmp_path / "nodata", "dist_dir": tmp_path / "dist"}, env={})
+    dist = sb.build_site(cfg, allow_empty=True)
     meta = load(dist / "data" / "meta.json")
     assert meta["empty"] is True and meta["as_of"] is None
     assert load(dist / "data" / "rankings_latest.json")["rows"] == []
@@ -413,16 +535,18 @@ def test_build_without_data_writes_an_empty_site(tmp_path: Path) -> None:
 
 def test_unexportable_athletes_are_not_linked(tmp_path: Path, sample: Site) -> None:
     """A `not_a_name` row keeps its bouts in the festival but gets no id, name or file."""
-    src, dst = sample.cfg.processed_dir, tmp_path / "data" / "processed"
-    dst.mkdir(parents=True)
     victim = sample.rankings["rows"][0][1]
-    for name in sb.INPUTS:
-        df = pd.read_parquet(src / f"{name}.parquet")
+    victim_name = sample.rankings["rows"][0][2]
+    assert sum(1 for r in sample.search["rows"] if r[1] == victim_name) == 1
+
+    def change(name: str, df: pd.DataFrame) -> pd.DataFrame:
         if name == "athletes":
             df.loc[df["athlete_id"] == victim, "evidence"] = "not_a_name"
         if name == "athlete_ratings":
             df.loc[df["athlete_id"] == victim, "identity_flags"] = "not_a_name"
-        df.to_parquet(dst / f"{name}.parquet")
+        return df
+
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "data" / "processed", change)
     cfg = load_config({"sample": True, "data_dir": tmp_path / "data",
                        "dist_dir": tmp_path / "dist"}, env={})
     dist = sb.build_site(cfg)
@@ -432,6 +556,12 @@ def test_unexportable_athletes_are_not_linked(tmp_path: Path, sample: Site) -> N
     assert victim not in {r[1] for r in load(dist / "data" / "rankings_latest.json")["rows"]}
     text = "".join(p.read_text(encoding="utf-8") for p in (dist / "data").rglob("*.json"))
     assert victim not in text
+    # in his festivals the row stays (its bouts count) but without a name
+    assert json.dumps(victim_name, ensure_ascii=False) not in text
+    fid = sample.history(victim)["history"]["rows"][0][1]
+    nameless = [a for a in table(load(dist / "data" / "fests" / f"fest_{fid}.json")["athletes"])
+                if a["name"] is None]
+    assert len(nameless) == 1 and nameless[0]["id"] is None
 
 
 # --------------------------------------------------------------------------- real data only
@@ -458,6 +588,38 @@ def test_real_known_weaknesses_are_represented(real: Site) -> None:
     listed = {r["id"]: r["unc"] for r in table(real.rankings)}
     assert sum(listed.values()) == len(unc & set(listed)) > 0
     assert all(listed[a] == 1 for a in unc & set(listed))
+
+
+def test_real_uncertain_marker_on_every_namesake_entry(real: Site) -> None:
+    """Review fix: 161 of 644 namesake entries pointed to an uncertain athlete unmarked."""
+    unc = set(real.ar.loc[real.ar["identity_uncertain"], "athlete_id"])
+    entries = marked = 0
+    for p in (real.data / "history").iterdir():
+        for n in load(p)["namesakes"]:
+            entries += 1
+            marked += n["unc"]
+            assert n["unc"] == int(n["id"] in unc), (p.name, n)
+    assert entries > 300 and marked > 50
+    for s in real.seasons["seasons"]:
+        if s["peak"]:
+            assert s["peak"]["unc"] == int(s["peak"]["id"] in unc)
+
+
+def test_real_unrated_festival_shows_names(real: Site) -> None:
+    """Review fix: athletes who only fought at an unrated festival (Newark 2025) were
+    labelled "Name nicht lesbar". They are listed by name, without id / profile."""
+    unrated = [r["id"] for r in table(real.festivals) if r["status"] == "unrated"]
+    assert unrated
+    searchable = {r[0] for r in real.search["rows"]}
+    names_only = 0
+    for fid in unrated:
+        for a in table(real.fest(fid)["athletes"]):
+            assert isinstance(a["name"], str) and a["name"].strip()
+            assert a["id"] is None or a["id"] in searchable
+            if a["id"] is None:
+                names_only += 1
+                assert a["name"] not in {r[1] for r in real.search["rows"]}
+    assert names_only > 0
 
 
 def test_real_namesakes_can_be_told_apart(real: Site) -> None:

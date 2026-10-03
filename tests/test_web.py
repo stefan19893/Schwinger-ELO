@@ -141,3 +141,25 @@ def test_ui_is_swiss_german() -> None:
         assert needle in about, needle
     index_js = (WEB / "js" / "index.js").read_text(encoding="utf-8")
     assert "Keine Bestenliste aller Zeiten" in index_js and "ohne Rangierung" in index_js
+
+
+def test_review_fixes_in_the_scripts() -> None:
+    """Static checks for the Phase 5 review fixes (the scripts are not executed here)."""
+    app = (WEB / "js" / "app.js").read_text(encoding="utf-8")
+    athlete = (WEB / "js" / "athlete.js").read_text(encoding="utf-8")
+    index = (WEB / "js" / "index.js").read_text(encoding="utf-8")
+    # the identity marker wherever an athlete is listed: namesake list, season peak
+    assert "SE.uncertainMark(n.unc)" in athlete
+    assert "SE.uncertainMark(s.peak.unc)" in index
+    # an athlete without id but with a name is "ohne Wertung", not "Name nicht lesbar"
+    link = app[app.index("SE.athleteLink = function"):app.index("SE.note = function")]
+    assert link.index("!o.id && o.name") < link.index("ohne Wertung") < link.index("Name nicht lesbar")
+    assert "SE.esc(o.name)" in link.split("Name nicht lesbar")[0]
+    # day counts run to the data date and say so; nothing claims "today"
+    for text in (athlete, index):
+        assert not re.search(r"seit ' \+ SE\.num\((r|h)\.idle\)", text)
+        assert "Datenstand" in text and "heute bei" not in text
+        assert "Date.now" not in text and "new Date" not in text
+    about = (WEB / "about.html").read_text(encoding="utf-8")
+    assert "Jungaktiven- und U20-Anlässe" in about
+    assert "Nachwuchs- und Frauenanlässe, Mannschaftsanlässe" not in about

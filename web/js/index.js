@@ -42,10 +42,14 @@
   }
 
   // ------------------------------------------------------------------ current ranking
-  function lastBout(r) {
+  /* `idle` is counted up to the data date (as are rank and the inactive rule), so the
+   * text must not read as "until today": the month of the last bout, and the days as of
+   * the "Stand" named above the table. */
+  function lastBout(r, asOf) {
     if (r.idle > IDLE_WARN_DAYS) {
-      return '<span class="se-idle" title="Letzter Kampf am ' + SE.esc(SE.date(r.last)) + '">seit ' +
-        SE.num(r.idle) + ' Tagen</span>';
+      return '<span class="se-idle" title="Letzter Kampf am ' + SE.esc(SE.date(r.last)) + ', ' + SE.num(r.idle) +
+        ' Tage vor dem Datenstand vom ' + SE.esc(SE.date(asOf)) + '">' + SE.esc(SE.monthYear(r.last)) +
+        '</span><span class="block text-xs text-stone-500 dark:text-stone-400">' + SE.num(r.idle) + ' Tage</span>';
     }
     return '<span title="Letzter Kampf am ' + SE.esc(SE.date(r.last)) + '">' + SE.esc(SE.monthYear(r.last)) + '</span>';
   }
@@ -84,7 +88,7 @@
           '<td class="se-td">' + nameCell(r) + '</td>' +
           '<td class="se-td text-right tabular-nums font-semibold">' + SE.rating(r.rating) + '</td>' +
           '<td class="se-td text-right tabular-nums hidden sm:table-cell">' + SE.rating(r.peak) + '</td>' +
-          '<td class="se-td text-right tabular-nums text-xs sm:text-sm">' + lastBout(r) + '</td></tr>';
+          '<td class="se-td text-right tabular-nums text-xs sm:text-sm">' + lastBout(r, data.as_of) + '</td></tr>';
       });
       html += '</tbody></table></div>';
       if (filtered.length > state.shown) {
@@ -101,8 +105,9 @@
       SE.rating(m.initial) + '.</li>' +
       '<li>Wer weniger als ' + SE.esc(m.provisional_min_bouts) + ' Gänge hat oder seit mehr als anderthalb Saisons nicht mehr angetreten ist, ' +
       'hat eine Wertung, aber keinen Rang. Über die Suche sind alle Schwinger zu finden.</li>' +
-      '<li><span class="se-idle">seit … Tagen</span>: letzter Kampf liegt mehr als ' + IDLE_WARN_DAYS +
-      ' Tage zurück (Verletzung, Pause). Die Wertung ist dann weniger aktuell.</li>' +
+      '<li><span class="se-idle">Monat mit … Tagen</span> in der Spalte «Letzter Kampf»: Der letzte Kampf lag am Datenstand (' +
+      SE.esc(SE.date(data.as_of)) + ') mehr als ' + IDLE_WARN_DAYS + ' Tage zurück (Verletzung, Pause, Rücktritt). ' +
+      'Gezählt wird bis zum Datenstand, nicht bis heute. Die Wertung ist dann weniger aktuell.</li>' +
       '<li><abbr class="se-badge se-badge-warn">?</abbr> Identität unsicher: Namensvetter liessen sich in den Ranglisten nicht sicher trennen; ' +
       'die Wertung kann Gänge von zwei Personen enthalten.</li>' +
       '<li>Klub ist der häufigste Klub der Laufbahn, nicht zwingend der heutige. Klub und Jahrgang fehlen bei rund einem Viertel der Schwinger.</li>' +
@@ -167,7 +172,7 @@
     html += '<p class="mt-3 text-sm text-stone-600 dark:text-stone-300">' + SE.num(s.n_festivals) + (s.n_festivals === 1 ? ' gewertetes Fest, ' : ' gewertete Feste, ') +
       SE.num(s.n_athletes) + ' Schwinger im Einsatz' +
       (s.peak && placed ? '. Höchste Wertung der Saison: <a class="se-link" href="' + SE.athleteUrl(s.peak.id) + '">' +
-        SE.esc(s.peak.name) + '</a> (' + SE.rating(s.peak.rating) + ')' : '') + '.</p>';
+        SE.esc(s.peak.name) + '</a>' + SE.uncertainMark(s.peak.unc) + ' (' + SE.rating(s.peak.rating) + ')' : '') + '.</p>';
     if (SEASON_NOTE[s.status]) {
       html += '<div class="mt-3">' + SE.note(SEASON_NOTE[s.status], s.status === 'current' ? 'info' : '') + '</div>';
     }
