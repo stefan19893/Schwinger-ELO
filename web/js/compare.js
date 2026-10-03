@@ -382,12 +382,17 @@
       }
     });
     if (list.length < 2) { return out.join(''); }
-    var spans = list.map(span), apart = [];
+    /* by season: two careers that touch in one year are not "apart" */
+    var spans = list.map(function (e) {
+      var s = span(e);
+      return s ? [s[0].slice(0, 4), s[1].slice(0, 4)] : null;
+    }), apart = [];
+    function years(s) { return s[0] === s[1] ? s[0] : s[0] + '–' + s[1]; }
     for (var i = 0; i < list.length; i++) {
       for (var j = i + 1; j < list.length; j++) {
         if (spans[i] && spans[j] && (spans[i][1] < spans[j][0] || spans[j][1] < spans[i][0])) {
-          apart.push(SE.esc(plainName(list[i])) + ' (' + SE.esc(spans[i][0].slice(0, 4)) + '–' + SE.esc(spans[i][1].slice(0, 4)) + ') und ' +
-            SE.esc(plainName(list[j])) + ' (' + SE.esc(spans[j][0].slice(0, 4)) + '–' + SE.esc(spans[j][1].slice(0, 4)) + ')');
+          apart.push(SE.esc(plainName(list[i])) + ' (' + SE.esc(years(spans[i])) + ') und ' +
+            SE.esc(plainName(list[j])) + ' (' + SE.esc(years(spans[j])) + ')');
         }
       }
     }

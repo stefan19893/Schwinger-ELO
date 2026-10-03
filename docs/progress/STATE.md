@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-04
 **Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
-**Next action:** Phase 7 task 6 (web-builder): verification on sample and real data (browser cases at phone and desktop width, dark mode, leak check, sizes) and record the results. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
+**Next action:** run phase-reviewer for Phase 7 (all six tasks done, 1,087 tests green; notes and verification record in `phase-7-compare.md`). Afterwards: fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -14,7 +14,7 @@
 | 4 | ELO engine | M3b | `phase-4-elo.md` | done |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | done |
-| 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | in progress |
+| 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | in review |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
@@ -216,6 +216,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
   - `contact_email`: none configured — objections go through public GitHub issues only until the owner sets one.
   - **Residual risks accepted by opting in** (README, "What you accept by opting in"): state one click from public and readable with write access; noindex covers the four HTML pages only; objections via public issues while `contact_email` is empty; switching the variable off stops updates only; an accepted change is consumed even if the deployment fails; the hashed lock is untested on a GitHub runner; `pip` and the actions are not hash-pinned; project code and dependencies run in the job that holds `contents: write`.
   - Action versions are major tags written from memory (`checkout@v5`, `setup-python@v6`, `upload-pages-artifact@v4`, `deploy-pages@v4`); verify on the first run and consider pinning to commit SHAs.
+
+- Phase 7 → owner: `dist/` grows from 50 MB to 87 MB (one bout file per athlete for the head-to-head) — fine, or prefer the slower variant without new data? Limit of six athletes, no compare control on ranking rows, bouts at unrated festivals counted in the head-to-head tally (badge "nicht gewertet") — confirm. `web/css/style.css` could not be regenerated offline (Tailwind CLI not cached); the comparison page uses existing classes only.
 
 ## Blockers
 - none (2026-09-29: esv.ch-terms blocker resolved by user decision to use schlussgang.ch only)
