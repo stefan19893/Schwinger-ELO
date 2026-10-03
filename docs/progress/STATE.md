@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
-**Next action:** Phase 7 task 1 (web-builder) — see `phase-7-compare.md`. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
+**Next action:** Phase 7 task 2 (web-builder): exporter for `data/bouts/bouts_<athlete_id>.json` + tests — contract in `phase-7-compare.md`, task 1 note. At the end: phase-reviewer, fixes, PR and merge (user asked to push and merge when ready). Never set `PUBLISH_ENABLED` or enable Pages.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -173,6 +173,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6 review: the guard baseline stays recorded before the `deploy` job** (documented in the README, not changed) — recording after the deployment would need a third job moving the 0.5 GB state again; effect: an accepted change whose deployment failed is deployed by the next run without a second confirmation.
 - 2026-10-03 — **Phase 6 merged on the user's instruction** ("apply fixes then push and merge to gh if ready"): PR #5, first CI run on GitHub green on both Python legs, the hashed lock installs on the runner. Still only verifiable by the owner: the gate with a manual start, the draft-release commands, a real deploy and crawl.
 - 2026-10-03 — **Feature request (user): general comparison of athletes** (first asked as a multi-athlete rating chart, then widened) → Phase 7.
+- 2026-10-03 — **Phase 7: head-to-head data = one on-demand file per published athlete, `data/bouts/bouts_<athlete_id>.json`** (his bouts against published opponents, file-local opponent table, grouped by festival; + about 36 MB / 6,306 files in `dist/`, 11.6 MB gzip) — fetching the common festival files instead costs up to 141 requests / 2.2 MB for one pair, putting the bouts into the history files would double every profile. Bouts against withheld / unnamed / unrated opponents are not written at all. Common festivals are derived in the browser from the history files. `SCHEMA_VERSION` stays 1 (additive).
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
