@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-04
-**Current phase:** 7 — Athlete comparison (user feature request 2026-10-03; branch `phase-7-compare`). Phases 0–6 are on `main` (Phase 6 = PR #5, squash 98d55fe; CI green on Python 3.11 and 3.14). The site is NOT published: `PUBLISH_ENABLED` is unset and GitHub Pages is not enabled — the owner's decision (README "Hosted setup").
-**Next action:** main session: push `phase-7-compare`, PR, merge when CI is green; then publication preparation (baseline, state bundle on the draft release, Pages source) and hand the go-live step to the owner. (Phase 7 reviewed: ready, review fixes applied, 1,096 tests green; record in `phase-7-compare.md`.) Never set `PUBLISH_ENABLED` or enable Pages without the owner.
+**Current phase:** all phases (0–7) done and on `main` (Phase 7 = PR #6, squash be3d4b3). Publication is prepared but NOT done: `PUBLISH_ENABLED` is unset.
+**Next action:** WAITING FOR THE OWNER — go live with `./scripts/go_live.sh` (checks the preparation, asks once, sets `PUBLISH_ENABLED=true`, starts and watches the first deploy; `--check` / `--off`). Prepared 2026-10-04: site rebuilt from `main` (6,306 athletes published, 1,495 ranked, 726 withheld), deploy-guard baseline recorded, state bundle (504 MB) on the draft release `pipeline-state` (verified draft; anonymous requests get 404), Pages source = GitHub Actions. After the first deploy: README "Verify after the first push". If local data changes before going live (new crawl), re-run `check-site --record`, `state-export` and replace the bundle on the draft release.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -180,6 +180,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-04 — **Phase 7 review: `check-site` fails on any athlete id outside the search index** (ranking, all-time and season lists, festival rows, opponent lists of `data/bouts`, own id and namesakes of `data/history`; no override; 0.6 s on the real build) — the guard itself, not only the tests, must stop a site that refers to an athlete who is not published. Its messages carry counts, not ids (public workflow log); files are named at DEBUG.
 - 2026-10-04 — **Phase 7 review: the scale note of the comparison appears only when best values lie on both sides of 2016 or a selected career ended before 2016 next to later ratings** — it was shown for almost every selection (any career that began before 2016), which teaches readers to skip it. Bouts at unrated festivals stay in the head-to-head tally; the footnote now says so in visible text.
 - 2026-10-04 — **Tests: privacy checks never assert `needle not in <large text>`** — pytest explains a failure with a difflib character diff of the whole text, which does not finish on megabytes of one-line JSON (a leak would be a CI timeout). Use `leaks()` / `no_leak()` of `tests/test_static_builder.py`; messages name ids and files, never a withheld name.
+- 2026-10-04 — **Publication prepared on the user's instruction** ("prepare everything … just to push one button"): baseline accepted and recorded by the main session after the Phase 5–7 reviews, state bundle uploaded to a draft release, Pages source set to GitHub Actions, `scripts/go_live.sh` added. The opt-in itself (`PUBLISH_ENABLED`, first deploy) stays with the owner.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
