@@ -226,6 +226,17 @@ def test_comparison_page_rules() -> None:
                    "about.html#grenzen", "jeder Gang einmal gezählt", "ohne Note",
                    "Noch niemand ausgewählt", "höchstens"):
         assert needle in js, needle
+    # review fixes: the scale note only where it matters (not for every career that began
+    # before 2016); "nicht gewertet" explained in visible text, not only in a tooltip; a
+    # failed download names the id of the link and never shows the parser's message; a
+    # hint to tap the legend from four athletes on
+    assert "if (mixed || (ended && late))" in js and "early && late" not in js
+    duels = js[js.index("function renderDuels"):js.index("function renderCommon")]
+    assert "«nicht gewertet»" in duels and "zählen nicht für die Wertung" in duels
+    assert "x.flags & B_UNRATED" in duels
+    slots = js[js.index("function renderSlots"):js.index("function suggest")]
+    assert "Die Daten zur Kennung «' + SE.esc(e.id)" in slots and ".message" not in js
+    assert "if (list.length > 3)" in js and "Einen Namen antippen" in js
     # day counts relate to the data date, nothing is computed from today's date
     assert "Date.now" not in js and "new Date" not in js and "Datenstand" in js
     # the search index and the ranking are only loaded on demand

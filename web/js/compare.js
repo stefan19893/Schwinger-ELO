@@ -209,10 +209,12 @@
     }
     entries.forEach(function (e, i) {
       if (e.status === 'error') {
-        html += '<div>';
-        html += SE.note('Die Daten konnten nicht geladen werden. Bitte Seite neu laden. ' +
-          '<span class="block text-xs opacity-70">' + SE.esc(e.error && e.error.message ? e.error.message : '') + '</span>');
-        html += '</div>';
+        /* which athlete of the link it concerns, in words - never the parser's message */
+        var code = e.error && e.error.status ? ' (Fehler ' + SE.esc(e.error.status) + ' des Servers)' : '';
+        html += '<div class="se-note"><strong>Daten nicht geladen.</strong> Die Daten zur Kennung «' + SE.esc(e.id) +
+          '» in diesem Link konnten nicht gelesen werden' + code + ': die Verbindung wurde unterbrochen oder die Datei ist unvollständig. ' +
+          'Dieser Schwinger fehlt deshalb im Vergleich; die übrigen sind vollständig. Bitte die Seite neu laden. ' +
+          '<a class="se-link" href="' + SE.esc(compareUrl(without(e.id))) + '" data-remove="' + SE.esc(e.id) + '">Aus dem Vergleich entfernen</a></div>';
       }
       if (e.status !== 'missing') { return; }
       html += '<div class="se-note"><strong>Schwinger nicht gefunden.</strong> Zur Kennung «' + SE.esc(e.id) +
@@ -400,11 +402,15 @@
       out.push(SE.note('<strong>Keine gemeinsame Zeit:</strong> ' + apart.join('; ') +
         '. Ihre erfassten Laufbahnen überschneiden sich nicht – wer stärker war, lässt sich aus den Wertungen nicht ablesen.'));
     }
+    /* The scale caveat only where it changes the reading of this comparison: best values
+     * from both sides of 2016, or somebody whose whole career lies in the years of the
+     * growing scale next to somebody with later ratings. A career that merely began
+     * before 2016 (most long ones did) is compared at the same dates and needs no note. */
     var peaks = list.filter(function (e) { return e.h.peak_date; }).map(function (e) { return e.h.peak_date; });
-    var early = list.some(function (e) { return e.rows.length && e.rows[0].date < SCALE_SETTLED; });
+    var mixed = peaks.some(function (d) { return d < SCALE_SETTLED; }) && peaks.some(function (d) { return d >= SCALE_SETTLED; });
+    var ended = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date < SCALE_SETTLED; });
     var late = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date >= SCALE_SETTLED; });
-    if (early && late) {
-      var mixed = peaks.some(function (d) { return d < SCALE_SETTLED; }) && peaks.some(function (d) { return d >= SCALE_SETTLED; });
+    if (mixed || (ended && late)) {
       out.push(SE.note((mixed ? '<strong>Bestwerte aus verschiedenen Jahren sind nicht direkt vergleichbar.</strong> ' : '') +
         'Die Skala wächst bis etwa 2016 noch an: Wertungen aus den Jahren 2011 bis 2015 liegen systematisch tiefer als spätere, ' +
         'unabhängig davon, wer besser war. Verlässlich vergleichen lässt sich, wer zur selben Zeit höher stand. ' +
@@ -523,6 +529,10 @@
         '" aria-pressed="' + on + '" title="Im Diagramm hervorheben">' + swatch(e) + '<span>' + nameHtml(e) + '</span></button>';
     });
     html += '</div>';
+    if (list.length > 3) {
+      /* many long careers overlap on a phone: say that one can be picked out */
+      html += '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">Tipp: Einen Namen antippen hebt diese Laufbahn im Diagramm hervor, nochmals antippen zeigt wieder alle gleich.</p>';
+    }
     if (list.length > 1 && both) {
       html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Zeitraum">' +
         '<button type="button" class="se-chip' + (ui.zoom === 'all' ? ' se-chip-on' : '') + '" data-zoom="all" aria-pressed="' + (ui.zoom === 'all') + '">Ganze Zeit</button>' +
@@ -624,7 +634,7 @@
       html += '<tr><td class="se-td"><a class="se-link" href="' + SE.festUrl(d.fest_id, a.id) + '">' + SE.esc(d.fest) + '</a>' +
         muted('<span class="tabular-nums">' + SE.esc(SE.date(d.date)) + '</span>' + (d.cat ? ' · ' + SE.esc(SE.category(d.cat)) : '') +
           ' · ' + SE.esc(d.gang) + '. Gang' + tags) + '</td>' +
-        '<td class="se-td">' + (winner ? '<span class="flex items-center gap-1">' + swatch(winner) + '<span>Sieg ' + nameHtml(winner) + '</span></span>'
+        '<td class="se-td">' + (winner ? '<span class="flex items-baseline gap-1">' + swatch(winner) + '<span>Sieg ' + nameHtml(winner) + '</span></span>'
           : '<span class="text-stone-600 dark:text-stone-300">gestellt</span>') + '</td>' +
         '<td class="se-td whitespace-nowrap text-right tabular-nums">' + gradeText(d.ga) + ' : ' + gradeText(d.gb) + '</td></tr>';
     });
@@ -636,6 +646,7 @@
     if (!box) { return; }
     if (list.length < 2) { box.innerHTML = ''; return; }
     var html = '<h2 class="mt-8 text-lg font-bold">Direkte Gänge</h2>', pairs = 0, n = list.length * (list.length - 1) / 2;
+    var unrated = 0;
     var failed = list.filter(function (e) { return e.boutsError; });
     html += '<div class="mt-2 space-y-3">';
     for (var i = 0; i < list.length; i++) {
@@ -653,7 +664,10 @@
           continue;
         }
         var w = 0, d = 0, l = 0;
-        ds.forEach(function (x) { if (x.res === 1) { w++; } else if (x.res === 2) { l++; } else { d++; } });
+        ds.forEach(function (x) {
+          if (x.res === 1) { w++; } else if (x.res === 2) { l++; } else { d++; }
+          if (x.flags & B_UNRATED) { unrated++; }
+        });
         /* each bout once: a win of one is the other's defeat */
         var tally = '<span class="mt-1 flex flex-wrap items-center gap-x-2 text-sm">' +
           '<span class="flex items-center gap-1">' + swatch(a) + '<span class="font-bold tabular-nums">' + w + '</span> ' + (w === 1 ? 'Sieg' : 'Siege') + '</span>' +
@@ -666,7 +680,11 @@
     }
     html += '</div><p class="mt-2 text-xs text-stone-500 dark:text-stone-400">Alle erfassten Gänge der beiden gegeneinander seit 2011, jeder Gang einmal gezählt; Noten in der Reihenfolge der Namen. ' +
       '«ohne Note»: in der Quelle steht keine Note. Der Schlussgang ist nur markiert, wo ihn die Quelle ausweist; bei etwa 2 % der Gänge ist die Nummer unsicher. ' +
-      'Feste mit lückenhaften Listen können Gänge vermissen lassen.</p>';
+      'Feste mit lückenhaften Listen können Gänge vermissen lassen.' +
+      /* visible text, not a tooltip (touch): why the tally can exceed the rated festivals below */
+      (unrated ? ' <span class="font-medium">«nicht gewertet»</span>: ' + (unrated === 1 ? 'Ein Gang stammt' : SE.num(unrated) + ' Gänge stammen') +
+        ' von einem Mannschaftsanlass oder einem Fest im Ausland. Solche Gänge zählen nicht für die Wertung, sind in der Bilanz hier aber mitgezählt; ' +
+        'unter «Gemeinsame Feste» fehlen diese Anlässe, weil dort nur gewertete Feste stehen.' : '') + '</p>';
     if (failed.length && failed.length < list.length) {
       html += '<div class="mt-2">' + SE.note('Ein Teil der Gänge konnte nicht geladen werden; die Listen sind trotzdem vollständig, solange von jedem Paar eine Seite vorliegt.', 'info') + '</div>';
     }

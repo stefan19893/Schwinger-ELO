@@ -298,6 +298,9 @@ def test_comparison_page(pages: dict[str, str], site: Path) -> None:
     assert "höchstens 6" in limit.text["se-slots"] and "2 weitere" in limit.text["se-slots"]
     assert "2 Angaben im Link" in limit.text["se-slots"]
     assert "disabled" in limit.attrs["se-add"] and "höchstens 6" in limit.text["se-add-hint"]
+    # many careers in one chart: the hint to pick one out, only from four athletes on
+    assert "Einen Namen antippen" in limit.text["se-view"]
+    assert "Einen Namen antippen" not in pair.text["se-view"]
     assert "<b>x" not in pages["compare-limit"]                         # nothing injected
     for name in ("compare-empty", "compare-pair"):
         assert '<meta name="robots" content="noindex">' in pages[name]
