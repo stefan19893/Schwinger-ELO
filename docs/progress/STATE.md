@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 5 — Exporter & frontend (branch `phase-5-web`); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
-**Next action:** Phase 5 task 4 (web-builder; tasks 1–3 done, see `phase-5-web.md`).
+**Next action:** Phase 5 task 5 (web-builder; tasks 1–4 done, see `phase-5-web.md`).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
