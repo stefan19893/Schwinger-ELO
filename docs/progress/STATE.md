@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 3 — Identity cleaning (in review, branch `phase-3-cleaning`)
-**Next action:** user sign-off on Phase 3, then Phase 4. (Phase review done 2026-10-03, review fixes applied — see "Review fixes" in `phase-3-cleaning.md`. Still marked **To confirm** in Decisions: Teilverband-only splits, `ambiguous` row assignment.)
+**Current phase:** 4 — ELO engine (in progress, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
+**Next action:** Phase 4 task 1 (elo-modeler) — see `phase-4-elo.md`, incl. "Known inputs" from the Phase 2 and Phase 3 reviews. At the end of Phase 4: phase-reviewer, then stop and ask the user before Phase 5.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -10,8 +10,8 @@
 | 0 | Bootstrap + CLI + local script | M0 | `phase-0-bootstrap.md` | done |
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
-| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | in review |
-| 4 | ELO engine | M3b | `phase-4-elo.md` | not started |
+| 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
+| 4 | ELO engine | M3b | `phase-4-elo.md` | in progress |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
 
@@ -126,6 +126,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — Clubs: `clubs._KEY_ALIASES` (Zurzach = Zurzibiet, Mythenverband = am Mythen, Schangnau-Siehen = Siehen, Weite-Wartau = Wartau, Ticino = Tessin, Basel = Basel-Stadt); ESV clubs are displayed under the ESV's name; the resolver compares clubs by `club_key`; upper-case labels of ≤ 3 letters without ESV id (`TO`, `RO`, `RA`, `ST`) are linking evidence but never `athletes.club`. `Schaffhausen`, `Tessin`, `Basel-Stadt` stay as club labels (cantonal associations without an ESV club term; not verified).
 - 2026-10-03 — Uniqueness guard: the evidence resolver raises on an identity with two rows on one date, two portraits, or a split portrait; `assemble` only counts `same_festival_rows` / `same_date_rows` (and `report` warns) so that other resolvers' over-merges still end up as `self_bout` rejects instead of aborting the run. A portrait linked to two rows of one date loses both links.
 - 2026-10-03 — Phase 3 exit criterion and SPEC §4.1 "Handling Ambiguity" reworded to the portrait / registry rule (SPEC §3 tree updated) — review must-fix M2.
+- 2026-10-03 — **User sign-off on Phase 3** ("make the fixes and then go on"): Phase 3 closed after the review fixes; the resolver choices still marked "To confirm" (Teilverband-only splits stay split and flagged, ambiguous rows assigned to the best-fitting namesake at confidence ≤ 0.4, name-only registry anchors dropped, S1 repair step not built) stand as built — the user left these choices to the main session. Phase 4 handles them through the identity-uncertainty marker and the sensitivity pass.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
