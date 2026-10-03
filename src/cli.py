@@ -493,10 +493,19 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
 
 
 def cmd_build(cfg: Config) -> int:
-    from src.exporter.static_builder import build_site
+    from src.exporter.static_builder import build_site, dist_stats
 
     dist = build_site(cfg)
-    log.info("build: wrote placeholder site to %s", dist)
+    summary = getattr(build_site, "last_summary", {})
+    n_files, n_bytes = dist_stats(dist)
+    if summary.get("empty"):
+        log.warning("build: no rating data in %s - the site in %s has no content",
+                    cfg.processed_dir, dist)
+    else:
+        log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files",
+                 summary.get("athletes", 0), summary.get("ranked", 0),
+                 summary.get("history_files", 0), summary.get("fest_files", 0))
+    log.info("build: wrote %s (%d files, %.1f MB)", dist, n_files, n_bytes / 1e6)
     return 0
 
 

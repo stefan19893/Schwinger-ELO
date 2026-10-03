@@ -16,6 +16,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         if key.startswith("SCHWINGEN_"):
             monkeypatch.delenv(key)
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(tmp_path / "dist"))
+    # never build from (or write to) the real data/ directory in these tests
+    monkeypatch.setenv("SCHWINGEN_DATA_DIR", str(tmp_path / "data"))
 
 
 # ------------------------------------------------------------------ config

@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 5 — Exporter & frontend (branch `phase-5-web`); Phases 3 and 4 merged to `main` and pushed 2026-10-03 (merge commits 62a2c99, 43a61a0; no PR — `gh` is not installed, direct push)
-**Next action:** Phase 5 task 2 (web-builder; task 1 = JSON contracts done, see `phase-5-web.md`). Regenerate the rating files first (`python -m src.cli elo`; K x 2 / δ = 0.05 since Phase 4 task 7, generated data is not committed). Stop and ask the user at the end of Phase 5 before Phase 6 (publication question on ESV data is open).
+**Next action:** Phase 5 task 3 (web-builder; tasks 1–2 = JSON contracts and exporter done, see `phase-5-web.md`). Regenerate the rating files first (`python -m src.cli elo`; K x 2 / δ = 0.05 since Phase 4 task 7, generated data is not committed). Stop and ask the user at the end of Phase 5 before Phase 6 (publication question on ESV data is open).
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -141,6 +141,10 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Confirmed again at the new scale, no parameter changed:** festival-wise update (equal information: test Brier 0.11263 festival vs 0.11287 sequential; Gang-noise sensitivity of the sequential order grows to 11.8 points), MoV α = 1.0 / BaselineDiff = 1.36 (adds 0.37 %, mean win multiplier 0.9986), 2011 burn-in, provisional < 24 bouts (the 18–23 bucket is now within 4 % of the average error, so 18 would also do; 24 kept as confirmed).
 - 2026-10-03 — **Known cost of K x 2 (accepted with the decision, numbers for the owner):** established athletes move 26 points per festival on average (was 13); 101 single-festival changes above 200 points (was 0; ESAF tier and Bergkranzfeste), the largest genuine ones +329 / −263, the largest overall +398 on the `grab-martin` identity artefact; debutants lose 51 points on average at their first festival (was 25), lowest rating 844 (was 1039). Middle option if this is too nervous: K x 1.5 / δ 0.05 (test Brier 0.1159, largest change 280). Details: `phase-4-elo.md`, task 7 note.
 - 2026-10-03 — Real-data test bounds adapted to the new scale (`tests/test_elo.py`): ratings within 800–2900 (measured 844–2823), mean of the active athletes 1500–1600 (measured 1545–1578), test Brier < 0.12; exit criterion "date, then gang_nr" reworded to the festival-wise order (note in `phase-4-elo.md`); `elo --evaluate` documented in `README.md` and SPEC §5 and extended by the K scale x δ grid and the mode comparison per K scale.
+- 2026-10-03 — **Phase 5: exported data** live in `dist/data/` (`meta.json`, `rankings_latest.json`, `athletes.json`, `alltime_top200.json`, `seasons.json`, `festivals.json`, `fests/fest_<id>.json`, `history/history_<athlete_id>.json`; contracts in `phase-5-web.md`, task 1). Only athletes with rated bouts that are not `not_a_name` are exported; published attributes are name, club, Teilverband and birth year only. No build timestamp ("as of" = last rated festival) so that builds are byte-identical.
+- 2026-10-03 — **Phase 5, to confirm: season lists need 12 bouts in the season** (`SEASON_MIN_BOUTS`, two festivals; places re-numbered among qualifying athletes, so they can differ from `season_ratings.rank`), **the 2020 season gets no places** (`thin`: fewer than 20 rated festivals; the list is shown by rating behind a caveat) and 2011 (burn-in) likewise — Phase 4 review: top-20 places on 6 bouts, six hall festivals in 2020.
+- 2026-10-03 — Search index is one file (`athletes.json`, 654 KB / 180 KB gzip, loaded on first use of the search), not chunked by initial letter (spec §7 "if large") — one lazy request, instant search across all names.
+- 2026-10-03 — `build` without Parquet inputs writes an empty site (warning) instead of failing.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
