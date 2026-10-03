@@ -751,3 +751,151 @@ def test_cli_elo_evaluate_prints_report(sample_run: Path,
     for section in ("update modes", "MoV grid", "calibration by rating gap",
                     "identity sensitivity", "rating distribution"):
         assert section in out
+
+
+# =========================================================================== task 6: real data
+# Sanity checks on the real history. They need data/processed/*.parquet (generated,
+# not committed), so they skip in CI / on a fresh clone; the --sample tests above
+# always run.
+def real_config() -> Config:
+    """Defaults, except that SCHWINGEN_DATA_DIR may point to the real data."""
+    return load_config(env={k: v for k, v in os.environ.items() if k == "SCHWINGEN_DATA_DIR"})
+
+
+class Real:
+    def __init__(self) -> None:
+        self.cfg = real_config()
+        self.bouts, self.athletes, self.identity_map = er.load_inputs(self.cfg.processed_dir)
+        self.result, self.table, self.seasons = er.compute(
+            self.bouts, self.athletes, self.identity_map, self.cfg)
+
+    def athlete(self, full_name: str) -> str:
+        """The id of the namesake with the most rated bouts (ids differ between runs)."""
+        rows = self.table[self.table["full_name"] == full_name]
+        assert len(rows), f"{full_name} not in athletes.parquet"
+        return str(rows.sort_values("n_bouts")["athlete_id"].iloc[-1])
+
+    def season_rank(self, full_name: str, season: int) -> int:
+        s = self.seasons
+        row = s[(s["athlete_id"] == self.athlete(full_name)) & (s["season"] == season)]
+        assert len(row) == 1 and row["ranked"].iloc[0], f"{full_name} not ranked in {season}"
+        return int(row["rank"].iloc[0])
+
+
+@pytest.fixture(scope="module")
+def real() -> Real:
+    processed = real_config().processed_dir
+    if not all((processed / n).is_file() for n in ("bouts.parquet", "athletes.parquet")):
+        pytest.skip(f"real data not available ({processed}): run `crawl`, `parse`, `clean`")
+    data = Real()
+    if len(data.result.bouts) < 100_000 or data.result.bouts["season"].nunique() < 10:
+        pytest.skip("data/processed holds only a partial history")
+    return data
+
+
+@pytest.mark.parametrize("name, season, at_most", [
+    ("Glarner Matthias", 2016, 5),     # Schwingerkönig 2016
+    ("Glarner Matthias", 2013, 10),
+    ("Wicki Joel", 2018, 3),
+    ("Wicki Joel", 2019, 3),           # Schlussgang ESAF 2019
+    ("Wicki Joel", 2022, 3),           # Schwingerkönig 2022
+    ("Reichmuth Pirmin", 2019, 8),
+    ("Reichmuth Pirmin", 2023, 8),
+    ("Forrer Arnold", 2012, 12),       # König 2001, still elite in his late career
+    ("Forrer Arnold", 2013, 10),
+    ("Sempach Matthias", 2013, 3),     # Schwingerkönig 2013
+    ("Sempach Matthias", 2014, 3),     # Kilchberg 2014
+    ("Stucki Christian", 2017, 3),     # Unspunnen 2017
+    ("Stucki Christian", 2019, 3),     # Schwingerkönig 2019
+    ("Giger Samuel", 2021, 3),
+    ("Giger Samuel", 2023, 3),         # Unspunnen 2023
+    ("Staudenmann Fabian", 2024, 3),
+    ("Orlik Armon", 2025, 5),          # Schwingerkönig 2025
+])
+def test_real_elite_athletes_rank_near_the_top_in_their_peak_seasons(
+        real: Real, name: str, season: int, at_most: int) -> None:
+    assert real.season_rank(name, season) <= at_most
+
+
+def test_real_elite_rivals_are_far_above_the_field(real: Real) -> None:
+    t = real.table.set_index("athlete_id")
+    peaks = real.table.loc[real.table["n_bouts"] >= 24, "rating_peak"]
+    for name in ("Glarner Matthias", "Wicki Joel", "Reichmuth Pirmin"):
+        assert t.loc[real.athlete(name), "rating_peak"] > peaks.quantile(0.99), name
+    # Forrer peaks in 2013, while the top of the scale is still spreading out (the 20
+    # best average 2073 then, 2200+ from 2016): top 3 % all-time, top 4 of his season
+    assert t.loc[real.athlete("Forrer Arnold"), "rating_peak"] > peaks.quantile(0.97)
+    # Forrer's best years were before 2011: the three younger ones peak higher here
+    assert t.loc[real.athlete("Forrer Arnold"), "rating_peak"] < \
+        t.loc[real.athlete("Wicki Joel"), "rating_peak"]
+
+
+def test_real_esaf_winners_lead_after_their_festival(real: Real) -> None:
+    """After an ESAF the König is one of the three best-rated participants."""
+    fests = pd.read_parquet(real.cfg.processed_dir / "festivals.parquet")
+    h = real.result.history
+    for year, king in [(2013, "Sempach Matthias"), (2016, "Glarner Matthias"),
+                       (2019, "Stucki Christian"), (2022, "Wicki Joel")]:
+        fid = fests[(fests["eidg_type"] == "ESAF") & (fests["year"] == year)]["fest_id"].iloc[0]
+        field = h[h["fest_id"] == fid].sort_values("rating_after", ascending=False)
+        assert real.athlete(king) in set(field["athlete_id"].head(3)), (year, king)
+        row = field[field["athlete_id"] == real.athlete(king)].iloc[0]
+        assert row["rating_after"] > row["rating_before"] and row["score"] > row["expected"]
+
+
+def test_real_ratings_are_zero_sum_and_centred(real: Real) -> None:
+    h = real.result.history
+    change = (h["rating_after"] - h["rating_before"]).groupby(h["fest_id"]).sum()
+    assert np.allclose(change, 0.0, atol=1e-6)
+    assert np.mean(list(real.result.ratings.values())) == pytest.approx(1500.0, abs=1e-6)
+    assert h[["rating_before", "rating_after"]].notna().all().all()
+    assert h["rating_after"].between(900, 2700).all()   # nothing runs away
+
+
+def test_real_rankings_exclude_garbage_and_provisional_athletes(real: Real) -> None:
+    t = real.table
+    ranked = t[t["ranked"]]
+    assert 1000 < len(ranked) < len(t)
+    assert (ranked["n_bouts"] >= real.cfg.provisional_min_bouts).all()
+    assert not ranked["identity_flags"].str.contains("not_a_name").any()
+    assert (ranked["days_inactive"] <= 548).all()
+    assert t.loc[t["n_bouts"] == 0, "rank"].isna().all()
+    one_festival = t[t["n_festivals"] == 1]
+    assert len(one_festival) > 1000 and not one_festival["ranked"].any()
+    top = ranked.nsmallest(50, "rank")
+    assert (top["n_bouts"] >= 100).all()        # nobody is at the top on a handful of bouts
+    assert not top["identity_uncertain"].any()  # known unreliable identities are not up there
+    s = real.seasons
+    assert not s.loc[s["season"] < real.cfg.elo_first_ranked_season, "ranked"].any()
+
+
+def test_real_no_inflation_after_burn_in(real: Real) -> None:
+    drift = ev.season_drift(real.result.history, real.cfg.provisional_min_bouts)
+    full = drift.loc[[y for y in drift.index if y >= 2016 and y != 2020]]
+    assert full["mean"].between(1500, 1560).all()
+    assert full["top20_mean"].max() - full["top20_mean"].min() < 120
+    assert (drift["newcomer_mean"].loc[2012:] < 1500).all()  # newcomers are below average
+
+
+def test_real_predictions_beat_a_coin_flip_and_are_monotone(real: Real) -> None:
+    d = real.result.bouts
+    test = ev.prediction_metrics(ev.in_seasons(d, ev.TEST))
+    assert test["brier"] < 0.14 and test["log_loss"] < 0.56   # E = 0.5: 0.20 / 0.693
+    cal = ev.calibration_table(d[d["season"] >= 2013])
+    assert cal["observed"].is_monotonic_increasing
+    assert (cal["observed"] > 0.5).all()
+
+
+def test_real_mov_baseline_matches_the_data(real: Real) -> None:
+    """`mov_baseline_diff` is meant to be K-neutral: the mean multiplier of a win is 1."""
+    wins = real.result.bouts.loc[real.result.bouts["score_a"] != 0.5, "mov_lambda"]
+    assert wins.mean() == pytest.approx(1.0, abs=0.02)
+    assert ev.mean_win_margin(real.bouts) == pytest.approx(real.cfg.mov_baseline_diff, abs=0.02)
+    assert wins.between(real.cfg.mov_lambda_min, real.cfg.mov_lambda_max).all()
+
+
+def test_real_model_is_symmetric_and_deterministic(real: Real) -> None:
+    again = SchwingElo(real.result.params).run(real.bouts.sample(frac=1.0, random_state=1))
+    pd.testing.assert_frame_equal(again.history, real.result.history)
+    swapped = SchwingElo(real.result.params).run(mirrored(real.bouts)).ratings
+    assert max(abs(swapped[a] - r) for a, r in real.result.ratings.items()) < 1e-6

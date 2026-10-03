@@ -45,7 +45,9 @@ Schwinger-ELO/
 │   │   ├── festivals.parquet       # Festivals + parse status and row / bout counts
 │   │   ├── identity_map.parquet    # Raw sheet row -> athlete_id, with evidence and confidence
 │   │   ├── bout_rejects.parquet    # Bouts not kept (unmapped side, self-bout) with a reason
-│   │   └── ratings.parquet         # Full rating history
+│   │   ├── ratings.parquet         # Full rating history (one row per athlete and festival)
+│   │   ├── athlete_ratings.parquet # Current rating, peak, provisional / identity flags, rank
+│   │   └── season_ratings.parquet  # Season-end rating and rank per athlete and year
 │   └── schwingen.db                # SQLite staging database
 ├── src/
 │   ├── __init__.py
@@ -73,7 +75,9 @@ Schwinger-ELO/
 │   │   ├── identity.py             # Evidence-based identity resolver (one athlete_id per person)
 │   │   ├── cleaner.py              # Clean orchestration: load, resolve, validate, remap bouts
 │   │   ├── export.py               # Atomic Parquet writes of the clean outputs
-│   │   └── elo_engine.py           # Custom Schwingen ELO calculations
+│   │   ├── elo_engine.py           # Custom Schwingen ELO calculations (no file access)
+│   │   ├── elo_runner.py           # `elo` stage: Parquet in, ratings / ranking tables out
+│   │   └── elo_eval.py             # Calibration and evaluation report (`elo --evaluate`)
 │   └── exporter/
 │       ├── __init__.py
 │       └── static_builder.py       # Copies web/ and writes JSON slices into dist/
@@ -148,6 +152,15 @@ Standard chess ELO must be calibrated with the following domain parameters:
 
 All model parameters live in `src/config.py` so they can be tuned without code changes.
 
+**As implemented (Phase 4, decisions of 2026-10-03 in `docs/progress/STATE.md`; evidence: `python -m src.cli elo --evaluate`):**
+- Initial rating 1500; the update is zero-sum per bout and symmetric in A / B (the sheets list the better-ranked athlete as A).
+- **Update order:** festivals in order `(date, fest_id)`; within a festival all bouts are scored against the pre-festival ratings and an athlete's changes are summed (`elo_update_mode = "festival"`). The Gang order is unreliable for ~2 % of the bouts and the sequential order predicts no better at these K-factors; `phase`, `gang` and `sequential` remain selectable.
+- **MoV:** `alpha = 1.0`, `BaselineDiff = 1.36` (the mean winner margin, so the average multiplier of a win is 1 and K keeps its meaning), wins only, grade of the winner minus grade of the loser, $\lambda$ clamped to $[0.5, 2.0]$: 0.64 / 0.89 / 1.14 for margins 1.00 / 1.25 / 1.50.
+- **Seasons:** the reversion is applied to every athlete who already has a rating before the first festival on or after 1 April, once per 1 April crossed. The `season` shown in the outputs is the calendar year of the festival.
+- **Provisional:** fewer than 24 rated career bouts (`few_bouts`) or no bout for more than 1.5 seasons (`inactive`). Provisional athletes, `not_a_name` rows and athletes without bouts are rated but not ranked; 2011 is a burn-in season (rated, not ranked).
+- **Identity uncertainty:** every bout is rated; `athlete_ratings.parquet` marks athletes whose history rests on low-confidence identity rows (`identity_uncertain`).
+- `ratings.parquet`: `athlete_id, date, fest_id, rating_before, rating_after` + `season, category, n_bouts, score, expected, bouts_before, days_inactive, provisional, provisional_reason`; `rating_before` includes the April reversion.
+
 ---
 
 ## 5. Command-Line Interface (`src/cli.py`)
@@ -159,7 +172,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`) |
 | `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse), then the identity evidence: `ranking_entries`, `portraits`, `clubs`, `athlete_evidence` |
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
-| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet` |
+| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report) |
 | `python -m src.cli build` | Write the static site to `dist/` |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |

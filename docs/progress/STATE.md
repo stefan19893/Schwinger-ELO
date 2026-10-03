@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-03
-**Current phase:** 4 — ELO engine (in progress, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
-**Next action:** Phase 4 task 6 (real-data sanity tests, top-20 per era in the handoff notes; elo-modeler; tasks 1-5 done) — see `phase-4-elo.md`, incl. "Known inputs" from the Phase 2 and Phase 3 reviews. At the end of Phase 4: phase-reviewer, then stop and ask the user before Phase 5.
+**Current phase:** 4 — ELO engine (in review, branch `phase-4-elo`, branched from `phase-3-cleaning`; Phase 3 is not yet merged to `main` / pushed)
+**Next action:** run phase-reviewer for Phase 4 (all six tasks done 2026-10-03; several Phase 4 decisions are marked "to confirm" for the owner). Then stop and ask the user before Phase 5.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -11,7 +11,7 @@
 | 1 | Festival crawler | M1 | `phase-1-crawler.md` | done |
 | 2 | Bout parser | M2 | `phase-2-parser.md` | done |
 | 3 | Identity cleaning | M3a | `phase-3-cleaning.md` | done |
-| 4 | ELO engine | M3b | `phase-4-elo.md` | in progress |
+| 4 | ELO engine | M3b | `phase-4-elo.md` | in review |
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | not started |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | not started |
 
