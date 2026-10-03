@@ -13,7 +13,7 @@ Automated weekly update and GitHub Pages deployment.
 
 ## Tasks
 - [x] 1. Decide state persistence strategy for scheduled runs; log decision
-- [ ] 2. Write `deploy_pages.yml`
+- [~] 2. Write `deploy_pages.yml`
 - [ ] 3. Write `scrape_and_update.yml` (cron, polite crawl, caching)
 - [ ] 4. Validate workflows (syntax/`actionlint` if available)
 - [ ] 5. README: quick start with `./scripts/deploy_local.sh`, flags, CLI reference, Pages setup
@@ -22,7 +22,7 @@ Automated weekly update and GitHub Pages deployment.
 ### Added by the main session's brief (2026-10-03), done before / between the tasks above
 - [x] A. Publication defaults in config + exporter: `publish_min_age`, `site_noindex` (+ `robots.txt`), `contact_email`
 - [x] B. Deploy guard in the CLI (`check-site`: empty / shrunken site against the last accepted `meta.json`)
-- [~] C. Headless-browser smoke test of the built sample site (CI must run it, locally it skips without a browser)
+- [x] C. Headless-browser smoke test of the built sample site (CI must run it, locally it skips without a browser)
 
 ## Known inputs from Phase 5 review (2026-10-03)
 - **Deploy by Pages artifact**, not by committing `dist/` (8,864 files, 51 MB; `actions/upload-pages-artifact` + `actions/deploy-pages@v4`). `dist/` stays git-ignored.
@@ -69,3 +69,8 @@ Automated weekly update and GitHub Pages deployment.
   - **Cold start = failure.** `state_problems(cfg)` (local files only): database missing, `festivals` or `bouts` empty, no cached response, or fewer than 90 % of the statistic PDFs of the known festivals in the cache. `crawl --require-state` / `all --require-state` log the reasons and exit 1 **before a client is created**; the tests count requests on a mock transport (0), also for `--portraits-only`, and check that not even an empty database is created. Without the flag nothing changes for local use.
   - **Run on the real data:** `state-export` 8 s → 503,903,468 bytes (8,373 files, 719 MB unpacked; festivals 2,037, bouts 491,676); `state-import` into a scratch dir 3 s; `diff -r` of `raw/` and `processed/` clean, all 13 tables with equal row counts, `PRAGMA integrity_check` ok, schema v6.
   - **Not verifiable here:** everything on the GitHub side — that `gh release download / upload / delete-asset / view` find a draft release by its tag with the workflow token, and the permission needed. The README names the check for the first manual run.
+- 2026-10-03 — **Task C done (web-builder): headless-browser smoke test `tests/test_browser_smoke.py`** (12 tests; 1,002 green, 63 s for the whole suite, 21 s of it the browser).
+  - **What it does:** builds `all --sample` into `<tmp>/Schwinger-ELO`, serves it from a loopback server under the sub-path, loads eight URLs with `chrome --headless=new --dump-dom --virtual-time-budget=10000` (four at a time, a throw-away profile each): `index.html`, `#saison`, `#bestwerte`, `athlete.html?id=<rank 1>`, an unknown athlete id, `fests.html`, `fests.html?id=…&a=…`, `about.html`. A page fails on `#se-banner[data-error]`, on the text of a failed data request, or when `#se-view` (about: `#se-facts`) has no content. Content checks on top: name of the leader in ranking, profile and festival, a `<canvas>` on the profile (chart drawn under the CSP), the not-found text, the focus row, the about numbers (`K = 96`), the age-rule paragraph visible, the contact paragraph hidden and no `mailto:`, the `noindex` tag, and a festival with withheld athletes showing "Jungschwinger, Name nicht veröffentlicht" as often as it has `anon` rows. A negative control (a throwing `index.js`, a deleted `festivals.json`) proves the check can fail.
+  - **Browser lookup:** `SCHWINGEN_BROWSER`, then `google-chrome` / `chromium` on the PATH, then the Windows Chrome / Edge under `/mnt/c/Program Files…` (profile path through `wslpath -w`). No browser → the 11 browser tests skip (run: `SCHWINGEN_BROWSER=/nonexistent` → 1 passed, 11 skipped); with `SCHWINGEN_REQUIRE_BROWSER=1` (CI) a missing browser is an error (run: 11 errors). No Node, no new dependency: a fresh clone still needs only Python. `--no-sandbox` is added only under `GITHUB_ACTIONS` / root.
+  - **Run here:** Windows Chrome 154 from WSL, three runs in a row green. **Surprise:** a first start on a fresh profile sometimes prints an empty DOM (2 of 8 in one measurement) → `dump_dom` retries up to three times until it sees `</html>`.
+  - **Looked at** (screenshots, 500 px wide, real-data build with the age filter): Hallenschwinget Sarnen 2026 shows a "Jungschwinger, Name nicht veröffentlicht" row with record and rating change, no link; `about.html` shows the counts of the published site (6'314 / 1'497) and the age paragraph. **Not verified:** Linux Chrome on a GitHub runner (flags, sandbox), other browsers, real phones.

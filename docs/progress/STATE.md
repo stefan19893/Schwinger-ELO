@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task C (headless-browser smoke test), then 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Next action:** Phase 6 task 2 (`deploy_pages.yml` + ungated `ci.yml`), then 3–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -160,6 +160,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6: deploy guard `check-site`** — baseline is the `meta.json` of the last accepted site, kept in `data/published_meta.json` inside the pipeline state (no request to the live site; exists before the first deployment once the owner accepts a build). Tolerances `guard_max_drop = 0.02` (athletes, festivals, bouts) and `guard_max_drop_ranked = 0.25` (19 % of the ranked leave at once when a season starts). One override, `--accept-changes`, covers intended drops, a missing baseline and loosened publication settings; empty / demo / inconsistent sites have no override.
 - 2026-10-03 — **Phase 6: state between scheduled runs = one bundle (`state-export` / `state-import`, gzip tar with manifest, 504 MB) stored as an asset of a draft GitHub release `pipeline-state`** — the only GitHub-native store that is durable (no 7-day eviction like the Actions cache, no 90-day expiry like artifacts), not publicly downloadable (the state holds birthdays, licence numbers, residences and third-party PDFs; a data branch, a public release and artifacts would expose it) and can be seeded from the owner's machine without a secret. Costs: `contents: write` for the state job, and the draft must never be published (checked at the start of every run). Fallback if unwanted: a private store behind a secret. Resolves the open question "How does the scheduled GitHub Action keep state between runs".
 - 2026-10-03 — **Phase 6: a missing or incomplete state fails the run before any request** — `crawl` / `all --require-state` (`state_problems`: database, festivals, bouts, cache, ≥ 90 % of the known statistic PDFs cached); workflows always pass the flag. New bundles are uploaded under a new name and older generations deleted afterwards (never `--clobber`).
+- 2026-10-03 — **Phase 6: JavaScript is covered by a headless-browser smoke test inside pytest** (`tests/test_browser_smoke.py`, Chrome `--dump-dom` on the built sample site; no Node, no new dependency) — skipped without a browser, mandatory with `SCHWINGEN_REQUIRE_BROWSER=1` (CI). It checks that pages render without the error banner, not interactions.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).
@@ -188,7 +189,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - Phase 5 → owner: wording and handling of the correction route on `about.html` ("Fehler, verwechselte Personen oder Einwände gegen einen Eintrag bitte über GitHub melden") — confirm, or name another contact; what happens when an athlete objects to being listed?
 - Phase 5 → owner: season lists require 12 season bouts and 2011 / 2020 have no places (`SEASON_MIN_BOUTS`, `THIN_SEASON_FESTIVALS` in `static_builder.py`) — confirm.
 - Phase 5 → owner (review 2026-10-03), before any deployment: 478 athletes born 2009–2010 are listed by name (345 ranked) — acceptable?; the objection route is a public GitHub issue only — add an e-mail contact?; search-engine indexing — allow, or add `noindex` / `robots.txt`? (today: indexable).
-- Phase 5: the frontend scripts have no automated tests (no Node / browser in the test environment). Add a JS test runner in CI (Phase 6), or keep the manual headless-Chrome check?
+- ~~Phase 5: the frontend scripts have no automated tests (no Node / browser in the test environment). Add a JS test runner in CI (Phase 6), or keep the manual headless-Chrome check?~~ — resolved 2026-10-03: headless-browser smoke test in pytest (`tests/test_browser_smoke.py`), required in CI, skipped locally without a browser.
 
 
 ## Blockers
