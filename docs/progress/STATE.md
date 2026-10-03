@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task 4 (validate workflows: actionlint, local run of every CLI call), then 5–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
+**Next action:** Phase 6 task 5 (README: quick start, CLI reference, hosted-setup checklist; SPEC sync), then 6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
