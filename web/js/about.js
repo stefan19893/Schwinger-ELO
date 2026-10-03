@@ -24,12 +24,24 @@
     }
     if (meta.empty) { return; }
     if (pub.min_age > 0 && pub.withheld_from_birth_year) {
+      var n = pub.unknown_recent_seasons || 0;
       set('se-minors', 'Schwinger, die am Datenstand nicht sicher ' + pub.min_age + ' Jahre alt sind (Jahrgang ' +
-        pub.withheld_from_birth_year + ' und jünger), werden nicht mit Namen veröffentlicht: Ihre Gänge zählen für die Wertung, ' +
-        'sie haben aber kein Profil und keinen Rang und erscheinen bei den Festen als «Jungschwinger, Name nicht veröffentlicht». ' +
-        'Das betrifft ' + SE.num(c.withheld) + ' Schwinger, von denen ' + SE.num(c.withheld_ranked) + ' sonst einen Rang hätten. ' +
-        'Die Ränge zählen deshalb nur die veröffentlichten Schwinger. Wo der Jahrgang nicht bekannt ist, lässt sich das Alter ' +
-        'nicht prüfen; diese Schwinger sind aufgeführt.');
+        pub.withheld_from_birth_year + ' und jünger), werden nicht mit Namen veröffentlicht. ' +
+        (n > 0 && pub.withheld_from_first_season
+          ? 'Dasselbe gilt für Schwinger ohne bekannten Jahrgang, die erst seit ' + pub.withheld_from_first_season +
+            ' antreten (die letzten ' + n + ' Saisons): Sie könnten minderjährig sein. Wer ohne bekannten Jahrgang schon länger antritt, ist aufgeführt. '
+          : 'Wo der Jahrgang nicht bekannt ist, lässt sich das Alter nicht prüfen; diese Schwinger sind aufgeführt. ') +
+        'Das betrifft ' + SE.num(c.withheld) + ' Schwinger' +
+        (c.withheld_unknown ? ' (' + SE.num(c.withheld_unknown) + ' davon ohne Jahrgang)' : '') +
+        ', von denen ' + SE.num(c.withheld_ranked) + ' sonst einen Rang hätten; die Ränge zählen deshalb nur die veröffentlichten Schwinger.');
+      set('se-minors2', 'Was von diesen Schwingern trotzdem zu sehen ist: Ihre Gänge zählen für die Wertung und stehen beim Fest, ' +
+        'weil sie auch die Gänge ihrer Gegner sind. Die Zeile heisst «Jungschwinger, Name nicht veröffentlicht» und zeigt nur ' +
+        'gewonnen – gestellt – verloren, die Notensumme und die einzelnen Gänge. Nicht veröffentlicht werden Name, Klub, Teilverband, ' +
+        'Jahrgang, Profil, Rang und jede Wertungszahl (weder vor noch nach dem Fest). Grenzen: Wer die verlinkte Resultatliste der ' +
+        'Quelle daneben legt, kann die Zeile anhand der Gänge einer Person zuordnen – dort stehen die Namen ohnehin. Und aus der ' +
+        'Wertungsänderung der namentlich aufgeführten Gegner lässt sich die Wertung eines nicht genannten Schwingers ungefähr ' +
+        'zurückrechnen; das liesse sich nur verhindern, indem auch die Wertungen der Gegner weggelassen würden.');
+      show('se-minors2');
       show('se-minors');
     }
     set('se-facts', 'Datenstand ' + SE.date(meta.as_of) + ': ' + SE.num(c.bouts) + ' gewertete Gänge, ' + SE.num(c.festivals) +

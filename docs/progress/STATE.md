@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (**in review**, branch `phase-6-deploy`, local only — not pushed); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896)
-**Next action:** run phase-reviewer for Phase 6 (then stop and ask the user for the publication go-ahead; nothing is pushed, Pages is not enabled, `PUBLISH_ENABLED` is not set)
+**Next action:** Phase 6 review fixes in progress (web-builder) — continue with the first `[~]` / `[ ]` item of "Review fixes" in `phase-6-deploy.md`; nothing is pushed, Pages is not enabled, `PUBLISH_ENABLED` is not set
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -162,6 +162,8 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 6: a missing or incomplete state fails the run before any request** — `crawl` / `all --require-state` (`state_problems`: database, festivals, bouts, cache, ≥ 90 % of the known statistic PDFs cached); workflows always pass the flag. New bundles are uploaded under a new name and older generations deleted afterwards (never `--clobber`).
 - 2026-10-03 — **Phase 6: JavaScript is covered by a headless-browser smoke test inside pytest** (`tests/test_browser_smoke.py`, Chrome `--dump-dom` on the built sample site; no Node, no new dependency) — skipped without a browser, mandatory with `SCHWINGEN_REQUIRE_BROWSER=1` (CI). It checks that pages render without the error banner, not interactions.
 - 2026-10-03 — **Phase 6: workflows** — `ci.yml` (tests, ungated, read-only), `deploy_pages.yml` (manual only, rebuild from state without crawl) and `scrape_and_update.yml` (Tuesdays 03:17 UTC March–October, first of the month November–February, plus manual) — the two publishing workflows are skipped unless the repository variable `PUBLISH_ENABLED == 'true'` and the ref is `main`, share one concurrency group, and save the crawl's progress even when a later step fails. No push trigger for deployments: a merge must not change the public site by itself. Deploy Python = 3.14 (the version all results were produced with); CI also tests 3.11 (`requires-python`).
+- 2026-10-03 — **Phase 6 review fix M2: athletes without a birth year are withheld when their first season is within the last 3 seasons of the data year** (`publish_unknown_recent_seasons = 3`, only with `publish_min_age > 0`) — 97.7 % of debutants are at least 16, a 16-year-old debutant is not certainly 18 for three data years; real data 726 withheld / 525 ranked (8 / 2 by this rule), published 6,306 / 1,495. Supersedes "athletes without a birth year cannot be filtered and stay". `--sample` defaults to 0 (the demo has almost no birth years). **Owner may overrule.**
+- 2026-10-03 — **Phase 6 review fix S4: withheld festival rows carry no rating value** (`before` / `after` null; record and grade sum stay). Supersedes "withheld athletes keep rating before / after". Known limits, stated on the about page: the row can be matched against the linked source list, and a withheld athlete's rating can be estimated from his published opponents' rating changes.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).

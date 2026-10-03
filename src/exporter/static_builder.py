@@ -33,8 +33,12 @@ Publication switches (``src/config.py``):
     An athlete who is not certainly that old at the data date (``as_of`` year - birth year
     <= the age) is *withheld*: he counts in the ratings, but has no history file, no
     search entry and no rank, appears in no list, and a festival shows him without id,
-    name, club and Teilverband (column ``anon`` = 1). Athletes without a birth year stay.
+    name, club, Teilverband and without any rating value (column ``anon`` = 1; record and
+    grade sum stay, they are the festival's bouts).
     Ranks are the places among the published athletes (see :func:`_published_ranks`).
+``publish_unknown_recent_seasons``
+    An athlete without a known birth year is withheld in the same way when his first
+    season lies within the last N seasons of the data year - he may be a minor.
 ``site_noindex``
     Every page gets ``<meta name="robots" content="noindex">`` and ``robots.txt`` is
     written.
@@ -261,7 +265,8 @@ class _Person:
     exportable: bool
     unc: int
     nameable: bool = True   # False for `not_a_name` rows: never shown by name
-    withheld: bool = False  # too young to be published by name (publish_min_age)
+    withheld: bool = False  # not certainly old enough to be published by name
+    withheld_no_by: bool = False  # ... because the birth year is unknown and he is new
 
 
 def min_birth_year_withheld(as_of: str | None, min_age: int) -> int | None:
@@ -272,7 +277,16 @@ def min_birth_year_withheld(as_of: str | None, min_age: int) -> int | None:
     return int(as_of[:4]) - min_age
 
 
-def _people(inp: Inputs, withhold_from: int | None = None) -> dict[str, _Person]:
+def min_first_season_withheld(as_of: str | None, min_age: int, recent_seasons: int) -> int | None:
+    """First debut season that is withheld for athletes *without a birth year*: whoever
+    started in or after it may not be ``min_age`` yet. ``None`` = the rule is off."""
+    if min_age <= 0 or recent_seasons <= 0 or not as_of:
+        return None
+    return int(as_of[:4]) - recent_seasons + 1
+
+
+def _people(inp: Inputs, withhold_from: int | None = None,
+            withhold_first_from: int | None = None) -> dict[str, _Person]:
     ar = inp.athlete_ratings.set_index("athlete_id")
     out: dict[str, _Person] = {}
     for row in inp.athletes.itertuples(index=False):
@@ -283,13 +297,19 @@ def _people(inp: Inputs, withhold_from: int | None = None) -> dict[str, _Person]
         if aid in ar.index:
             garbage = garbage or NOT_A_NAME in _flag_set(ar.at[aid, "identity_flags"], ";|")
         by = _int(row.birth_year)
+        first = _int(row.first_season)
         withheld = withhold_from is not None and by is not None and by >= withhold_from
+        # no birth year: a recent debutant may be a minor (`not_a_name` rows are never
+        # shown by name anyway and stay "Name nicht lesbar")
+        no_by = (withhold_first_from is not None and by is None and not garbage
+                 and (first is None or first >= withhold_first_from))
+        withheld = withheld or no_by
         out[aid] = _Person(
             id=aid, name=_text(row.full_name) or "?", club=_text(row.club),
             tv=_text(row.sub_association), by=by,
-            first=_int(row.first_season), last=_int(row.last_season),
+            first=first, last=_int(row.last_season),
             exportable=bool(rated and not garbage and not withheld),
-            nameable=not garbage and not withheld, withheld=withheld,
+            nameable=not garbage and not withheld, withheld=withheld, withheld_no_by=no_by,
             unc=int(bool(ar.at[aid, "identity_uncertain"])) if aid in ar.index else 0)
     return out
 
@@ -485,7 +505,10 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         athletes = []
         for a in ids:
             p = people[a]
-            before, after = rated.get((a, fest_id), (None, None))
+            # a withheld athlete's row carries no rating value: before / after would chain
+            # into his whole rating history across the festival files
+            before, after = (None, None) if p.withheld else rated.get((a, fest_id),
+                                                                      (None, None))
             # no profile: the name alone (unrated athlete) or nothing (`not_a_name`)
             athletes.append([p.id if p.exportable else None, p.name if p.nameable else None,
                              p.club if p.exportable else None, p.tv if p.exportable else None,
@@ -574,9 +597,16 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
 
 
 # --------------------------------------------------------------------------- build
-def _publish(cfg: Config, withhold_from: int | None) -> dict[str, Any]:
-    """What the pages say about the publication rules (about page)."""
+def _publish(cfg: Config, withhold_from: int | None, withhold_first_from: int | None = None,
+             release: tuple[int, int] = (0, 0)) -> dict[str, Any]:
+    """What the pages say about the publication rules (about page), and what the deploy
+    guard needs: ``release_next_year`` is the number of withheld athletes (and of ranked
+    ones among them) who become publishable when the data year advances by one."""
     return {"min_age": cfg.publish_min_age, "withheld_from_birth_year": withhold_from,
+            "unknown_recent_seasons": cfg.publish_unknown_recent_seasons
+            if cfg.publish_min_age > 0 else 0,
+            "withheld_from_first_season": withhold_first_from,
+            "release_next_year": {"athletes": release[0], "ranked": release[1]},
             "noindex": cfg.site_noindex}
 
 
@@ -605,7 +635,8 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                 "first_season": None, "last_season": None,
                 "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "festivals_partial": 0,
                            "festivals_missing": 0, "bouts": 0, "history_rows": 0,
-                           "withheld": 0, "withheld_ranked": 0},
+                           "withheld": 0, "withheld_ranked": 0, "withheld_unknown": 0,
+                           "rated": 0, "birth_year_known": 0},
                 "model": model, "publish": _publish(cfg, None),
                 "contact": cfg.contact_email or None}
         sizes["meta.json"] = _write_json(data / "meta.json", meta)
@@ -623,7 +654,9 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
 
     as_of = _date(max(inp.ratings["date"].map(_date)))
     withhold_from = min_birth_year_withheld(as_of, cfg.publish_min_age)
-    people = _people(inp, withhold_from)
+    withhold_first_from = min_first_season_withheld(as_of, cfg.publish_min_age,
+                                                    cfg.publish_unknown_recent_seasons)
+    people = _people(inp, withhold_from, withhold_first_from)
     ranks = _published_ranks(inp, people)
     fest_rows, fests = _festival_index(inp)
     fest_names = {int(i): _text(n) or "?" for i, n in zip(inp.festivals["fest_id"],
@@ -635,8 +668,18 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     search = _search_index(inp, people, ranks)
     ar = inp.athlete_ratings
     rated_ids = set(ar.loc[ar["rating"].notna() & (ar["n_bouts"] > 0), "athlete_id"])
-    withheld = sum(1 for p in people.values() if p.withheld and p.id in rated_ids)
-    withheld_ranked = sum(1 for a in ar.loc[ar["ranked"], "athlete_id"] if people[a].withheld)
+    ranked_ids = set(ar.loc[ar["ranked"], "athlete_id"])
+    hidden = [p for p in people.values() if p.withheld and p.id in rated_ids]
+    withheld = len(hidden)
+    withheld_ranked = sum(1 for a in ranked_ids if people[a].withheld)
+    withheld_unknown = sum(1 for p in hidden if p.withheld_no_by)
+    # who is released when the data year advances by one (the oldest withheld cohort)
+    freed = [p for p in hidden if (p.by == withhold_from if p.by is not None
+                                   else p.first == withhold_first_from)]
+    release = (len(freed), sum(1 for p in freed if p.id in ranked_ids))
+    # everyone with a rating who is a person (published or withheld)
+    named = [p for p in people.values() if p.id in rated_ids and (p.nameable or p.withheld)]
+    birth_year_known = sum(1 for p in named if p.by is not None)
 
     sizes["rankings_latest.json"] = _write_json(
         data / "rankings_latest.json", {"as_of": as_of, "cols": RANKING_COLS, "rows": rankings})
@@ -661,14 +704,18 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                        "festivals_missing": sum(1 for r in fest_rows if r[8] == "none"),
                        "bouts": int(inp.bouts["elo_eligible"].astype(bool).sum()),
                        "history_rows": hist_rows,
-                       "withheld": withheld, "withheld_ranked": withheld_ranked},
-            "model": model, "publish": _publish(cfg, withhold_from),
+                       "withheld": withheld, "withheld_ranked": withheld_ranked,
+                       "withheld_unknown": withheld_unknown,
+                       # inputs of the age filter, watched by the deploy guard
+                       "rated": len(named), "birth_year_known": birth_year_known},
+            "model": model,
+            "publish": _publish(cfg, withhold_from, withhold_first_from, release),
             "contact": cfg.contact_email or None}
     sizes["meta.json"] = _write_json(data / "meta.json", meta)
     return {"sizes": sizes, "history_files": hist_files, "history_bytes": hist_bytes,
             "fest_files": fest_files, "fest_bytes": fest_bytes, "empty": False,
             "athletes": len(search), "ranked": len(rankings), "withheld": withheld,
-            "withheld_ranked": withheld_ranked}
+            "withheld_ranked": withheld_ranked, "withheld_unknown": withheld_unknown}
 
 
 def _prepare_dist(cfg: Config) -> Path:
