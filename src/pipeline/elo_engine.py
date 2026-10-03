@@ -6,8 +6,12 @@ Model, per bout between athletes A and B at a festival of category ``c``::
     S_A    = 1 (A wins) | 0.5 (gestellt) | 0 (B wins)
     lambda = clamp(1 + alpha * (grade_winner - grade_loser - baseline_diff))
              for wins with both grades known, else 1         margin of victory
-    delta  = K[c] * lambda * (S_A - E_A)
+    delta  = k_scale * K[c] * lambda * (S_A - E_A)
     R_A   += delta ;  R_B -= delta                           zero-sum per bout
+
+``K[c]`` are the per-category K-factors of the spec, ``k_scale`` one multiplier for all
+of them (``elo_k_scale`` in ``src/config.py``): it sets the speed of the ratings, and
+with it the spread of the scale, without touching the ratio between the tiers.
 
 The model is symmetric in A / B: swapping the two sides of a bout (and its
 outcome and grades) gives exactly the mirrored update. That matters because the
@@ -74,6 +78,7 @@ class EloParams:
     initial: float = 1500.0
     scale: float = 400.0
     k_factors: Mapping[str, float] = field(default_factory=dict)
+    k_scale: float = 1.0  # multiplier on every K-factor (tier ratios unchanged)
     mov_alpha: float = 0.0
     mov_baseline_diff: float = 0.0
     mov_lambda_min: float = 0.5
@@ -99,11 +104,14 @@ class EloParams:
             raise ValueError("require 0 < mov_lambda_min <= 1 <= mov_lambda_max")
         if any(k <= 0 for k in self.k_factors.values()):
             raise ValueError("K-factors must be > 0")
+        if not (self.k_scale > 0 and math.isfinite(self.k_scale)):
+            raise ValueError("elo k scale must be a finite number > 0")
 
     @classmethod
     def from_config(cls, cfg: Config, **overrides: Any) -> EloParams:
         values: dict[str, Any] = dict(
             initial=cfg.elo_initial, scale=cfg.elo_scale, k_factors=dict(cfg.k_factors),
+            k_scale=cfg.elo_k_scale,
             mov_alpha=cfg.mov_alpha, mov_baseline_diff=cfg.mov_baseline_diff,
             mov_lambda_min=cfg.mov_lambda_min, mov_lambda_max=cfg.mov_lambda_max,
             season_start_month=cfg.season_start_month,
@@ -117,6 +125,10 @@ class EloParams:
 
     def replace(self, **changes: Any) -> EloParams:
         return dataclasses.replace(self, **changes)
+
+    def k(self, category: str) -> float:
+        """Effective K-factor of a festival category: ``k_scale * k_factors[category]``."""
+        return self.k_scale * k_factor(category, self.k_factors)
 
     @property
     def inactive_days(self) -> float:
@@ -184,7 +196,8 @@ class EloResult:
                  ``(date, fest_id, athlete_id)``.
     ``bouts``    one row per rated bout in processing order: the expected score of A the
                  update used (``expected_a``), the one from the pre-festival ratings
-                 (``expected_a_prefest``), ``score_a``, ``k``, ``mov_lambda``, both
+                 (``expected_a_prefest``), ``score_a``, ``k`` (effective, i.e. including
+                 ``k_scale``), ``mov_lambda``, both
                  pre-festival ratings and career bout counts (for evaluation).
     ``ratings``  final rating per athlete id (after the reversions due up to the last
                  festival).
@@ -225,7 +238,7 @@ class SchwingElo:
         p = self.params
         score = OUTCOME_SCORE[outcome]
         lam = bout_multiplier(score, _nan(grade_a), _nan(grade_b), p)
-        delta = k_factor(category, p.k_factors) * lam * (score - self.expected(a, b))
+        delta = p.k(category) * lam * (score - self.expected(a, b))
         self.ratings[a] = self.rating(a) + delta
         self.ratings[b] = self.rating(b) - delta
         return delta
@@ -252,7 +265,7 @@ class SchwingElo:
         ia, ib = inverse[:n], inverse[n:]
         score = df["outcome"].map(OUTCOME_SCORE).to_numpy(dtype=float)
         cats = df["category"].to_numpy(dtype=object)
-        k_by_cat = {c: k_factor(c, p.k_factors) for c in pd.unique(cats)}
+        k_by_cat = {c: p.k(c) for c in pd.unique(cats)}
         k = np.array([k_by_cat[c] for c in cats], dtype=float)
         lam = np.asarray(bout_multiplier(score, df["grade_a"].to_numpy(dtype=float),
                                          df["grade_b"].to_numpy(dtype=float), p),

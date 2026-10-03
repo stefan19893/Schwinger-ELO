@@ -29,7 +29,8 @@ SAMPLE_PROVISIONAL_MIN_BOUTS = 6
 # Politeness floor (spec §4.1): no configuration may go below this delay.
 MIN_REQUEST_DELAY = 0.5
 
-# Festival category -> K-factor (spec §4.2.3, user decisions 2026-09-29).
+# Festival category -> K-factor (spec §4.2.3, user decisions 2026-09-29). These are the
+# base values; the engine multiplies every one of them by Config.elo_k_scale.
 DEFAULT_K_FACTORS: dict[str, float] = {
     "ESAF": 48.0,  # ESAF + Kilchberg, Unspunnen, ESV-Jubiläumsschwingfest (eidg. Kranz)
     "Bergkranz": 40.0,  # the six Bergkranzfeste: Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein
@@ -99,6 +100,11 @@ class Config:
     # Gang, "sequential" = bout by bout.
     elo_update_mode: str = "festival"
     elo_phase_split_gang: int = 4
+    # Multiplier on every K-factor of k_factors (tier ratios unchanged): effective K =
+    # elo_k_scale * k_factors[category] = 96 / 80 / 64 / 48 / 48 / 32. Decision of
+    # 2026-10-03: at the spec's values (scale 1.0, delta 0.10) the ratings are compressed
+    # and under-confident. Reverting = elo_k_scale 1.0 and season_reversion_delta 0.10.
+    elo_k_scale: float = 2.0
     # MoV multiplier for wins: lambda = 1 + alpha * (grade_winner - grade_loser -
     # baseline_diff), clamped to [mov_lambda_min, mov_lambda_max]; NULL grade -> 1.
     mov_alpha: float = 1.0
@@ -107,7 +113,7 @@ class Config:
     mov_lambda_max: float = 2.0
     # Mean reversion before the first festival on/after 1 <season_start_month>.
     season_start_month: int = 4
-    season_reversion_delta: float = 0.10
+    season_reversion_delta: float = 0.05  # spec: ~0.10; see elo_k_scale
     season_reversion_mean: float = 1500.0
     # Provisional: no bout for more than this many seasons, or fewer rated career
     # bouts than provisional_min_bouts.

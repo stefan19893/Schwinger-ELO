@@ -32,6 +32,10 @@ TEST: tuple[int, int] = (2021, 2026)    # seasons used to check them
 GANG_FLAGS: tuple[str, ...] = ("gang_collision", "gang_uncertain", "gang_inferred")
 GAP_BINS: tuple[float, ...] = (0, 25, 50, 100, 150, 200, 300, 400, 500, 700, 5000)
 EXPERIENCE_BINS: tuple[int, ...] = (0, 1, 6, 12, 18, 24, 36, 60, 120, 100000)
+# (k_scale, reversion delta): the spec's values first (reference of the top-20 overlap),
+# then the variants of the Phase 4 review grid.
+SCALE_VARIANTS: tuple[tuple[float, float], ...] = (
+    (1.0, 0.10), (1.0, 0.05), (1.5, 0.05), (2.0, 0.05), (2.0, 0.10), (3.0, 0.0))
 
 
 # --------------------------------------------------------------------------- metrics
@@ -132,18 +136,67 @@ def calibrate_mov(bouts: pd.DataFrame, params: EloParams, alphas: Iterable[float
     return pd.DataFrame(rows)
 
 
+def compare_update_modes_by_scale(bouts: pd.DataFrame, params: EloParams,
+                                  k_scales: Sequence[float]) -> pd.DataFrame:
+    """:func:`compare_update_modes` for several ``k_scale`` values (other parameters as
+    configured, MoV included): does the choice of the update order depend on the level
+    of K? ``*_prefest`` = all modes on equal information."""
+    parts = []
+    for c in k_scales:
+        t = compare_update_modes(bouts, params.replace(k_scale=c)).reset_index()
+        t.insert(0, "k_scale", c)
+        parts.append(t[["k_scale", "mode", "train_brier", "test_brier",
+                        "train_brier_prefest", "test_brier_prefest"]])
+    return pd.concat(parts, ignore_index=True).set_index(["k_scale", "mode"])
+
+
 def parameter_scan(bouts: pd.DataFrame, params: EloParams, k_scales: Sequence[float],
                    deltas: Sequence[float]) -> pd.DataFrame:
-    """Reference only (the spec fixes K and delta): predictive quality when all
-    K-factors are scaled, and for other reversion strengths."""
+    """One parameter at a time around the configured model: predictive quality for
+    other values of ``k_scale`` (absolute multipliers on the spec's K-factors) and for
+    other reversion strengths."""
     rows = []
     for c in k_scales:
-        p = params.replace(k_factors={k: v * c for k, v in params.k_factors.items()})
+        p = params.replace(k_scale=c)
         rows.append({"variant": f"K x {c:g}", **_train_test(SchwingElo(p).run(bouts).bouts)})
     for dl in deltas:
         d = SchwingElo(params.replace(reversion_delta=dl)).run(bouts).bouts
         rows.append({"variant": f"delta = {dl:g}", **_train_test(d)})
     return pd.DataFrame(rows).set_index("variant")
+
+
+def scale_grid(bouts: pd.DataFrame, athletes: pd.DataFrame,
+               identity_map: pd.DataFrame | None, cfg: Config,
+               variants: Sequence[tuple[float, float]] = SCALE_VARIANTS,
+               top_n: int = 100) -> pd.DataFrame:
+    """What ``k_scale`` and the reversion ``delta`` do to the leaderboard, per variant:
+    test Brier; SD and best rating of the currently ranked athletes; overlap of the
+    current top 20 with the first variant's; volatility = largest single-festival
+    rating change in the whole history and, for the current top ``top_n``, the mean
+    absolute change per festival, plus the mean size of the April drop at the top."""
+    rows, reference = [], None
+    for k_scale, delta in variants:
+        params = EloParams.from_config(cfg, k_scale=k_scale, reversion_delta=delta)
+        result, table, _ = compute(bouts, athletes, identity_map, cfg, params)
+        ranked = table[table["ranked"]].sort_values("rank")
+        top20 = set(ranked.head(20)["athlete_id"])
+        reference = top20 if reference is None else reference
+        h = result.history
+        change = (h["rating_after"] - h["rating_before"]).abs()
+        of_top = h["athlete_id"].isin(set(ranked.head(top_n)["athlete_id"]))
+        rows.append({
+            "k_scale": k_scale, "delta": delta,
+            "test_brier": prediction_metrics(in_seasons(result.bouts, TEST))["brier"],
+            "ranked": len(ranked), "sd_ranked": float(ranked["rating"].std()),
+            "rank1": float(ranked["rating"].max()) if len(ranked) else float("nan"),
+            "rank20": float(ranked["rating"].iloc[19]) if len(ranked) >= 20 else float("nan"),
+            "top20_overlap": len(top20 & reference),
+            "max_fest_change": float(change.max()),
+            "p99_fest_change": float(change.quantile(0.99)),
+            f"top{top_n}_mean_abs_change": float(change[of_top].mean()),
+            "top20_april_drop": float(delta * (ranked.head(20)["rating"].mean()
+                                               - params.reversion_mean))})
+    return pd.DataFrame(rows).set_index(["k_scale", "delta"])
 
 
 # --------------------------------------------------------------------------- diagnostics
@@ -250,7 +303,7 @@ def _fmt(df: pd.DataFrame, digits: int = 4) -> str:
 
 def evaluation_report(bouts: pd.DataFrame, athletes: pd.DataFrame,
                       identity_map: pd.DataFrame | None, cfg: Config) -> str:
-    """The evidence behind the Phase 4 decisions as plain text (about half a minute on
+    """The evidence behind the Phase 4 decisions as plain text (one to two minutes on
     the full data)."""
     params = EloParams.from_config(cfg)
     result: EloResult = SchwingElo(params).run(bouts)
@@ -258,20 +311,25 @@ def evaluation_report(bouts: pd.DataFrame, athletes: pd.DataFrame,
     neutral = params.replace(mov_alpha=0.0)
     base = mean_win_margin(bouts)
     out = [
-        f"ELO evaluation - mode={params.update_mode}, alpha={params.mov_alpha:g}, "
+        f"ELO evaluation - mode={params.update_mode}, K x {params.k_scale:g}, "
+        f"alpha={params.mov_alpha:g}, "
         f"baseline_diff={params.mov_baseline_diff:g}, delta={params.reversion_delta:g}; "
         f"train seasons {TRAIN}, test seasons {TEST}",
         f"current model: train {prediction_metrics(in_seasons(d, TRAIN))}, "
         f"test {prediction_metrics(in_seasons(d, TEST))}",
         "\n== update modes (no MoV)", _fmt(compare_update_modes(bouts, neutral), 5),
+        "\n== update modes by K scale (MoV on; *_prefest = equal information)",
+        _fmt(compare_update_modes_by_scale(bouts, params, (1.0, 2.0, 3.0)), 5),
         "\n== sensitivity to the unreliable Gang numbers (rating points)",
         _fmt(gang_noise_sensitivity(bouts, neutral), 3),
         f"\n== MoV grid (mean winner margin = {base:.4f})",
         _fmt(calibrate_mov(bouts, params, (0.0, 0.25, 0.5, 1.0, 1.5, 2.0),
                            (1.0, 1.25, round(base, 2), 1.5)), 5),
-        "\n== reference only: scaled K-factors / other reversion strengths",
+        "\n== one parameter at a time: K scale (x spec K-factors) / reversion delta",
         _fmt(parameter_scan(bouts, params, (0.5, 1, 1.5, 2, 3, 4, 6),
                             (0.0, 0.05, 0.1, 0.2)), 5),
+        "\n== K scale x delta: prediction, spread and volatility (first row = spec)",
+        _fmt(scale_grid(bouts, athletes, identity_map, cfg), 4),
         "\n== prediction error per season", _fmt(season_metrics(d)),
         "\n== calibration by rating gap (favourite's view), seasons from "
         f"{TRAIN[0]}", _fmt(calibration_table(d[d["season"] >= TRAIN[0]]), 3),

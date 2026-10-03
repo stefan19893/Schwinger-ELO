@@ -16,6 +16,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         if key.startswith("SCHWINGEN_"):
             monkeypatch.delenv(key)
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(tmp_path / "dist"))
+    # never build from (or write to) the real data/ directory in these tests
+    monkeypatch.setenv("SCHWINGEN_DATA_DIR", str(tmp_path / "data"))
 
 
 # ------------------------------------------------------------------ config
@@ -88,25 +90,196 @@ def test_stub_stages_succeed(cmd: str, tmp_path: Path) -> None:
     assert cli.main([cmd, "--sample", "--data-dir", str(tmp_path / "data")]) == 0
 
 
-def test_all_sample_produces_dist(tmp_path: Path) -> None:
-    rc = cli.main(["all", "--sample", "--data-dir", str(tmp_path / "data")])
-    assert rc == 0
-    index = tmp_path / "dist" / "index.html"
+PAGES = ("index.html", "athlete.html", "fests.html", "about.html")
+
+
+@pytest.fixture(scope="module")
+def sample_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``python -m src.cli all --sample`` once: crawl -> parse -> clean -> elo -> build."""
+    root = tmp_path_factory.mktemp("all-sample")
+    mp = pytest.MonkeyPatch()
+    for key in list(__import__("os").environ):
+        if key.startswith("SCHWINGEN_"):
+            mp.delenv(key)
+    mp.setenv("SCHWINGEN_DIST_DIR", str(root / "dist"))
+    try:
+        assert cli.main(["all", "--sample", "--data-dir", str(root / "data")]) == 0
+    finally:
+        mp.undo()
+    return root / "dist"
+
+
+def test_all_sample_produces_dist(sample_site: Path) -> None:
+    index = sample_site / "index.html"
     assert index.is_file()
     html = index.read_text(encoding="utf-8")
     assert "Schwinger-ELO" in html
     assert 'href="/' not in html and 'src="/' not in html  # relative URLs only
+    assert (sample_site / ".nojekyll").is_file()
+
+
+def test_all_sample_pages_and_assets_resolve(sample_site: Path) -> None:
+    from tests.site_checks import check_page
+
+    assert sorted(p.name for p in sample_site.glob("*.html")) == sorted(PAGES)
+    for name in PAGES:
+        page = check_page(sample_site / name)   # every href / src exists inside dist
+        assert any(u == "css/style.css" for _, _, u in page.links)
+    for asset in ("css/style.css", "js/app.js", "js/index.js", "js/athlete.js", "js/charts.js",
+                  "js/fests.js", "js/about.js", "vendor/echarts.common.min.js",
+                  "vendor/echarts.LICENSE.txt"):
+        assert (sample_site / asset).stat().st_size > 0, asset
+    # sources of the stylesheet and notes for developers are not published
+    assert not list(sample_site.rglob("*.md")) and not (sample_site / "tailwind").exists()
+
+
+def test_all_sample_data_is_valid_and_linked(sample_site: Path) -> None:
+    import json
+
+    data = sample_site / "data"
+    files = sorted(data.rglob("*.json"))
+    parsed = {p: json.loads(p.read_text(encoding="utf-8")) for p in files}  # all parse
+    meta = parsed[data / "meta.json"]
+    assert meta["sample"] is True and meta["empty"] is False
+    assert meta["counts"]["festivals"] == 5 and meta["counts"]["athletes"] > 300
+    rankings = parsed[data / "rankings_latest.json"]
+    assert len(rankings["rows"]) == meta["counts"]["ranked"] > 50
+    cols = rankings["cols"]
+    ids = [r[cols.index("id")] for r in rankings["rows"]]
+    for aid in ids:                                    # every ranked athlete has a profile
+        assert (data / "history" / f"history_{aid}.json") in parsed
+    search = parsed[data / "athletes.json"]
+    assert len(search["rows"]) == meta["counts"]["athletes"]
+    assert len(list((data / "history").iterdir())) == len(search["rows"])
+    festivals = parsed[data / "festivals.json"]
+    assert {f"fest_{r[0]}.json" for r in festivals["rows"]} == \
+        {p.name for p in (data / "fests").iterdir()}
+    top = parsed[data / "history" / f"history_{ids[0]}.json"]
+    assert top["rank"] == 1 and top["history"]["rows"]
+    for row in top["history"]["rows"]:                 # profile -> festival links resolve
+        assert (data / "fests" / f"fest_{row[1]}.json") in parsed
+    assert len(parsed[data / "seasons.json"]["seasons"]) == 4
+    assert parsed[data / "alltime_top200.json"]["rows"]
+
+
+def test_site_works_under_a_sub_path(sample_site: Path, tmp_path: Path) -> None:
+    """Served as on GitHub Pages (/Schwinger-ELO/): every page, asset and data URL the
+    pages use resolves relative to the page and answers 200; unknown athletes give 404
+    (the not-found page of athlete.html relies on it)."""
+    import functools
+    import http.server
+    import json
+    import threading
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from tests.site_checks import Page, local_target
+
+    root = tmp_path / "www"
+    root.mkdir()
+    (root / "Schwinger-ELO").symlink_to(sample_site, target_is_directory=True)
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Quiet, directory=str(root)))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}/Schwinger-ELO/"
+
+    def get(url: str) -> tuple[int, bytes]:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as res:
+                return res.status, res.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, b""
+
+    try:
+        for name in PAGES:
+            page_url = urllib.parse.urljoin(base, name)
+            status, body = get(page_url)
+            assert status == 200 and b"Schwinger" in body
+            for _, _, url in Page(sample_site / name).links:
+                if local_target(url):
+                    resolved = urllib.parse.urljoin(page_url, url)
+                    assert resolved.startswith(base), resolved   # stays inside the sub-path
+                    assert get(resolved)[0] == 200, resolved
+        page_url = urllib.parse.urljoin(base, "athlete.html?id=x")
+        for rel in ("data/meta.json", "data/rankings_latest.json", "data/athletes.json",
+                    "data/seasons.json", "data/alltime_top200.json", "data/festivals.json"):
+            status, body = get(urllib.parse.urljoin(page_url, rel))
+            assert status == 200 and json.loads(body), rel
+        first = json.loads(get(urllib.parse.urljoin(page_url, "data/rankings_latest.json"))[1])
+        aid = first["rows"][0][first["cols"].index("id")]
+        assert get(urllib.parse.urljoin(page_url, f"data/history/history_{aid}.json"))[0] == 200
+        assert get(urllib.parse.urljoin(page_url, "data/history/history_nobody-p0.json"))[0] == 404
+        assert get(f"http://127.0.0.1:{httpd.server_address[1]}/data/meta.json")[0] == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# `build` without rating data fails; the tests below that only need *a* site pass
+# --allow-empty (SCHWINGEN_DATA_DIR points to an empty temp dir).
+EMPTY_BUILD = ["build", "--allow-empty"]
+
+
+def test_build_without_data_fails_and_writes_nothing(
+        tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A deploy job on a fresh runner must not publish an empty site with a green run."""
+    assert cli.main(["build"]) == 1
+    assert not (tmp_path / "dist").exists() and not (tmp_path / "data").exists()
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "no rating data" in msg and "--allow-empty" in msg and "missing" in msg
+
+
+def test_failed_build_keeps_the_previous_site(tmp_path: Path) -> None:
+    assert cli.main(EMPTY_BUILD) == 0
+    (tmp_path / "dist" / "marker.txt").write_text("previous build")
+    assert cli.main(["build"]) == 1
+    assert (tmp_path / "dist" / "marker.txt").read_text() == "previous build"
+
+
+def test_all_stops_before_build_without_data(tmp_path: Path) -> None:
+    """`all --skip-crawl` on a fresh clone: an earlier stage fails, no site is written."""
+    assert cli.main(["all", "--skip-crawl"]) != 0
+    assert not (tmp_path / "dist").exists()
+
+
+def test_build_sample_makes_its_own_data(tmp_path: Path) -> None:
+    """`build --sample` on a fresh clone keeps working: it runs the sample pipeline."""
+    import json
+
+    assert cli.main(["build", "--sample", "--data-dir", str(tmp_path / "s")]) == 0
+    meta = json.loads((tmp_path / "dist" / "data" / "meta.json").read_text())
+    assert meta["empty"] is False and meta["sample"] is True and meta["counts"]["ranked"] > 0
+
+
+def test_build_allow_empty_gives_a_site_without_content(tmp_path: Path) -> None:
+    assert cli.main(EMPTY_BUILD) == 0
+    from tests.site_checks import check_page
+
+    for name in PAGES:
+        check_page(tmp_path / "dist" / name)
+    assert '"empty":true' in (tmp_path / "dist" / "data" / "meta.json").read_text()
+    # --sample --allow-empty: explicit opt-in wins, no pipeline is run
+    assert cli.main(["build", "--allow-empty", "--sample", "--data-dir",
+                     str(tmp_path / "s")]) == 0
+    assert not (tmp_path / "s").exists()
 
 
 def test_build_is_idempotent(tmp_path: Path) -> None:
-    assert cli.main(["build"]) == 0
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     assert (tmp_path / "dist" / "index.html").is_file()
 
 
 def test_build_refuses_unsafe_dist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(REPO_ROOT))
-    assert cli.main(["build"]) == 1
+    assert cli.main(EMPTY_BUILD) == 1
     assert (REPO_ROOT / "src").is_dir()
 
 
@@ -115,16 +288,16 @@ def test_build_refuses_foreign_nonempty_dir(monkeypatch: pytest.MonkeyPatch, tmp
     target.mkdir()
     (target / "keep.txt").write_text("x")
     monkeypatch.setenv("SCHWINGEN_DIST_DIR", str(target))
-    assert cli.main(["build"]) == 1
+    assert cli.main(EMPTY_BUILD) == 1
     assert (target / "keep.txt").is_file()
 
 
 def test_build_replaces_previous_build_and_empty_dir(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()  # empty dir is fine
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     (dist / "stale.json").write_text("{}")
-    assert cli.main(["build"]) == 0  # previous build (has marker) is replaced
+    assert cli.main(EMPTY_BUILD) == 0  # previous build (has marker) is replaced
     assert not (dist / "stale.json").exists()
 
 
@@ -140,7 +313,7 @@ def test_serve_rejects_invalid_port(port: str) -> None:
 def test_serve_port_in_use_fails_cleanly(tmp_path: Path) -> None:
     import socket
 
-    assert cli.main(["build"]) == 0
+    assert cli.main(EMPTY_BUILD) == 0
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         s.listen()

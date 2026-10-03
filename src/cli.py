@@ -462,9 +462,11 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     t0 = time.perf_counter()
     out = run_elo(cfg)
     p, h, table = out.result.params, out.ratings, out.athletes
-    log.info("elo: mode=%s, alpha=%g, baseline_diff=%g, lambda in [%g, %g], delta=%g, "
-             "provisional below %d bouts / after %.1f seasons, ranked from season %d",
-             p.update_mode, p.mov_alpha, p.mov_baseline_diff, p.mov_lambda_min,
+    log.info("elo: mode=%s, K x %g (%s), alpha=%g, baseline_diff=%g, lambda in [%g, %g], "
+             "delta=%g, provisional below %d bouts / after %.1f seasons, ranked from "
+             "season %d", p.update_mode, p.k_scale,
+             " / ".join(f"{p.k(c):g}" for c in p.k_factors), p.mov_alpha,
+             p.mov_baseline_diff, p.mov_lambda_min,
              p.mov_lambda_max, p.reversion_delta, p.provisional_min_bouts,
              p.provisional_inactive_seasons, cfg.elo_first_ranked_season)
     log.info("elo: %d bouts at %d festivals, %d athletes rated, %d history rows, as of %s "
@@ -490,11 +492,32 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     return 0
 
 
-def cmd_build(cfg: Config) -> int:
-    from src.exporter.static_builder import build_site
+def cmd_build(cfg: Config, allow_empty: bool = False) -> int:
+    """Write the static site. Without rating data this fails (exit 1, an existing dist/
+    is left alone) unless ``allow_empty``; ``--sample`` builds its data first."""
+    from src.exporter.static_builder import (EmptyBuildError, build_site, dist_stats,
+                                             missing_inputs)
 
-    dist = build_site(cfg)
-    log.info("build: wrote placeholder site to %s", dist)
+    if cfg.sample and not allow_empty and missing_inputs(cfg.processed_dir):
+        log.info("build: no --sample ratings in %s, running `elo` first", cfg.processed_dir)
+        rc = cmd_elo(cfg)
+        if rc:
+            return rc
+    try:
+        dist = build_site(cfg, allow_empty=allow_empty)
+    except EmptyBuildError as exc:
+        log.error("build: %s - nothing written to %s", exc, cfg.dist_dir)
+        return 1
+    summary = getattr(build_site, "last_summary", {})
+    n_files, n_bytes = dist_stats(dist)
+    if summary.get("empty"):
+        log.warning("build: no rating data in %s - the site in %s has no content "
+                    "(--allow-empty)", cfg.processed_dir, dist)
+    else:
+        log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files",
+                 summary.get("athletes", 0), summary.get("ranked", 0),
+                 summary.get("history_files", 0), summary.get("fest_files", 0))
+    log.info("build: wrote %s (%d files, %.1f MB)", dist, n_files, n_bytes / 1e6)
     return 0
 
 
@@ -589,7 +612,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--evaluate", action="store_true", default=False,
                     help="also print the evaluation report: update modes, MoV grid, "
                          "calibration, rating drift, identity sensitivity (about a minute)")
-    add("build", "write the static site to dist/")
+    sp = add("build", "write the static site to dist/ (fails without rating data)")
+    sp.add_argument("--allow-empty", action="store_true", default=False,
+                    help="without rating data, write a site without content (pages and "
+                         "empty data files) instead of failing; never use for a deployment")
     sp = add("serve", "serve dist/ over HTTP")
     sp.add_argument("--port", type=int, default=None, help="port (default 8000)")
     sp.add_argument("--host", default=None, help="bind address (default 127.0.0.1)")
@@ -660,6 +686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_parse(cfg, force=args.force)
         if args.command == "elo":
             return cmd_elo(cfg, evaluate=args.evaluate)
+        if args.command == "build":
+            return cmd_build(cfg, allow_empty=args.allow_empty)
         if args.command == "crawl":
             if args.portraits_only and args.no_portraits:
                 raise ValueError("--portraits-only and --no-portraits exclude each other")
