@@ -21,11 +21,25 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
 ``history/history_<athlete_id>.json``
     One athlete: profile, season table, rating history per festival.
 
-An athlete is *exportable* when he has rated bouts and is not a ``not_a_name`` row.
-Only name, club, Teilverband and birth year are published (no residence, birthday,
-licence number or portrait slug). A festival file lists every participant: an athlete
-without rated bouts (he only appears at an unrated festival) by name only, without id or
-profile; a ``not_a_name`` row without id and name.
+An athlete is *exportable* when he has rated bouts, is not a ``not_a_name`` row and is
+not *withheld*. Only name, club, Teilverband and birth year are published (no residence,
+birthday, licence number or portrait slug). A festival file lists every participant: an
+athlete without rated bouts (he only appears at an unrated festival) by name only, without
+id or profile; a ``not_a_name`` row without id and name.
+
+Publication switches (``src/config.py``):
+
+``publish_min_age``
+    An athlete who is not certainly that old at the data date (``as_of`` year - birth year
+    <= the age) is *withheld*: he counts in the ratings, but has no history file, no
+    search entry and no rank, appears in no list, and a festival shows him without id,
+    name, club and Teilverband (column ``anon`` = 1). Athletes without a birth year stay.
+    Ranks are the places among the published athletes (see :func:`_published_ranks`).
+``site_noindex``
+    Every page gets ``<meta name="robots" content="noindex">`` and ``robots.txt`` is
+    written.
+``contact_email``
+    Passed to the about page through ``meta.json`` (``contact``).
 
 ``build`` refuses to write a site without rating data (:class:`EmptyBuildError`) unless
 ``allow_empty`` is set - a deployment must never publish an empty site by accident.
@@ -40,6 +54,7 @@ import datetime as _dt
 import json
 import logging
 import math
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,11 +103,21 @@ ALLTIME_COLS = ["pos", "id", "name", "club", "tv", "by", "peak", "date", "fest_i
                 "flags"]
 SEASON_COLS = ["pos", "id", "name", "club", "tv", "by", "rating", "peak", "bouts", "unc"]
 FESTIVAL_COLS = ["id", "name", "date", "cat", "eidg", "loc", "athletes", "bouts", "status"]
-FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "w", "d", "l", "pts", "unc"]
+FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "w", "d", "l", "pts", "unc",
+                     "anon"]
 FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags"]
 HISTORY_COLS = ["date", "fest_id", "fest", "cat", "before", "after", "n", "score", "exp",
                 "flags"]
 ATHLETE_SEASON_COLS = ["season", "rating", "peak", "bouts", "pos"]
+
+ROBOTS_META = '<meta name="robots" content="noindex">'
+ROBOTS_TXT = """# Schwinger-ELO asks not to be indexed (site_noindex in src/config.py).
+# Crawlers read robots.txt only at the root of a host: under a project path such as
+# <user>.github.io/Schwinger-ELO/ this file is not consulted, there the robots meta tag
+# of the pages is what counts.
+User-agent: *
+Disallow: /
+"""
 
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="de">
@@ -236,9 +261,18 @@ class _Person:
     exportable: bool
     unc: int
     nameable: bool = True   # False for `not_a_name` rows: never shown by name
+    withheld: bool = False  # too young to be published by name (publish_min_age)
 
 
-def _people(inp: Inputs) -> dict[str, _Person]:
+def min_birth_year_withheld(as_of: str | None, min_age: int) -> int | None:
+    """First birth year that is withheld: everyone born in or after it is not certainly
+    ``min_age`` years old at the data date. ``None`` = nobody is withheld."""
+    if min_age <= 0 or not as_of:
+        return None
+    return int(as_of[:4]) - min_age
+
+
+def _people(inp: Inputs, withhold_from: int | None = None) -> dict[str, _Person]:
     ar = inp.athlete_ratings.set_index("athlete_id")
     out: dict[str, _Person] = {}
     for row in inp.athletes.itertuples(index=False):
@@ -248,12 +282,36 @@ def _people(inp: Inputs) -> dict[str, _Person]:
         garbage = NOT_A_NAME in _flag_set(row.evidence, ";|")
         if aid in ar.index:
             garbage = garbage or NOT_A_NAME in _flag_set(ar.at[aid, "identity_flags"], ";|")
+        by = _int(row.birth_year)
+        withheld = withhold_from is not None and by is not None and by >= withhold_from
         out[aid] = _Person(
             id=aid, name=_text(row.full_name) or "?", club=_text(row.club),
-            tv=_text(row.sub_association), by=_int(row.birth_year),
+            tv=_text(row.sub_association), by=by,
             first=_int(row.first_season), last=_int(row.last_season),
-            exportable=bool(rated and not garbage), nameable=not garbage,
+            exportable=bool(rated and not garbage and not withheld),
+            nameable=not garbage and not withheld, withheld=withheld,
             unc=int(bool(ar.at[aid, "identity_uncertain"])) if aid in ar.index else 0)
+    return out
+
+
+def _published_ranks(inp: Inputs, people: dict[str, _Person]) -> dict[str, int]:
+    """Rank of every published ranked athlete = his place among the published athletes.
+
+    ``athlete_ratings.rank`` counts everyone. Leaving the withheld athletes' places empty
+    would show a list that jumps from 137 to 139 and "Rang 2020" in a list of 1,500, and
+    every gap would point at a hidden person; so the rank shown is the engine's rank minus
+    the withheld athletes ahead (ties keep sharing a rank). Without withheld athletes the
+    engine's ranks come out unchanged. Ranking, search index and profile use this map."""
+    ranked = inp.athlete_ratings[inp.athlete_ratings["ranked"]].sort_values(["rank", "athlete_id"])
+    out: dict[str, int] = {}
+    hidden_ranks: list[int] = []
+    for aid, rank in zip(ranked["athlete_id"], ranked["rank"]):
+        rank = int(rank)
+        p = people[aid]
+        if p.withheld:
+            hidden_ranks.append(rank)
+        elif p.exportable:
+            out[aid] = rank - sum(1 for h in hidden_ranks if h < rank)
     return out
 
 
@@ -264,27 +322,28 @@ def _athlete_flags(row: Any) -> int:
             | F_INACTIVE * ("inactive" in reasons) | F_UNCERTAIN * bool(row.identity_uncertain))
 
 
-def _rankings(inp: Inputs, people: dict[str, _Person]) -> list[list[Any]]:
+def _rankings(inp: Inputs, people: dict[str, _Person], ranks: dict[str, int]) -> list[list[Any]]:
     ranked = inp.athlete_ratings[inp.athlete_ratings["ranked"]].sort_values(["rank", "athlete_id"])
     rows = []
     for r in ranked.itertuples(index=False):
         p = people[r.athlete_id]
-        if not p.exportable:  # never rank garbage names or athletes without bouts
+        if not p.exportable:  # never rank garbage names, athletes without bouts, withheld
             continue
-        rows.append([_int(r.rank), p.id, p.name, p.club, p.tv, p.by, _int(r.rating),
+        rows.append([ranks[p.id], p.id, p.name, p.club, p.tv, p.by, _int(r.rating),
                      _int(r.rating_peak), _date(r.last_date), _int(r.days_inactive),
                      _int(r.n_bouts), p.unc])
     return rows
 
 
-def _search_index(inp: Inputs, people: dict[str, _Person]) -> list[list[Any]]:
+def _search_index(inp: Inputs, people: dict[str, _Person],
+                  ranks: dict[str, int]) -> list[list[Any]]:
     rows = []
     for r in inp.athlete_ratings.itertuples(index=False):
         p = people[r.athlete_id]
         if not p.exportable:
             continue
         rows.append([p.id, p.name, p.club, p.tv, p.by, p.first, p.last, _int(r.rating),
-                     _int(r.rating_peak), _int(r.rank) if r.ranked else None,
+                     _int(r.rating_peak), ranks.get(p.id) if r.ranked else None,
                      _athlete_flags(r)])
     rows.sort(key=lambda x: (x[1].casefold(), x[0]))
     return rows
@@ -418,7 +477,10 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
                 d[aid] = d.get(aid, 0) + (o == "DRAW")
                 g = _clean(g)
                 pts[aid] = pts.get(aid, 0.0) + (g or 0.0)
-        ids = sorted(w, key=lambda a: (-round(pts[a], 2), people[a].name.casefold(), a))
+        # withheld athletes sort after the named ones of equal points, not by their name
+        ids = sorted(w, key=lambda a: (-round(pts[a], 2), people[a].withheld,
+                                       "" if people[a].withheld else people[a].name.casefold(),
+                                       a))
         index = {a: i for i, a in enumerate(ids)}
         athletes = []
         for a in ids:
@@ -428,7 +490,7 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
             athletes.append([p.id if p.exportable else None, p.name if p.nameable else None,
                              p.club if p.exportable else None, p.tv if p.exportable else None,
                              _int(before), _int(after), int(w[a]), int(d[a]), int(l[a]),
-                             _r2(pts[a]), p.unc if p.exportable else 0])
+                             _r2(pts[a]), p.unc if p.exportable else 0, int(p.withheld)])
         bouts = sorted(
             [int(g), index[a], index[b], _RES[o], _r2(ga), _r2(gb), _bout_flags(fl, sg)]
             for g, a, b, o, ga, gb, fl, sg in zip(
@@ -447,7 +509,8 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
 
 def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[int, str],
                      listed: pd.DataFrame, placed_seasons: set[int], cfg: Config,
-                     as_of: str | None, out_dir: Path) -> tuple[int, int, int]:
+                     as_of: str | None, ranks: dict[str, int],
+                     out_dir: Path) -> tuple[int, int, int]:
     """One file per exportable athlete; returns (files, bytes, history rows)."""
     ar = inp.athlete_ratings.set_index("athlete_id")
     record = _outcome_counts(inp.bouts[inp.bouts["elo_eligible"].astype(bool)])
@@ -489,7 +552,7 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
             "peak": _r1(a["rating_peak"]), "peak_date": _date(a["peak_date"]),
             "peak_fest": {"id": peak_fest, "name": fest_names.get(peak_fest, "?")}
             if peak_fest is not None else None,
-            "rank": _int(a["rank"]) if bool(a["ranked"]) else None, "ranked": bool(a["ranked"]),
+            "rank": ranks.get(aid) if bool(a["ranked"]) else None, "ranked": bool(a["ranked"]),
             "provisional": sorted(_flag_set(a["provisional_reason"])),
             "unc": p.unc,
             "unc_rows": [_int(a["identity_low_conf_rows"]), _int(a["identity_rows"])],
@@ -511,6 +574,12 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
 
 
 # --------------------------------------------------------------------------- build
+def _publish(cfg: Config, withhold_from: int | None) -> dict[str, Any]:
+    """What the pages say about the publication rules (about page)."""
+    return {"min_age": cfg.publish_min_age, "withheld_from_birth_year": withhold_from,
+            "noindex": cfg.site_noindex}
+
+
 def _model(cfg: Config, min_bouts: int, thin: int) -> dict[str, Any]:
     return {
         "initial": cfg.elo_initial, "mean": cfg.season_reversion_mean,
@@ -535,8 +604,10 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
         meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": True, "as_of": None,
                 "first_season": None, "last_season": None,
                 "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "festivals_partial": 0,
-                           "festivals_missing": 0, "bouts": 0, "history_rows": 0},
-                "model": model}
+                           "festivals_missing": 0, "bouts": 0, "history_rows": 0,
+                           "withheld": 0, "withheld_ranked": 0},
+                "model": model, "publish": _publish(cfg, None),
+                "contact": cfg.contact_email or None}
         sizes["meta.json"] = _write_json(data / "meta.json", meta)
         sizes["rankings_latest.json"] = _write_json(
             data / "rankings_latest.json", {"as_of": None, "cols": RANKING_COLS, "rows": []})
@@ -550,16 +621,22 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                                               {"cols": FESTIVAL_COLS, "rows": []})
         return {"sizes": sizes, "history_files": 0, "fest_files": 0, "empty": True}
 
-    people = _people(inp)
     as_of = _date(max(inp.ratings["date"].map(_date)))
+    withhold_from = min_birth_year_withheld(as_of, cfg.publish_min_age)
+    people = _people(inp, withhold_from)
+    ranks = _published_ranks(inp, people)
     fest_rows, fests = _festival_index(inp)
     fest_names = {int(i): _text(n) or "?" for i, n in zip(inp.festivals["fest_id"],
                                                          inp.festivals["name"])}
     listed = _season_places(inp, people, min_bouts)
     seasons = _seasons(inp, people, listed, as_of, thin, cfg.elo_first_ranked_season)
     placed = {s["season"] for s in seasons if s["status"] in ("ok", "current")}
-    rankings = _rankings(inp, people)
-    search = _search_index(inp, people)
+    rankings = _rankings(inp, people, ranks)
+    search = _search_index(inp, people, ranks)
+    ar = inp.athlete_ratings
+    rated_ids = set(ar.loc[ar["rating"].notna() & (ar["n_bouts"] > 0), "athlete_id"])
+    withheld = sum(1 for p in people.values() if p.withheld and p.id in rated_ids)
+    withheld_ranked = sum(1 for a in ar.loc[ar["ranked"], "athlete_id"] if people[a].withheld)
 
     sizes["rankings_latest.json"] = _write_json(
         data / "rankings_latest.json", {"as_of": as_of, "cols": RANKING_COLS, "rows": rankings})
@@ -574,7 +651,7 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                                           {"cols": FESTIVAL_COLS, "rows": fest_rows})
     fest_files, fest_bytes = _write_fests(inp, people, fests, data / "fests")
     hist_files, hist_bytes, hist_rows = _write_histories(
-        inp, people, fest_names, listed, placed, cfg, as_of, data / "history")
+        inp, people, fest_names, listed, placed, cfg, as_of, ranks, data / "history")
     all_seasons = [s["season"] for s in seasons]
     meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": False, "as_of": as_of,
             "first_season": min(all_seasons), "last_season": max(all_seasons),
@@ -583,12 +660,15 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                        "festivals_partial": sum(1 for r in fest_rows if r[8] == "partial"),
                        "festivals_missing": sum(1 for r in fest_rows if r[8] == "none"),
                        "bouts": int(inp.bouts["elo_eligible"].astype(bool).sum()),
-                       "history_rows": hist_rows},
-            "model": model}
+                       "history_rows": hist_rows,
+                       "withheld": withheld, "withheld_ranked": withheld_ranked},
+            "model": model, "publish": _publish(cfg, withhold_from),
+            "contact": cfg.contact_email or None}
     sizes["meta.json"] = _write_json(data / "meta.json", meta)
     return {"sizes": sizes, "history_files": hist_files, "history_bytes": hist_bytes,
             "fest_files": fest_files, "fest_bytes": fest_bytes, "empty": False,
-            "athletes": len(search), "ranked": len(rankings)}
+            "athletes": len(search), "ranked": len(rankings), "withheld": withheld,
+            "withheld_ranked": withheld_ranked}
 
 
 def _prepare_dist(cfg: Config) -> Path:
@@ -629,11 +709,34 @@ def build_site(cfg: Config, allow_empty: bool = False) -> Path:
     index = dist / "index.html"
     if not index.exists():
         index.write_text(PLACEHOLDER_HTML, encoding="utf-8")
+    apply_indexing(cfg, dist)
     summary = write_data(cfg, dist, inp)
     # GitHub Pages: serve files as-is (no Jekyll processing).
     (dist / BUILD_MARKER).touch()
     build_site.last_summary = summary  # type: ignore[attr-defined]
     return dist
+
+
+def apply_indexing(cfg: Config, dist: Path) -> int:
+    """``site_noindex``: put the robots meta tag into every page of ``dist`` and write
+    ``robots.txt``; returns the number of pages tagged. A page without ``<head>`` fails
+    the build - it must not be published indexable by accident."""
+    if not cfg.site_noindex:
+        return 0
+    pages = sorted(dist.rglob("*.html"))
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        if 'name="robots"' in html:
+            continue
+        if re.search(r"<head[^>]*>", html) is None:
+            raise ValueError(f"site_noindex: {page} has no <head> to carry the robots tag")
+        # after the charset declaration (which has to come first), else right after <head>
+        head = re.search(r"<meta charset=[^>]*>[ \t]*\n?", html) \
+            or re.search(r"<head[^>]*>[ \t]*\n?", html)
+        page.write_text(html[:head.end()] + "  " + ROBOTS_META + "\n" + html[head.end():],
+                        encoding="utf-8")
+    (dist / "robots.txt").write_text(ROBOTS_TXT, encoding="utf-8")
+    return len(pages)
 
 
 def dist_stats(dist: Path) -> tuple[int, int]:

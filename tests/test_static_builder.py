@@ -79,6 +79,12 @@ class Site:
         self.ratings = pd.read_parquet(cfg.processed_dir / "ratings.parquet")
         self.bouts = pd.read_parquet(cfg.processed_dir / "bouts.parquet")
 
+        # athletes withheld by `publish_min_age`, derived independently of the builder
+        year = int(self.meta["as_of"][:4]) if self.meta["as_of"] else 0
+        too_young = self.athletes["birth_year"] >= year - cfg.publish_min_age
+        self.withheld: set[str] = set(self.athletes.loc[too_young, "athlete_id"]) \
+            if cfg.publish_min_age > 0 else set()
+
     def history(self, aid: str) -> dict[str, Any]:
         return load(self.data / "history" / f"history_{aid}.json")
 
@@ -171,7 +177,16 @@ def test_meta(site: Site) -> None:
     assert m["sample"] is site.cfg.sample
     assert DATE_RE.match(m["as_of"]) and m["as_of"] == str(site.ratings["date"].max())
     assert set(m["counts"]) == {"athletes", "ranked", "festivals", "festivals_partial",
-                                "festivals_missing", "bouts", "history_rows"}
+                                "festivals_missing", "bouts", "history_rows", "withheld",
+                                "withheld_ranked"}
+    rated = set(site.ar.loc[site.ar["n_bouts"] > 0, "athlete_id"])
+    assert m["counts"]["withheld"] == len(site.withheld & rated)
+    assert m["counts"]["withheld_ranked"] == len(
+        site.withheld & set(site.ar.loc[site.ar["ranked"], "athlete_id"]))
+    assert m["publish"] == {
+        "min_age": 18, "noindex": True,
+        "withheld_from_birth_year": int(m["as_of"][:4]) - 18}
+    assert m["contact"] is None  # no address unless the owner configures one
     statuses = [r[8] for r in site.festivals["rows"]]
     assert m["counts"]["festivals_partial"] == statuses.count("partial")
     assert m["counts"]["festivals_missing"] == statuses.count("none")
@@ -188,9 +203,12 @@ def test_meta(site: Site) -> None:
 def test_rankings_latest(site: Site) -> None:
     assert site.rankings["cols"] == sb.RANKING_COLS
     rows = table(site.rankings)
-    ranked = site.ar[site.ar["ranked"]]
+    ranked = site.ar[site.ar["ranked"] & ~site.ar["athlete_id"].isin(site.withheld)]
     assert len(rows) == len(ranked) > 0
+    # places among the published athletes, in the engine's order
     assert [r["rank"] for r in rows] == list(range(1, len(rows) + 1))
+    assert [r["id"] for r in rows] == list(ranked.sort_values(["rank", "athlete_id"])["athlete_id"])
+    assert not {r["id"] for r in rows} & site.withheld
     assert [r["rating"] for r in rows] == sorted((r["rating"] for r in rows), reverse=True)
     by_id = site.ar.set_index("athlete_id")
     for r in rows:
@@ -210,14 +228,15 @@ def test_search_index(site: Site) -> None:
     assert len(set(ids)) == len(ids) and all(ID_RE.match(i) for i in ids)
     by_id = site.ar.set_index("athlete_id")
     expected = {a for a in by_id.index if by_id.at[a, "n_bouts"] > 0
-                and "not_a_name" not in by_id.at[a, "identity_flags"]}
+                and "not_a_name" not in by_id.at[a, "identity_flags"]} - site.withheld
     assert set(ids) == expected
+    shown_rank = {r[1]: r[0] for r in site.rankings["rows"]}
     assert [(r["name"].casefold(), r["id"]) for r in rows] == \
         sorted((r["name"].casefold(), r["id"]) for r in rows)
     for r in rows:
         a = by_id.loc[r["id"]]
         assert bool(r["flags"] & sb.F_RANKED) == bool(a["ranked"])
-        assert (r["rank"] is not None) == bool(a["ranked"])
+        assert r["rank"] == shown_rank.get(r["id"])  # the same rank wherever it is shown
         assert bool(r["flags"] & sb.F_UNCERTAIN) == bool(a["identity_uncertain"])
         assert bool(r["flags"] & sb.F_INACTIVE) == ("inactive" in a["provisional_reason"])
         assert bool(r["flags"] & sb.F_FEW_BOUTS) == ("few_bouts" in a["provisional_reason"])
@@ -230,7 +249,8 @@ def test_search_index(site: Site) -> None:
 def test_alltime_top200(site: Site) -> None:
     assert site.alltime["cols"] == sb.ALLTIME_COLS
     rows = table(site.alltime)
-    with_peak = site.ar[site.ar["rating_peak"].notna() & (site.ar["n_bouts"] > 0)]
+    with_peak = site.ar[site.ar["rating_peak"].notna() & (site.ar["n_bouts"] > 0)
+                        & ~site.ar["athlete_id"].isin(site.withheld)]
     assert len(rows) == min(sb.ALLTIME_TOP_N, len(with_peak))
     assert [r["pos"] for r in rows] == list(range(1, len(rows) + 1))
     assert [r["peak"] for r in rows] == sorted((r["peak"] for r in rows), reverse=True)
@@ -310,7 +330,10 @@ def test_festival_index_and_files(site: Site) -> None:
         for i, a in enumerate(athletes):
             assert (a["w"], a["d"], a["l"]) == (w[i], d[i], l[i])
             assert a["id"] is None or a["id"] in searchable
-            if a["id"] is None:   # no profile: at most the name is shown
+            if a["anon"]:         # under the publication age: the bouts, nothing else
+                assert (a["id"], a["name"], a["club"], a["tv"], a["unc"]) == \
+                    (None, None, None, None, 0)
+            elif a["id"] is None:   # no profile: at most the name is shown
                 assert (a["club"], a["tv"], a["before"], a["after"], a["unc"]) == \
                     (None, None, None, None, 0)
             else:
@@ -345,6 +368,8 @@ def test_history_files(site: Site) -> None:
         assert h["rating_last"] == rows[-1]["after"] and h["last_date"] == rows[-1]["date"]
         assert h["rating"] == round(a["rating"], 1)
         assert h["ranked"] == bool(a["ranked"]) and (h["rank"] is not None) == h["ranked"]
+        if h["ranked"]:
+            assert h["rank"] == next(r[0] for r in site.rankings["rows"] if r[1] == aid)
         assert set(h["provisional"]) <= {"few_bouts", "inactive"}
         assert h["as_of"] == site.meta["as_of"] and h["rev"][:2] == [
             site.cfg.season_reversion_delta, site.cfg.season_reversion_mean]
@@ -478,8 +503,8 @@ def test_athlete_without_rating_is_listed_by_name_without_profile(
     fest = load(data / "fests" / f"fest_{fid}.json")
     assert fest["status"] == "unrated"
     rows = table(fest["athletes"])
-    assert all(r["name"] for r in rows)                           # nobody is "unreadable"
-    without = [r for r in rows if r["id"] is None]
+    assert all(r["name"] for r in rows if not r["anon"])          # nobody is "unreadable"
+    without = [r for r in rows if r["id"] is None and not r["anon"]]
     assert sorted(r["name"] for r in without) == sorted(victims.values())
     for r in without:
         assert (r["club"], r["tv"], r["before"], r["after"], r["unc"]) == \
@@ -564,7 +589,155 @@ def test_unexportable_athletes_are_not_linked(tmp_path: Path, sample: Site) -> N
     assert len(nameless) == 1 and nameless[0]["id"] is None
 
 
+# --------------------------------------------------------------------------- publication
+def _young_site(tmp_path: Path, sample: Site, **cfg_kw: Any) -> tuple[Path, list[str], Config]:
+    """The sample site with the athletes ranked 2nd and 4th made 17 at the data date."""
+    young = [sample.rankings["rows"][1][1], sample.rankings["rows"][3][1]]
+    year = int(sample.meta["as_of"][:4])
+
+    def change(name: str, df: pd.DataFrame) -> pd.DataFrame:
+        if name == "athletes":
+            df.loc[df["athlete_id"] == young[0], "birth_year"] = year - 17
+            df.loc[df["athlete_id"] == young[1], "birth_year"] = year - 18  # 17 or 18
+            # 19 in the data year: certainly of age; unknown birth year: cannot be filtered
+            df.loc[df["athlete_id"] == sample.rankings["rows"][0][1], "birth_year"] = year - 19
+            df.loc[df["athlete_id"] == sample.rankings["rows"][2][1], "birth_year"] = np.nan
+        return df
+
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "data" / "processed", change)
+    cfg = load_config({"sample": True, "data_dir": tmp_path / "data",
+                       "dist_dir": tmp_path / "dist", **cfg_kw}, env={})
+    return sb.build_site(cfg), young, cfg
+
+
+def test_min_birth_year_withheld() -> None:
+    assert sb.min_birth_year_withheld("2026-09-27", 18) == 2008
+    assert sb.min_birth_year_withheld("2026-01-01", 16) == 2010
+    assert sb.min_birth_year_withheld("2026-09-27", 0) is None
+    assert sb.min_birth_year_withheld(None, 18) is None
+
+
+def test_athletes_under_the_publication_age_are_not_published(tmp_path: Path,
+                                                              sample: Site) -> None:
+    dist, young, _ = _young_site(tmp_path, sample)
+    data = dist / "data"
+    names = [json.dumps(r[2], ensure_ascii=False) for r in sample.rankings["rows"]
+             if r[1] in young]
+    text = "".join(p.read_text(encoding="utf-8") for p in data.rglob("*.json"))
+    for aid, name in zip(young, names):
+        assert aid not in text and name not in text      # neither id nor name, anywhere
+        assert not (data / "history" / f"history_{aid}.json").exists()
+    # ranks are the places among the published athletes: no gap, same order as before
+    before = [r[1] for r in sample.rankings["rows"] if r[1] not in young]
+    rows = load(data / "rankings_latest.json")["rows"]
+    assert [r[1] for r in rows] == before
+    assert [r[0] for r in rows] == list(range(1, len(before) + 1))
+    assert rows[1][1] == sample.rankings["rows"][2][1]   # unknown birth year stays, now 2nd
+    search = {r["id"]: r for r in table(load(data / "athletes.json"))}
+    for r in rows:
+        assert search[r[1]]["rank"] == r[0] == load(
+            data / "history" / f"history_{r[1]}.json")["rank"]
+    meta = load(data / "meta.json")
+    for key in ("withheld", "withheld_ranked"):
+        assert meta["counts"][key] == sample.meta["counts"][key] + 2
+    assert meta["counts"]["ranked"] == len(rows) == sample.meta["counts"]["ranked"] - 2
+    assert meta["counts"]["athletes"] == sample.meta["counts"]["athletes"] - 2
+    assert meta["counts"]["bouts"] == sample.meta["counts"]["bouts"]  # they still count
+    # the festivals keep their rows and bouts, without name, club, id
+    for aid in young:
+        for fid in {r[1] for r in sample.history(aid)["history"]["rows"]}:
+            was = table(sample.fest(fid)["athletes"])
+            now = table(load(data / "fests" / f"fest_{fid}.json")["athletes"])
+            assert len(was) == len(now)
+            anon = [a for a in now if a["anon"]]
+            assert anon and all((a["id"], a["name"], a["club"], a["tv"]) == (None,) * 4
+                                for a in anon)
+            old = next(a for a in was if a["id"] == aid)
+            assert any((a["w"], a["d"], a["l"], a["pts"], a["after"]) ==
+                       (old["w"], old["d"], old["l"], old["pts"], old["after"]) for a in anon)
+            assert len(load(data / "fests" / f"fest_{fid}.json")["bouts"]["rows"]) == \
+                len(sample.fest(fid)["bouts"]["rows"])
+    # nobody else lists them: seasons, peaks, namesakes
+    for s in load(data / "seasons.json")["seasons"]:
+        assert not {r[1] for r in s["rows"]} & set(young)
+        assert s["peak"] is None or s["peak"]["id"] not in young
+
+
+def test_publish_min_age_zero_publishes_everyone(tmp_path: Path, sample: Site) -> None:
+    dist, young, _ = _young_site(tmp_path, sample, publish_min_age=0)
+    data = dist / "data"
+    ranked = sample.ar[sample.ar["ranked"]].sort_values(["rank", "athlete_id"])
+    assert [(r[0], r[1]) for r in load(data / "rankings_latest.json")["rows"]] == \
+        [(int(r), a) for r, a in zip(ranked["rank"], ranked["athlete_id"])]  # the engine's ranks
+    meta = load(data / "meta.json")
+    assert meta["counts"]["withheld"] == 0 and meta["publish"]["withheld_from_birth_year"] is None
+    assert meta["counts"]["athletes"] == \
+        sample.meta["counts"]["athletes"] + sample.meta["counts"]["withheld"]
+    for aid in young:
+        assert (data / "history" / f"history_{aid}.json").is_file()
+    assert not any(a[-1] for p in (data / "fests").iterdir() for a in load(p)["athletes"]["rows"])
+
+
+def test_noindex_is_on_every_page_and_switchable(tmp_path: Path, sample: Site) -> None:
+    pages = sorted(p.name for p in sample.dist.glob("*.html"))
+    assert len(pages) == 4
+    for name in pages:
+        html = (sample.dist / name).read_text(encoding="utf-8")
+        assert html.count(sb.ROBOTS_META) == 1
+        assert html.index("<head>") < html.index(sb.ROBOTS_META) < html.index("</head>")
+    robots = (sample.dist / "robots.txt").read_text(encoding="utf-8")
+    assert "User-agent: *" in robots and "Disallow: /" in robots
+    cfg = load_config({"sample": True, "data_dir": sample.cfg.data_dir, "site_noindex": False,
+                       "dist_dir": tmp_path / "indexable"}, env={})
+    dist = sb.build_site(cfg)
+    assert not (dist / "robots.txt").exists()
+    assert not any("robots" in p.read_text(encoding="utf-8") for p in dist.glob("*.html"))
+    assert load(dist / "data" / "meta.json")["publish"]["noindex"] is False
+    # the source pages stay free of the tag: it is a build setting
+    assert not any("robots" in p.read_text(encoding="utf-8") for p in cfg.web_dir.glob("*.html"))
+
+
+def test_noindex_fails_on_a_page_without_head(tmp_path: Path) -> None:
+    (tmp_path / "broken.html").write_text("<p>no head</p>", encoding="utf-8")
+    with pytest.raises(ValueError, match="no <head>"):
+        sb.apply_indexing(load_config(env={}), tmp_path)
+
+
+def test_contact_email_only_when_configured(tmp_path: Path, sample: Site) -> None:
+    assert sample.meta["contact"] is None
+    assert "@" not in (sample.dist / "about.html").read_text(encoding="utf-8")
+    cfg = load_config({"sample": True, "data_dir": sample.cfg.data_dir,
+                       "contact_email": "kontakt@example.org", "dist_dir": tmp_path / "d"},
+                      env={})
+    assert load(sb.build_site(cfg) / "data" / "meta.json")["contact"] == "kontakt@example.org"
+    assert load_config(env={"SCHWINGEN_CONTACT_EMAIL": "a.b@example.org"}).contact_email \
+        == "a.b@example.org"
+    for bad in ("not an address", "x@y", "a@b.ch?subject=x", "<a@b.ch>", "a@b.ch\nBcc: c@d.ch"):
+        with pytest.raises(ValueError, match="contact_email"):
+            load_config({"contact_email": bad}, env={})
+
+
+def test_publication_defaults_and_validation() -> None:
+    cfg = load_config(env={})
+    assert (cfg.publish_min_age, cfg.site_noindex, cfg.contact_email) == (18, True, "")
+    assert load_config(env={"SCHWINGEN_PUBLISH_MIN_AGE": "0",
+                            "SCHWINGEN_SITE_NOINDEX": "false"}).site_noindex is False
+    with pytest.raises(ValueError, match="publish_min_age"):
+        load_config({"publish_min_age": -1}, env={})
+
+
 # --------------------------------------------------------------------------- real data only
+def test_real_age_filter(real: Site) -> None:
+    """The default withholds the athletes born in or after `data year - 18`."""
+    c = real.meta["counts"]
+    assert c["withheld"] > 300 and 0 < c["withheld_ranked"] < c["withheld"]
+    assert all(r["by"] is None or r["by"] < real.meta["publish"]["withheld_from_birth_year"]
+               for r in table(real.search))
+    assert any(r["by"] is None for r in table(real.search))   # unknown birth years stay
+    sample_files = sorted((real.data / "fests").iterdir())[-40:]
+    assert any(a[-1] for p in sample_files for a in load(p)["athletes"]["rows"])
+
+
 def test_real_known_weaknesses_are_represented(real: Site) -> None:
     seasons = {s["season"]: s for s in real.seasons["seasons"]}
     assert seasons[2011]["status"] == "burn_in"
@@ -614,6 +787,9 @@ def test_real_unrated_festival_shows_names(real: Site) -> None:
     names_only = 0
     for fid in unrated:
         for a in table(real.fest(fid)["athletes"]):
+            if a["anon"]:   # under the publication age: listed without name
+                assert a["id"] is None and a["name"] is None
+                continue
             assert isinstance(a["name"], str) and a["name"].strip()
             assert a["id"] is None or a["id"] in searchable
             if a["id"] is None:

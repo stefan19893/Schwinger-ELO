@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-03
 **Current phase:** 6 — CI & deployment (in progress, branch `phase-6-deploy`); Phases 0–5 are on `main` (Phase 5 = PR #4, squash 8dcf896); merged branches and the agent worktree were removed 2026-10-03
-**Next action:** Phase 6 task 1 (web-builder) — see `phase-6-deploy.md` incl. "Known inputs" and the publication defaults in Decisions (2026-10-03). Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user. At the end: phase-reviewer, then stop and ask the user for the publication go-ahead.
+**Next action:** Phase 6 task B (deploy guard `check-site`), then 1 (state persistence), C, 2–6 — web-builder. Nothing may be published: workflows stay gated, Pages is not enabled, no push without the user.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -154,6 +154,9 @@ Status values: `not started` · `in progress` · `in review` · `done`
 - 2026-10-03 — **Phase 5 review fix: day counts are worded relative to the data date** ("N Tage vor dem Datenstand"), not computed in the browser — rank, the inactive rule and the 180-day highlight are computed at the data date, so the page stays consistent with itself when it is not rebuilt.
 - 2026-10-03 — **User sign-off on Phase 5** ("merge everything on main … then go on"): Phase 5 closed after the review fixes and merged to `main` by PR. `gh` installed in `~/.local/bin` (no sudo), authenticated per command through the existing git credential.
 - 2026-10-03 — **Publication defaults chosen by the main session** (the user was asked twice, did not answer the individual questions and said "go on"; earlier: "decide what is best") — conservative, each a config switch, **owner may overrule**: (a) names of athletes younger than 18 at the data date are not published (`publish_min_age = 18`; they still count in the ratings; athletes without a birth year cannot be filtered and stay); (b) pages carry `noindex` and a `robots.txt` disallowing crawlers (`site_noindex = true`); (c) objection route stays GitHub issues, plus an optional e-mail shown only when `contact_email` is configured (none invented); (d) athlete URLs: no id registry for now, outdated links fall back to the not-found page with suggestions; (e) **the publication itself (ESV-derived data) is NOT decided by the main session**: workflows are gated on the repository variable `PUBLISH_ENABLED == 'true'` and GitHub Pages is not enabled until the user says so.
+- 2026-10-03 — **Phase 6: age filter rule = not certainly 18** — withheld when `data year - birth year <= publish_min_age` (only the birth year is known; the cohort turning 18 in the data year is withheld too). Real data: 718 athletes / 523 ranked withheld (born 2008+); the narrower "born 2009+" would be 478 / 345. **Owner may overrule** (`publish_min_age`, 0 = everyone).
+- 2026-10-03 — **Phase 6: ranks are re-numbered among the published athletes** (engine rank minus the withheld athletes ahead) — a list with gaps would end at "Rang 2020" with 1,497 rows and every gap would mark a hidden person; rank is identical in ranking, search and profile. Withheld athletes keep their festival rows (W / D / L, grade sum, rating before / after) without id, name, club, Teilverband (`anon` column, schema version unchanged).
+- 2026-10-03 — **Phase 6: `site_noindex` = robots meta tag on every page (injected at build time) + `robots.txt` `Disallow: /`** — known limit: under the project path `/Schwinger-ELO/` crawlers do not read `robots.txt` and JSON files cannot carry the tag; effective only for the HTML pages unless a custom domain is used.
 
 ## Open questions
 - ~~ESAF 2013 completeness~~ — resolved 2026-10-01 by user decision (fetch + merge the interim sheet).

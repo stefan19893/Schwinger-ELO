@@ -10,11 +10,15 @@ from __future__ import annotations
 import dataclasses
 import datetime as _dt
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 ENV_PREFIX = "SCHWINGEN_"
+
+# A plain address only: it is written into meta.json and becomes a mailto: link.
+CONTACT_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 
@@ -129,6 +133,31 @@ class Config:
     identity_uncertain_min_share: float = 0.25
     k_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_K_FACTORS))
 
+    # --- Publication (what the site shows; defaults of 2026-10-03, the owner may overrule) --
+    # Athletes who are not certainly this old at the data date (the date of the last rated
+    # festival) are not published by name: they count in the ratings but get no profile, no
+    # search entry and no rank, and a festival lists them without name. Only the birth year
+    # is known, so the rule is `data year - birth year > publish_min_age` (reached the age
+    # before 1 January of the data year). Athletes without a known birth year cannot be
+    # filtered and stay. 0 publishes everyone.
+    publish_min_age: int = 18
+    # `<meta name="robots" content="noindex">` on every page plus a robots.txt.
+    site_noindex: bool = True
+    # Non-public route for corrections and objections, shown on the about page beside the
+    # GitHub issues link. Empty = nothing is shown. No address is invented here.
+    contact_email: str = ""
+
+    # --- Deploy guard (`check-site`) -----------------------------------------
+    # A build may be this much smaller than the last accepted one (meta.json counts) before
+    # `check-site` fails. Festivals and bouts only grow (small corrections aside); athletes
+    # shrink a little when identities are merged; the number of ranked athletes moves with
+    # the season (the inactive rule is applied at the data date).
+    guard_max_drop: float = 0.02
+    guard_max_drop_ranked: float = 0.15
+    # `crawl` / `all` refuse to run without the state of earlier runs (festivals in the db,
+    # cached responses): a cold start would re-request the whole archive. Set in CI.
+    require_state: bool = False
+
     # --- Serve ---------------------------------------------------------------
     host: str = "127.0.0.1"
     port: int = 8000
@@ -227,6 +256,12 @@ def load_config(
     if cfg.provisional_min_bouts < 0 or cfg.provisional_inactive_seasons <= 0:
         raise ValueError("provisional_min_bouts must be >= 0 and "
                          "provisional_inactive_seasons > 0")
+    if not 0 <= cfg.publish_min_age <= 120:
+        raise ValueError("publish_min_age must be within 0..120")
+    if cfg.contact_email and not CONTACT_EMAIL_RE.fullmatch(cfg.contact_email):
+        raise ValueError(f"contact_email {cfg.contact_email!r} is not a plain e-mail address")
+    if not (0 <= cfg.guard_max_drop < 1 and 0 <= cfg.guard_max_drop_ranked < 1):
+        raise ValueError("guard_max_drop / guard_max_drop_ranked must be within 0..1")
     if not 1 <= cfg.port <= 65535:
         raise ValueError(f"port {cfg.port} out of range 1-65535")
     return cfg

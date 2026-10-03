@@ -517,6 +517,10 @@ def cmd_build(cfg: Config, allow_empty: bool = False) -> int:
         log.info("build: %d athletes (%d ranked), %d athlete files, %d festival files",
                  summary.get("athletes", 0), summary.get("ranked", 0),
                  summary.get("history_files", 0), summary.get("fest_files", 0))
+        log.info("build: publish_min_age=%d: %d athletes (%d of them ranked) are not "
+                 "published by name; noindex=%s; contact e-mail %s", cfg.publish_min_age,
+                 summary.get("withheld", 0), summary.get("withheld_ranked", 0),
+                 cfg.site_noindex, "set" if cfg.contact_email else "not set")
     log.info("build: wrote %s (%d files, %.1f MB)", dist, n_files, n_bytes / 1e6)
     return 0
 
