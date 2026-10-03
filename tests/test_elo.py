@@ -6,13 +6,18 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 import math
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
-from src.config import DEFAULT_K_FACTORS, load_config
+from src import cli
+from src.config import Config, DEFAULT_K_FACTORS, load_config
 from src.pipeline import elo_engine as ee
+from src.pipeline import elo_runner as er
 from src.pipeline.elo_engine import EloParams, SchwingElo
 
 K = dict(DEFAULT_K_FACTORS)
@@ -467,3 +472,170 @@ def test_provisional_reasons_combine() -> None:
     h = SchwingElo(params(provisional_min_bouts=5)).run(df).history
     assert h[h["athlete_id"] == "a"]["provisional_reason"].tolist() == [
         "few_bouts", "few_bouts,inactive"]
+
+
+# =========================================================================== task 4: runner / CLI
+def athletes_frame(*rows: tuple[str, str]) -> pd.DataFrame:
+    return pd.DataFrame({"athlete_id": [r[0] for r in rows],
+                         "full_name": [r[0].title() for r in rows],
+                         "evidence": [r[1] for r in rows]})
+
+
+def cfg_with(**kw: object) -> Config:
+    return load_config(overrides=kw, env={})
+
+
+def test_identity_uncertainty_marker() -> None:
+    athletes = athletes_frame(("a", "unique_name"), ("b", "namesakes=2;ambiguous_rows=12"),
+                              ("c", "namesakes=2;ambiguous_rows=1"), ("d", "not_a_name"),
+                              ("e", "unique_name"))
+    im = pd.DataFrame({
+        "athlete_raw_id": [f"r{i}" for i in range(40)],
+        "athlete_id": ["a"] * 10 + ["b"] * 20 + ["c"] * 3 + ["d"] + ["e"] * 6,
+        "confidence": [0.9] * 10 + [0.4] * 12 + [0.9] * 8 + [0.3, 0.9, 0.9] + [0.0]
+        + [0.4] + [0.85] * 5})
+    out = er.identity_uncertainty(athletes, im).set_index("athlete_id")
+    assert out["identity_rows"].to_dict() == {"a": 10, "b": 20, "c": 3, "d": 1, "e": 6}
+    assert out["identity_low_conf_rows"].to_dict() == {"a": 0, "b": 12, "c": 1, "d": 1, "e": 1}
+    assert out.loc["b", "identity_low_conf_share"] == pytest.approx(0.6)
+    assert out["identity_uncertain"].to_dict() == {
+        "a": False, "b": True, "c": True, "d": True, "e": False}  # c: 1 of 3 rows >= 25 %
+    assert out.loc["b", "identity_flags"] == "namesakes=2;ambiguous_rows=12"
+    none = er.identity_uncertainty(athletes, None)
+    assert not none["identity_uncertain"].any() and (none["identity_rows"] == 0).all()
+
+
+def test_drop_low_confidence_bouts() -> None:
+    bouts = frame(bout("a", "b"), bout("a", "c"), bout("b", "c"))
+    bouts["athlete_a_raw_id"] = ["1-a", "1-a", "1-b"]
+    bouts["athlete_b_raw_id"] = ["1-b", "1-c", "1-c"]
+    im = pd.DataFrame({"athlete_raw_id": ["1-a", "1-b", "1-c"], "confidence": [0.9, 0.4, 0.85]})
+    kept = er.drop_low_confidence_bouts(bouts, im)
+    assert kept[["athlete_a_id", "athlete_b_id"]].values.tolist() == [["a", "c"]]
+
+
+def test_ranking_excludes_garbage_unrated_provisional() -> None:
+    bouts = frame(
+        *[bout("champ", "regular", date=f"2025-0{m}-10", fest=m, gang=g)
+          for m in (5, 6) for g in (1, 2, 3)],
+        bout("regular", "rookie", date="2025-06-10", fest=6, gang=4),
+        bout("x", "regular", "WIN_B", date="2025-06-10", fest=6, gang=5),
+        *[bout("retired", "old", date="2015-06-10", fest=20 + g, gang=g) for g in range(1, 7)])
+    athletes = athletes_frame(("champ", "unique_name"), ("regular", "unique_name"),
+                              ("rookie", "unique_name"), ("x", "not_a_name"),
+                              ("retired", "unique_name"), ("old", "unique_name"),
+                              ("ghost", "unique_name"))
+    cfg = cfg_with(provisional_min_bouts=5, mov_alpha=0.0)
+    result, table, seasons = er.compute(bouts, athletes, None, cfg)
+    t = table.set_index("athlete_id")
+    assert t["ranked"].to_dict() == {"champ": True, "regular": True, "rookie": False,
+                                     "x": False, "retired": False, "old": False, "ghost": False}
+    assert t.loc["champ", "rank"] == 1 and t.loc["regular", "rank"] == 2
+    assert t["rank"].isna().sum() == 5
+    assert t.loc["rookie", "provisional_reason"] == "few_bouts"
+    assert t.loc["retired", "provisional_reason"] == "inactive"
+    assert t.loc["x", "provisional_reason"] == "few_bouts"   # rated, never ranked
+    assert pd.isna(t.loc["ghost", "rating"]) and t.loc["ghost", "n_bouts"] == 0
+    assert not t.loc["ghost", "provisional"]
+    assert t.loc["champ", "rating"] == pytest.approx(result.ratings["champ"])
+    assert t.loc["champ", "rating_peak"] == pytest.approx(t.loc["champ", "rating"])
+    assert pd.isna(t.loc["rookie", "rating_peak"])            # never past the threshold
+    assert t.loc["retired", "days_inactive"] > 3000
+    # season table: 2015 ranks the two veterans, 2025 the two regulars
+    s = seasons.set_index(["season", "athlete_id"])
+    assert s.loc[(2015, "retired"), "rank"] == 1 and s.loc[(2015, "old"), "rank"] == 2
+    assert s.loc[(2025, "champ"), "rank"] == 1 and pd.isna(s.loc[(2025, "rookie"), "rank"])
+    assert pd.isna(s.loc[(2025, "x"), "rank"])
+    assert s.loc[(2025, "champ"), "n_bouts"] == 6 and s.loc[(2025, "champ"), "n_festivals"] == 2
+
+
+def test_burn_in_seasons_are_rated_but_not_ranked() -> None:
+    bouts = frame(*[bout("a", "b", date=f"{y}-06-10", fest=y, gang=1) for y in (2011, 2012)])
+    cfg = cfg_with(provisional_min_bouts=0, elo_first_ranked_season=2012)
+    result, table, seasons = er.compute(bouts, athletes_frame(("a", "x"), ("b", "x")), None, cfg)
+    s = seasons.set_index(["season", "athlete_id"])
+    assert s.loc[(2011, "a"), "burn_in"] and pd.isna(s.loc[(2011, "a"), "rank"])
+    assert s.loc[(2011, "a"), "rating_end"] == pytest.approx(1508.0)   # still rated
+    assert s.loc[(2012, "a"), "rank"] == 1 and not s.loc[(2012, "a"), "burn_in"]
+    assert table.set_index("athlete_id").loc["a", "peak_fest_id"] == 2012  # peak outside burn-in
+
+
+def test_bouts_with_unknown_athletes_are_an_error() -> None:
+    with pytest.raises(ValueError, match="missing from athletes.parquet"):
+        er.compute(frame(bout("a", "b")), athletes_frame(("a", "x")), None, cfg_with())
+
+
+@pytest.fixture(scope="module")
+def sample_run(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``python -m src.cli elo --sample`` in a fresh data dir (builds db + Parquet)."""
+    data = tmp_path_factory.mktemp("elo-sample") / "data"
+    mp = pytest.MonkeyPatch()
+    for var in [v for v in os.environ if v.startswith("SCHWINGEN_")]:
+        mp.delenv(var)
+    try:
+        assert cli.main(["elo", "--sample", "--data-dir", str(data)]) == 0
+    finally:
+        mp.undo()
+    return data / "processed"
+
+
+def test_cli_elo_sample_writes_rating_history(sample_run: Path) -> None:
+    ratings = pd.read_parquet(sample_run / "ratings.parquet")
+    # exit criterion: athlete, date, fest_id, rating_before, rating_after
+    assert list(ratings.columns)[:5] == ["athlete_id", "date", "fest_id", "rating_before",
+                                         "rating_after"]
+    assert pq.read_schema(sample_run / "ratings.parquet").equals(er.RATINGS_SCHEMA)
+    bouts = pd.read_parquet(sample_run / "bouts.parquet")
+    bouts = bouts[bouts["elo_eligible"]]
+    assert ratings["n_bouts"].sum() == 2 * len(bouts) > 0
+    assert set(ratings["fest_id"]) == set(bouts["fest_id"])
+    assert set(ratings["athlete_id"]) == set(bouts["athlete_a_id"]) | set(bouts["athlete_b_id"])
+    assert not ratings.duplicated(["athlete_id", "fest_id"]).any()
+    assert ratings[["rating_before", "rating_after"]].notna().all().all()
+    change = (ratings["rating_after"] - ratings["rating_before"]).groupby(ratings["fest_id"]).sum()
+    assert np.allclose(change, 0.0, atol=1e-8)
+    first = ratings.groupby("athlete_id").head(1)
+    assert (first["rating_before"] == 1500.0).all()
+
+
+def test_cli_elo_sample_athlete_and_season_tables(sample_run: Path) -> None:
+    table = pd.read_parquet(sample_run / "athlete_ratings.parquet")
+    athletes = pd.read_parquet(sample_run / "athletes.parquet")
+    seasons = pd.read_parquet(sample_run / "season_ratings.parquet")
+    assert pq.read_schema(sample_run / "athlete_ratings.parquet").equals(
+        er.ATHLETE_RATINGS_SCHEMA)
+    assert pq.read_schema(sample_run / "season_ratings.parquet").equals(er.SEASON_RATINGS_SCHEMA)
+    assert sorted(table["athlete_id"]) == sorted(athletes["athlete_id"])
+    ranked = table[table["ranked"]]
+    assert len(ranked) > 0 and sorted(ranked["rank"]) == list(range(1, len(ranked) + 1))
+    assert (ranked["n_bouts"] > 0).all() and not ranked["provisional"].any()
+    assert ranked.sort_values("rank")["rating"].is_monotonic_decreasing
+    assert table.loc[table["n_bouts"] == 0, "rating"].isna().all()
+    assert set(seasons["season"]) == {2011, 2019, 2024, 2025}
+    for _, part in seasons[seasons["ranked"]].groupby("season"):
+        assert sorted(part["rank"]) == list(range(1, len(part) + 1))
+    # a known result of the sample: the ESAF 2019 Schlussgang winner leads that festival
+    esaf = pd.read_parquet(sample_run / "ratings.parquet").query("fest_id == 24110")
+    best = esaf.assign(gain=esaf["rating_after"] - esaf["rating_before"]).nlargest(15, "gain")
+    names = set(athletes.set_index("athlete_id").loc[best["athlete_id"], "full_name"])
+    assert "Stucki Christian" in names
+
+
+def test_cli_elo_is_byte_identical_on_rerun(sample_run: Path) -> None:
+    names = ["ratings.parquet", "athlete_ratings.parquet", "season_ratings.parquet"]
+    before = {n: (sample_run / n).read_bytes() for n in names}
+    assert cli.main(["elo", "--sample", "--data-dir", str(sample_run.parent)]) == 0
+    assert {n: (sample_run / n).read_bytes() for n in names} == before
+
+
+def test_cli_elo_without_clean_outputs_fails(tmp_path: Path,
+                                             caplog: pytest.LogCaptureFixture) -> None:
+    assert cli.main(["elo", "--data-dir", str(tmp_path / "nothing")]) == 1
+    assert "run `clean` first" in caplog.text
+
+
+def test_invalid_elo_configuration_is_rejected() -> None:
+    with pytest.raises(ValueError, match="update mode"):
+        load_config(env={"SCHWINGEN_ELO_UPDATE_MODE": "bogus"})
+    with pytest.raises(ValueError, match="provisional_min_bouts"):
+        load_config(env={"SCHWINGEN_PROVISIONAL_MIN_BOUTS": "-1"})

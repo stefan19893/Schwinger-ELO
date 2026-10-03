@@ -162,7 +162,7 @@ def test_sample_uses_separate_data_dir() -> None:
 @pytest.mark.parametrize("argv, warned", [
     (["parse", "--skip-crawl"], "--skip-crawl"),
     (["crawl", "--sample", "--skip-crawl"], "--skip-crawl"),  # --sample: stay offline
-    (["elo", "--refresh"], "--refresh"),
+    (["elo", "--sample", "--refresh"], "--refresh"),  # --sample: builds its own inputs
 ])
 def test_warns_on_ignored_options(argv: list[str], warned: str, tmp_path: Path,
                                   caplog: pytest.LogCaptureFixture) -> None:

@@ -109,6 +109,14 @@ class Config:
     # bouts than provisional_min_bouts.
     provisional_inactive_seasons: float = 1.5
     provisional_min_bouts: int = 0
+    # Seasons (calendar years) before this one are rated but not ranked (burn-in).
+    elo_first_ranked_season: int = 0
+    # Identity uncertainty (Phase 3): identity_map rows with confidence <= this value
+    # are "low confidence"; an athlete is marked uncertain with >= min_rows such rows
+    # or >= min_share of his rows.
+    identity_low_confidence: float = 0.4
+    identity_uncertain_min_rows: int = 10
+    identity_uncertain_min_share: float = 0.25
     k_factors: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_K_FACTORS))
 
     # --- Serve ---------------------------------------------------------------
@@ -202,6 +210,11 @@ def load_config(
         raise ValueError("parse_min_pair_rate must be within 0..1")
     if cfg.retry_after_max <= 0:
         raise ValueError("retry_after_max must be > 0")
+    from src.pipeline.elo_engine import EloParams
+    EloParams.from_config(cfg)  # validates the ELO parameters (raises ValueError)
+    if cfg.provisional_min_bouts < 0 or cfg.provisional_inactive_seasons <= 0:
+        raise ValueError("provisional_min_bouts must be >= 0 and "
+                         "provisional_inactive_seasons > 0")
     if not 1 <= cfg.port <= 65535:
         raise ValueError(f"port {cfg.port} out of range 1-65535")
     return cfg

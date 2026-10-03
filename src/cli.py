@@ -440,7 +440,46 @@ def _sample_db_ready(cfg: Config) -> bool:
 
 
 def cmd_elo(cfg: Config) -> int:
-    log.warning("elo: not implemented yet (Phase 4) - out=%s", cfg.processed_dir)
+    """Rate all eligible bouts: data/processed/{bouts,athletes,identity_map}.parquet ->
+    ratings.parquet (history), athlete_ratings.parquet, season_ratings.parquet."""
+    import time
+
+    from src.pipeline.elo_runner import run_elo, top_table
+
+    if cfg.sample and not (cfg.processed_dir / "bouts.parquet").is_file():
+        log.info("elo: no --sample Parquet files in %s, running `clean` first",
+                 cfg.processed_dir)
+        rc = cmd_clean(cfg)
+        if rc:
+            return rc
+    missing = [n for n in ("bouts.parquet", "athletes.parquet")
+               if not (cfg.processed_dir / n).is_file()]
+    if missing:
+        log.error("elo: %s not found in %s - run `clean` first", ", ".join(missing),
+                  cfg.processed_dir)
+        return 1
+    t0 = time.perf_counter()
+    out = run_elo(cfg)
+    p, h, table = out.result.params, out.ratings, out.athletes
+    log.info("elo: mode=%s, alpha=%g, baseline_diff=%g, lambda in [%g, %g], delta=%g, "
+             "provisional below %d bouts / after %.1f seasons, ranked from season %d",
+             p.update_mode, p.mov_alpha, p.mov_baseline_diff, p.mov_lambda_min,
+             p.mov_lambda_max, p.reversion_delta, p.provisional_min_bouts,
+             p.provisional_inactive_seasons, cfg.elo_first_ranked_season)
+    log.info("elo: %d bouts at %d festivals, %d athletes rated, %d history rows, as of %s "
+             "(%.1f s)", len(out.result.bouts), h["fest_id"].nunique(),
+             len(out.result.ratings), len(h),
+             out.result.as_of.date() if out.result.as_of is not None else "-",
+             time.perf_counter() - t0)
+    log.info("elo: %d athletes ranked; not ranked: %d without bouts, %d provisional "
+             "(%d few bouts, %d inactive), %d identity-uncertain among the ranked",
+             int(table["ranked"].sum()), int((table["n_bouts"] == 0).sum()),
+             int(table["provisional"].sum()),
+             int(table["provisional_reason"].str.contains("few_bouts").sum()),
+             int(table["provisional_reason"].str.contains("inactive").sum()),
+             int((table["ranked"] & table["identity_uncertain"]).sum()))
+    for line in top_table(table, 10):
+        log.info("elo:   %s", line)
     return 0
 
 
@@ -538,7 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="re-parse festivals even if PDF and parser version are unchanged")
     add("clean", "identity resolution -> data/processed/{bouts,athletes,festivals,"
                  "identity_map,bout_rejects}.parquet (reads SQLite read-only)")
-    add("elo", "compute ratings -> data/processed/ratings.parquet")
+    add("elo", "compute ratings -> data/processed/{ratings,athlete_ratings,"
+               "season_ratings}.parquet")
     add("build", "write the static site to dist/")
     sp = add("serve", "serve dist/ over HTTP")
     sp.add_argument("--port", type=int, default=None, help="port (default 8000)")
