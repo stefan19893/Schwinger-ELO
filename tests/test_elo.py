@@ -278,3 +278,76 @@ def test_params_validation_and_config() -> None:
     assert p.k_factors == K and p.initial == 1500 and p.scale == 400
     assert p.replace(update_mode="gang").update_mode == "gang"
     assert math.isclose(p.inactive_days, 1.5 * 365.25)
+
+
+# =========================================================================== task 2: MoV
+def test_mov_multiplier_formula() -> None:
+    lam = ee.mov_multiplier
+    assert lam(10.0, 8.75, alpha=0.4, baseline_diff=1.25) == pytest.approx(1.0)
+    assert lam(10.0, 8.5, alpha=0.4, baseline_diff=1.25) == pytest.approx(1.1)   # Plattwurf
+    assert lam(9.75, 8.75, alpha=0.4, baseline_diff=1.25) == pytest.approx(0.9)  # minimal win
+    assert lam(10.0, 8.5, alpha=0.0, baseline_diff=1.25) == 1.0                  # neutral
+    out = lam(np.array([10.0, 9.75]), np.array([8.5, 8.75]), 0.4, 1.25)
+    assert out == pytest.approx([1.1, 0.9])
+
+
+def test_mov_multiplier_is_clamped() -> None:
+    lam = ee.mov_multiplier
+    assert lam(10.0, 8.5, alpha=10.0, baseline_diff=1.25) == 2.0
+    assert lam(9.75, 8.75, alpha=10.0, baseline_diff=1.25) == 0.5
+    assert lam(8.5, 10.0, alpha=1.0, baseline_diff=1.25) == 0.5  # misprinted grades stay sane
+    assert lam(10.0, 8.5, 10.0, 1.25, lambda_min=0.8, lambda_max=1.2) == 1.2
+    with pytest.raises(ValueError, match="mov_lambda"):
+        params(mov_lambda_min=0.0)
+    with pytest.raises(ValueError, match="mov_lambda"):
+        params(mov_lambda_max=0.9)
+
+
+@pytest.mark.parametrize("ga, gb", [(None, 8.5), (10.0, None), (None, None),
+                                    (float("nan"), 8.5)])
+def test_null_grade_counts_with_outcome_only(ga: float | None, gb: float | None) -> None:
+    """extra_bout / grade_missing / one_sided bouts: lambda = 1 (spec §4.2.2)."""
+    r = final(frame(bout("a", "b", "WIN_A", ga=ga, gb=gb)), mov_alpha=0.8,
+              mov_baseline_diff=1.0)
+    assert r["a"] == pytest.approx(1508.0)
+    assert ee.mov_multiplier(ga if ga is not None else np.nan,
+                             gb if gb is not None else np.nan, 0.8, 1.0) == 1.0
+
+
+def test_mov_scales_wins() -> None:
+    kw = dict(mov_alpha=0.4, mov_baseline_diff=1.25)
+    assert final(frame(bout("a", "b", ga=10.0, gb=8.5)), **kw)["a"] == pytest.approx(1508.8)
+    assert final(frame(bout("a", "b", ga=9.75, gb=8.75)), **kw)["a"] == pytest.approx(1507.2)
+    assert final(frame(bout("a", "b", ga=10.0, gb=8.75)), **kw)["a"] == pytest.approx(1508.0)
+
+
+def test_mov_uses_the_winners_margin_whichever_side_won() -> None:
+    kw = dict(mov_alpha=0.4, mov_baseline_diff=1.25)
+    win_b = final(frame(bout("a", "b", "WIN_B", ga=8.5, gb=10.0)), **kw)
+    assert win_b["b"] == pytest.approx(1508.8) and win_b["a"] == pytest.approx(1491.2)
+
+
+@pytest.mark.parametrize("ga, gb", [(8.75, 8.75), (9.0, 8.75), (8.75, 9.0), (9.0, 9.0)])
+def test_mov_does_not_apply_to_draws(ga: float, gb: float) -> None:
+    elo = SchwingElo(params(mov_alpha=0.8, mov_baseline_diff=0.0))
+    elo.ratings = {"a": 1700.0, "b": 1500.0}
+    delta = elo.rate_bout("a", "b", "DRAW", ga, gb)
+    assert delta == pytest.approx(16 * (0.5 - ee.expected_score(1700, 1500)))
+    assert ee.bout_multiplier(0.5, ga, gb, elo.params) == 1.0
+
+
+def test_mov_keeps_the_bout_zero_sum_and_reference_agrees() -> None:
+    elo = SchwingElo(params(mov_alpha=0.6, mov_baseline_diff=1.1))
+    elo.ratings = {"a": 1480.0, "b": 1655.0}
+    elo.rate_bout("a", "b", "WIN_A", 10.0, 8.5, "ESAF")
+    assert sum(elo.ratings.values()) == pytest.approx(1480 + 1655)
+    lam = 1 + 0.6 * (1.5 - 1.1)
+    assert elo.ratings["a"] == pytest.approx(
+        1480 + 48 * lam * (1 - 1 / (1 + 10 ** (175 / 400))))
+
+
+def test_run_reports_lambda_per_bout() -> None:
+    df = frame(bout("a", "b", ga=10.0, gb=8.5), bout("c", "d", "DRAW", ga=9.0, gb=8.75),
+               bout("e", "f", "WIN_B", ga=8.75, gb=9.75), bout("g", "h", ga=None, gb=8.5))
+    res = SchwingElo(params(mov_alpha=0.4, mov_baseline_diff=1.25)).run(df)
+    assert res.bouts["mov_lambda"].tolist() == pytest.approx([1.1, 1.0, 0.9, 1.0])

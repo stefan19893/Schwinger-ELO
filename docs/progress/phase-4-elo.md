@@ -14,14 +14,15 @@
 
 ## Tasks
 - [x] 1. Core update (expected score, win/draw/loss, K by category) + unit tests
-- [ ] 2. MoV multiplier + tests
-- [ ] 3. Season mean reversion + inactivity/provisional flag + tests
+- [x] 2. MoV multiplier + tests
+- [~] 3. Season mean reversion + inactivity/provisional flag + tests
 - [ ] 4. Wire `cli elo`; run over full history, write `ratings.parquet`
 - [ ] 5. Calibrate `alpha` / `BaselineDiff` (e.g. predictive log-loss on later seasons); log decision
 - [ ] 6. Sanity tests with known elite athletes; summarize top-20 per era in handoff notes
 
 ## Handoff notes
 - 2026-10-03 — **Task 1 done** (elo-modeler). `src/pipeline/elo_engine.py`: `EloParams` (frozen, `from_config`), pure formulas (`expected_score`, `mov_multiplier`, `bout_multiplier`, `revert_to_mean`, `rating_year`, `k_factor`), `SchwingElo` with the step-by-step reference (`rate_bout`, `apply_season_reversion`) and the vectorised `run(bouts) -> EloResult` (`history` = one row per athlete and festival with `rating_before` / `rating_after` + `season`, `category`, `n_bouts`, `score`, `expected`, `bouts_before`, `days_inactive`, `provisional`, `provisional_reason`; `bouts` = per-bout expected scores for evaluation; `ratings`; `as_of`). Four update modes (`festival` / `phase` / `gang` / `sequential`, config `elo_update_mode`) so task 5 can compare them; default `festival` for now. The whole file (incl. MoV and reversion code) was written in one go; tasks 2 and 3 add their tests and any fixes. `src/config.py`: new `elo_update_mode`, `elo_phase_split_gang`, `mov_lambda_min/max`, `provisional_min_bouts`. `tests/test_elo.py`: 40 tests (formula, W/D/L, K per category, zero-sum, A/B symmetry incl. partially mirrored tables, row-order independence, sequential run == bout-by-bout reference, festival mode independent of `gang_nr`, input validation). First real-data smoke run: 491,597 eligible bouts, 173,153 history rows, ~1.2 s per run in every mode. Unknown category / outcome, self-bouts and duplicate bout ids raise `ValueError` (CLI turns that into exit 1).
+- 2026-10-03 — **Task 2 done.** MoV multiplier `lambda = clamp(1 + alpha * (grade_winner - grade_loser - baseline_diff), mov_lambda_min, mov_lambda_max)` (`mov_multiplier` / `bout_multiplier` in `elo_engine.py`; clamp 0.5..2.0 in `src/config.py`): wins only, always the winner's grade minus the loser's (so WIN_B bouts mirror WIN_A bouts), draws and bouts with a NULL grade get lambda = 1; the delta is applied with opposite signs, so a bout stays zero-sum. 14 new tests. `alpha` / `baseline_diff` are still the neutral placeholders (0 / 0) until task 5. Data note for task 5: among graded wins the margin takes only three values — 1.00 (9.75 : 8.75, 4.4 %), 1.25 (10 : 8.75 or 9.75 : 8.50, 45.4 %), 1.50 (10 : 8.50, 48.9 %) — plus ~30 misprints (margins <= 0 or 1.75) that the clamp keeps harmless.
 
 ## Known inputs from Phase 3 review
 Notes only (2026-10-03, phase-reviewer + review fixes; data = `data/processed/*.parquet` written by `python -m src.cli clean`, resolver `evidence`; 7,397 athletes, 491,676 bouts, 174,176 raw rows).
