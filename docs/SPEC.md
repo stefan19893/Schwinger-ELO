@@ -134,6 +134,7 @@ Schwinger-ELO/
 │       └── history/history_<athlete_id>.json   # One athlete: profile, seasons, rating history (on demand)
 ├── pyproject.toml                  # Project metadata + pytest config
 ├── requirements.txt
+├── requirements-lock.txt            # exact versions + wheel hashes for the publishing workflows (scripts/make_lock.py)
 └── README.md
 ```
 
@@ -209,7 +210,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/`. Exits 1 and writes nothing when the rating data are missing or empty (a deployment must never publish an empty site); `--allow-empty` writes the pages with empty data files instead (`meta.empty = true`). With `--sample` the sample pipeline is run first if its data are missing |
-| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
+| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced); a filter that withholds nobody is fatal; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli state-export OUT` / `state-import SRC` | Bundle / restore the pipeline state (`data/raw`, database, Parquet files, guard baseline) as one verified `.tar.gz`; not for publication |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |
@@ -218,7 +219,7 @@ Global options:
 - `--sample`: use the committed offline dataset in `tests/fixtures/sample/` instead of the network. The full pipeline finishes in well under a minute. Outputs go to `data/sample/` (unless `--data-dir` is given) so a sample run never overwrites real data.
 - `--data-dir`: use a different data directory.
 - `--skip-crawl`: in `all`, use only data that is already cached.
-- `--require-state`: `crawl` / `all` exit 1 before the first request unless the data directory holds the state of earlier runs (database with festivals and bouts, cache with ≥ 90 % of the known statistic PDFs). Always set in the workflows: a runner without state must fail, not re-crawl the archive.
+- `--require-state`: `crawl` / `all` exit 1 before the first request unless the data directory holds the state of earlier runs (database with festivals and bouts; cache with ≥ 90 % each of the known statistic PDFs, ranking PDFs, festival listings, event-portrait listings and portraits). Always set in the workflows: a runner without state must fail, not re-crawl the archive.
 
 Configuration precedence: CLI flag > environment variable (`SCHWINGEN_*`) > defaults in `src/config.py`.
 
@@ -274,9 +275,9 @@ Since GitHub Pages serves static files only:
 
 **As implemented (Phase 6, decisions of 2026-10-03 in `docs/progress/STATE.md`; owner checklist in `README.md`):**
 - **Nothing is published without the owner's opt-in:** every job of `deploy_pages.yml` and `scrape_and_update.yml` runs only when the repository variable `PUBLISH_ENABLED` is `true` (and the ref is `main`). `ci.yml` (tests, sample build) is not gated; it neither crawls nor deploys.
-- **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name; ranks are re-numbered among the published), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
+- **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name and their festival rows carry no rating; ranks are re-numbered among the published), `publish_unknown_recent_seasons = 3` (the same for athletes without a birth year whose first season is within the last three of the data year), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
 - **State between runs:** one bundle (`state-export` / `state-import`) as an asset of a *draft* release `pipeline-state` — durable, not publicly downloadable, seeded from the owner's machine. Runs upload a new generation and delete the older ones afterwards. A missing state fails the run before any request (`--require-state`).
-- **Sequence of the scheduled run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload → Pages artifact → `actions/deploy-pages@v4`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
+- **Sequence of the scheduled run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → Pages artifact → `actions/deploy-pages@v4`. The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
 - **Deploy guard:** see `check-site` in §5; the baseline travels inside the state bundle.
 
 ---
