@@ -137,7 +137,8 @@ def cache_coverage(cfg: Config) -> dict[str, tuple[int, int]]:
             n_portraits = 0
     finally:
         conn.close()
-    with client_from_config(cfg, offline=True) as client:
+    # read what is there, also in a `--refresh` run (which would skip the cache)
+    with client_from_config(dataclasses.replace(cfg, refresh=False), offline=True) as client:
         def cached(url: str) -> bool:
             return all(p.is_file() for p in client.cache_paths(url))
 
@@ -178,7 +179,7 @@ def state_problems(cfg: Config) -> list[str]:
         for kind, (cached, expected) in cache_coverage(cfg).items():
             if expected and cached < MIN_CACHE_COVERAGE * expected:
                 problems.append(
-                    f"only {cached} of the {expected} {kind} of the known festivals are in "
+                    f"only {cached} of the {expected} {kind} the database knows are in "
                     f"{cfg.raw_dir} (need {MIN_CACHE_COVERAGE:.0%}) - a crawl would request "
                     f"the rest again")
     return problems
