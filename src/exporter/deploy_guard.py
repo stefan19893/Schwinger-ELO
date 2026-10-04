@@ -25,6 +25,9 @@ Never acceptable (no override):
   one), or more rated rows at a festival than the athlete's history file counts bouts
   there. The file must say nothing about bouts against athletes who are not published; a
   row or a key too many is how such a statement would look;
+* a history or bouts file whose ``build`` stamp is not the one of ``meta.json``: the site
+  was put together from different builds, and the comparison page would refuse to draw
+  the Gänge of those athletes;
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -80,7 +83,7 @@ REQUIRED_FILES = ("index.html", "athlete.html", "compare.html", "fests.html", "a
 # the contract of data/bouts/bouts_<id>.json as the exporter writes it (static_builder:
 # BOUT_SIDE_COLS, OTHER_FEST_COLS, B_UNRATED; a test keeps the two in step). Kept here so
 # that the guard judges the files by its own list, not by whatever the build produced.
-BOUT_KEYS = frozenset({"id", "opps", "names", "unc", "cols", "fests", "other"})
+BOUT_KEYS = frozenset({"id", "build", "opps", "names", "unc", "cols", "fests", "other"})
 BOUT_COLS = ["gang", "opp", "res", "g", "go", "flags", "d"]
 BOUT_OTHER_COLS = ["id", "name", "date", "cat"]
 BOUT_UNRATED = 16
@@ -156,6 +159,7 @@ class _Seen:
     """What the readers of :data:`ATHLETE_REFERENCES` share: the published names, and per
     athlete the rated bouts of each festival as his history file counts them."""
     names: dict[str, Any]
+    build: Any = None       # meta.json's stamp; every history / bouts file carries it
     fest_bouts: dict[str, dict[int, int]] = field(default_factory=dict)
 
 
@@ -215,6 +219,8 @@ def _bout_file_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
         raise ValueError("the file holds another athlete's bouts")
     if set(obj) != BOUT_KEYS:
         raise ValueError("keys beyond or short of the contract")
+    if obj["build"] != seen.build:
+        raise ValueError("not the build of meta.json")
     opps, names, unc = obj["opps"], obj["names"], obj["unc"]
     # the opponents' names stand next to their ids: one name per id, nothing else (a
     # name without an id could be anybody's and would escape the id check of the caller)
@@ -268,6 +274,8 @@ def _bout_file_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
 def _history_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     if f"history_{obj['id']}" != stem:
         raise ValueError("the file holds another athlete's history")
+    if obj["build"] != seen.build:
+        raise ValueError("not the build of meta.json")
     cols = obj["history"]["cols"]
     fest, n = cols.index("fest_id"), cols.index("n")
     seen.fest_bouts[obj["id"]] = {r[fest]: r[n] for r in obj["history"]["rows"]
@@ -295,7 +303,8 @@ def _reference_problems(dist: Path) -> tuple[list[str], int]:
     people = _published(dist)
     if people is None:
         return [], 0
-    ids, seen = set(people), _Seen(names=people)
+    stamp = (read_meta(dist / "data" / "meta.json") or {}).get("build")
+    ids, seen = set(people), _Seen(names=people, build=stamp)
     problems, n_read = [], 0
     for name, pattern, reader in ATHLETE_REFERENCES:
         path = dist / "data" / name

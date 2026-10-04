@@ -145,6 +145,7 @@
       var id = e.id;
       SE.getJSON('data/bouts/bouts_' + id + '.json').then(function (b) {
         e.bouts = b;
+        e.sameBuild = undefined;
       }).catch(function (err) {
         e.boutsError = err;
       }).then(function () {
@@ -496,9 +497,38 @@
   }
 
   /* The bouts file carries the contribution per bout (older cached copies do not). */
-  function gangReady(e) {
+  function gangShape(e) {
     return !!(e.bouts && e.bouts.cols && e.bouts.cols.indexOf('d') === 6 && e.bouts.names);
   }
+
+  /* History file and bouts file are fetched separately, and a browser can hold one of
+   * them from an older build of the data. Both carry the stamp of their build; only with
+   * the same stamp may they be combined. Otherwise a festival the older bouts file lacks
+   * would be described as bouts "against unpublished opponents" - a false statement.
+   * Belt and braces: files with the same stamp that still contradict each other (more
+   * listed bouts than the festival has, or rated bouts at a festival the history does
+   * not have) are not combined either. */
+  function sameBuild(e) {
+    if (e.sameBuild === undefined) {
+      var okay = gangShape(e) && typeof e.bouts.build === 'string' && !!e.bouts.build && e.bouts.build === e.h.build;
+      if (okay) {
+        var n = {};
+        e.rows.forEach(function (r) { n[r.fest_id] = r.n; });
+        okay = e.bouts.fests.every(function (f) {
+          var rated = f[1].filter(function (g) { return g[6] !== null && g[6] !== undefined; }).length;
+          return rated <= (n[f[0]] || 0);
+        });
+      }
+      e.sameBuild = okay;
+    }
+    return e.sameBuild;
+  }
+
+  /* The Gänge of this athlete can be drawn. */
+  function gangReady(e) { return gangShape(e) && sameBuild(e); }
+
+  /* His bouts file is there but does not belong to his history file. */
+  function gangStale(e) { return !!e.bouts && !gangReady(e); }
 
   /* Bout axis with the Gänge of every festival. The engine rates a festival as a whole:
    * every bout counts against the ratings *before* the festival, and only the sum becomes
@@ -524,8 +554,7 @@
         reversion.push([c, prev.after], [c, r.before], [c, null]);
       }
       if (gap || prev === null) { line.push([c, r.before]); }
-      var list = byFest[r.fest_id] || [];
-      if (list.length > r.n) { list = []; }          // files of different builds: festival only
+      var list = byFest[r.fest_id] || [];      // never more than r.n: sameBuild()
       var hidden = r.n - list.length, v = r.before, sum = 0, seen = {}, doubt = false;
       list.forEach(function (g) {
         if ((g[5] & B_GANG_UNCERTAIN) || seen[g[0]]) { doubt = true; }
@@ -922,11 +951,10 @@
       early.map(startText).join(', ') + ': ';
     if (ui.x === 'bouts' && shown.some(function (e) { return seriesOf(e).perGang; })) {
       var unsure = 0, hidden = false;
-      var without = shown.filter(function (e) {
+      shown.forEach(function (e) {
         var s = seriesOf(e);
         unsure += s.unsure || 0;
         hidden = hidden || !!(s.rest && s.rest.length);
-        return !s.perGang;
       });
       html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
         '<strong>Die Wertung wird pro Fest berechnet, nicht pro Gang:</strong> Alle Gänge eines Fests zählen gegen die Wertungen vor dem Fest, und erst nach dem Fest gilt die neue Wertung. ' +
@@ -942,9 +970,6 @@
           (unsure === 1 ? ' Fest' : ' Festen') + ' der Auswahl ist die Nummer eines Gangs in der Quelle unsicher oder doppelt vergeben. ' +
           'Der Verlauf innerhalb dieser Feste kann anders gewesen sein (im Hinweis zum Fest vermerkt); die Wertung nach dem Fest hängt nicht von der Reihenfolge ab.', 'info') + '</div>';
       }
-      if (without.length) {
-        html += '<div class="mt-2">' + SE.note('Die Gänge von ' + names(without) + ' konnten nicht geladen werden: dort ein Punkt pro Fest. Bitte die Seite neu laden.') + '</div>';
-      }
     }
     if (ui.x === 'bouts' && !html) {
       html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
@@ -953,6 +978,17 @@
         'Alle beginnen beim Startwert 1500. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
     }
     if (ui.x === 'bouts') {
+      /* who is drawn per festival only, and why - said also when that is everybody */
+      var failed = shown.filter(function (e) { return !!e.boutsError && !e.bouts; });
+      var stale = shown.filter(gangStale);
+      if (failed.length) {
+        html += '<div class="mt-2">' + SE.note('Die Gänge von ' + names(failed) + ' konnten nicht geladen werden: dort ein Punkt pro Fest. Bitte die Seite neu laden.') + '</div>';
+      }
+      if (stale.length) {
+        html += '<div class="mt-2">' + SE.note('<strong>Gänge nicht einzeln gezeigt:</strong> ' + names(stale) + '. Die Datei mit den Gängen und die Datei mit dem Verlauf stammen nicht vom selben Datenstand ' +
+          '(der Browser hat eine davon noch aus einem früheren Besuch gespeichert). Statt etwas Falsches zu zeigen, steht dort ein Punkt pro Fest. ' +
+          'Bitte die Seite neu laden; hilft das nicht, in einigen Minuten nochmals.') + '</div>';
+      }
       if (early.length) {
         html += '<div class="mt-2">' + SE.note('<strong>«Gang 1» ist der erste erfasste Gang, nicht zwingend der erste der Laufbahn.</strong> ' + begin +
           'Wahrscheinlich ' + (one ? 'hatte er' : 'hatten sie') + ' schon Gänge davor, die nicht erfasst sind – sicher ist das nicht. ' +

@@ -485,6 +485,8 @@ TAMPERED = {
     "other columns": lambda o: o["cols"].append("exp"),
     "an extra key in the other festivals": lambda o: o["other"].update(hidden=[1]),
     "a festival entry with a third value": lambda o: o["fests"][0].append({"rest": -3.1}),
+    "another build's stamp": lambda o: o.update(build="0123456789ab"),
+    "no stamp": lambda o: o.pop("build"),
 }
 
 
@@ -531,7 +533,9 @@ def test_untampered_bout_files_pass_and_are_held_against_the_history(built: Path
     dist = tmp_path / "dist"
     people = dg._published(dist)
     assert people and all(isinstance(n, str) and n for n in people.values())
-    seen = dg._Seen(names=people)
+    stamp = json.loads((dist / "data" / "meta.json").read_bytes())["build"]
+    assert isinstance(stamp, str) and len(stamp) == 12
+    seen = dg._Seen(names=people, build=stamp)
     for p in sorted((dist / "data" / "history").iterdir()):
         dg._history_ids(json.loads(p.read_bytes()), p.stem, seen)
     assert len(seen.fest_bouts) == len(people)

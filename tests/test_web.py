@@ -345,6 +345,13 @@ def test_comparison_gang_rules() -> None:
     assert "if (list.length < 2 && ui.x !== 'bouts') { return; }" in load
     # an older cached bouts file has no contributions: the axis falls back to festivals
     assert "e.bouts.cols.indexOf('d') === 6" in js
+    # history and bouts file of different builds (a cached copy) are never combined: the
+    # stamp must be there and equal, and the files must not contradict each other
+    same = js[js.index("function sameBuild"):js.index("function gangStale")]
+    assert "typeof e.bouts.build === 'string' && !!e.bouts.build && e.bouts.build === e.h.build" in same
+    assert "return rated <= (n[f[0]] || 0);" in same
+    assert "function gangReady(e) { return gangShape(e) && sameBuild(e); }" in js
+    assert "if (list.length > r.n) { list = []; }" not in js     # the old silent fallback
     assert "x === 'gang' ? gangSeries(e) : x === 'bouts' ? boutSeries(e)" in js
     series = js[js.index("function gangSeries"):js.index("function hasBirthYear")]
     # a breakdown of the festival: before + contributions in the order of the file; the
@@ -370,7 +377,9 @@ def test_comparison_gang_rules() -> None:
                    "nicht mit Namen veröffentlicht werden – nur zusammengefasst und am Ende des Fests",
                    "Reihenfolge der Gänge nicht überall gesichert",
                    "hängt nicht von der Reihenfolge ab", "auf eine Dezimale gerundet",
-                   "konnten nicht geladen werden: dort ein Punkt pro Fest"):
+                   "konnten nicht geladen werden: dort ein Punkt pro Fest",
+                   "stammen nicht vom selben Datenstand",
+                   "Statt etwas Falsches zu zeigen, steht dort ein Punkt pro Fest"):
         assert needle in notes, needle
     assert "(Aufteilung des Fests, keine eigene Wertung)" in js           # Gang tooltip
     assert "var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';" in js

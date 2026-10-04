@@ -432,6 +432,56 @@ def test_comparison_axis_caveats(browser: str, site: Path, base_url: str, tmp_pa
     assert sum(1 for k in ("noted", "plain", "single") if k in urls) >= 2    # the sample has such athletes
 
 
+def test_comparison_refuses_files_of_different_builds(browser: str, site: Path, base_url: str,
+                                                     tmp_path: Path) -> None:
+    """After a data update a browser can hold an athlete's bouts file from the previous
+    build next to a fresh history file. The older file lacks the newest festival; drawn
+    together, the page would call its Gänge "against unpublished opponents". The page
+    must see that the two do not belong together, draw one point per festival for that
+    athlete and say why - and leave the other athlete and the other axes alone."""
+    data = site / SUBPATH / "data"
+    ranked = json.loads((data / "rankings_latest.json").read_text(encoding="utf-8"))["rows"]
+    first, second = ranked[0][1], ranked[1][1]
+    other = tmp_path / "site" / SUBPATH
+    shutil.copytree(site / SUBPATH, other)
+    path = other / "data" / "bouts" / f"bouts_{first}.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    assert old["fests"] and len(old["build"]) == 12
+    old["fests"].pop()                           # the previous build did not have it yet
+    old["build"] = "0" * 12 if old["build"] != "0" * 12 else "1" * 12
+    path.write_text(json.dumps(old), encoding="utf-8")
+    httpd, url = _serve(tmp_path / "site")
+    try:
+        got = _load_all(browser, {
+            "stale-one": url + f"compare.html?ids={first}&x=gaenge",
+            "stale-pair": url + f"compare.html?ids={first},{second}&x=gaenge",
+            "stale-time": url + f"compare.html?ids={first},{second}",
+            "fresh-one": base_url + f"compare.html?ids={first}&x=gaenge",
+        }, tmp_path / "profiles")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    text = {}
+    for name, html in got.items():
+        assert page_problems(html) == [], name
+        assert "canvas" in Dom(html).tags, name
+        text[name] = Dom(html).text["se-view"]
+    note, per_gang = "stammen nicht vom selben Datenstand", "Die Wertung wird pro Fest berechnet, nicht pro Gang"
+    # alone: one point per festival, said so, and no sentence about the Gänge
+    assert note in text["stale-one"] and "ein Punkt pro Fest" in text["stale-one"]
+    assert per_gang not in text["stale-one"]
+    assert "die Wertung ändert sich nur von Fest zu Fest" in text["stale-one"]
+    # next to an athlete whose files belong together: he keeps his Gänge, the note names
+    # only the other one
+    assert note in text["stale-pair"] and per_gang in text["stale-pair"]
+    assert text["stale-pair"].count(note) == 1
+    # nothing of it on the time axis, and nothing on the untouched site
+    assert note not in text["stale-time"] and note not in text["fresh-one"]
+    assert per_gang in text["fresh-one"]
+    for name in text:
+        assert "konnten nicht geladen werden" not in text[name], name
+
+
 def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_url: str,
                                                tmp_path: Path) -> None:
     data = site / SUBPATH / "data"

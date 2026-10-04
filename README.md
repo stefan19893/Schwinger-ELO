@@ -98,6 +98,11 @@ published athletes, each with what it contributed to his rating, and the opponen
 read only by the comparison page, one file per selected athlete). The contributions come
 from `bout_ratings.parquet`, so `build` needs the output of the current `elo`. Nothing is
 exported about a bout against an athlete who is not published by name.
+`meta.json` and every history and bouts file carry the same `build` stamp (a digest of the
+inputs and settings, not a time). The comparison page draws an athlete's Gänge only when
+his two files carry the same stamp; with a cached file from an earlier build it falls back
+to one point per festival and says so. `check-site` refuses a bouts file that holds
+anything beyond its contract and files of mixed builds.
 The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 103 MB).
 
 `build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with

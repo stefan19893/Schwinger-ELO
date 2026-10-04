@@ -435,7 +435,8 @@ def test_history_files(site: Site) -> None:
         assert set(h) == {"id", "name", "club", "tv", "by", "first", "last", "bouts",
                           "festivals", "record", "rating", "rating_last", "last_date", "idle",
                           "peak", "peak_date", "peak_fest", "rank", "ranked", "provisional",
-                          "unc", "unc_rows", "namesakes", "rev", "as_of", "seasons", "history"}
+                          "unc", "unc_rows", "namesakes", "rev", "as_of", "build", "seasons",
+                          "history"}
         a = by_id.loc[aid]
         assert h["id"] == aid and h["history"]["cols"] == sb.HISTORY_COLS
         assert h["seasons"]["cols"] == sb.ATHLETE_SEASON_COLS
@@ -483,7 +484,7 @@ def test_bout_files(site: Site) -> None:
     n_sides = n_unrated = 0
     for aid in sorted(published):
         obj = site.bout_file(aid)
-        assert set(obj) == {"id", "opps", "names", "unc", "cols", "fests", "other"}
+        assert set(obj) == {"id", "build", "opps", "names", "unc", "cols", "fests", "other"}
         assert obj["id"] == aid
         # the opponents' names and identity markers are the search index's, id by id
         assert obj["names"] == [index[o][0] for o in obj["opps"]]
@@ -643,6 +644,41 @@ def test_build_is_deterministic(sample: Site, tmp_path: Path) -> None:
     assert tree_hash(tmp_path / "again") == tree_hash(sample.dist)
     sb.build_site(cfg)  # rebuilding over a previous build
     assert tree_hash(tmp_path / "again") == tree_hash(sample.dist)
+
+
+def test_build_stamp_is_one_value_in_every_per_athlete_file(site: Site) -> None:
+    """History and bouts file of an athlete are fetched separately; the page combines them
+    only when they carry the same stamp. One build writes one stamp everywhere."""
+    stamp = site.meta["build"]
+    assert isinstance(stamp, str) and len(stamp) == 12 and int(stamp, 16) >= 0
+    n = 0
+    for folder in ("history", "bouts"):
+        for p in (site.data / folder).iterdir():
+            other = load(p)["build"] != stamp
+            assert not other, folder
+            n += 1
+    assert n == 2 * len(site.search["rows"]) > 0
+
+
+def test_build_stamp_follows_the_inputs_and_the_settings(sample: Site, tmp_path: Path) -> None:
+    """Not a clock: the same inputs give the same stamp (`test_build_is_deterministic`
+    compares whole trees); other data or other publication settings give another one."""
+    def stamp(**overrides: Any) -> str:
+        cfg = load_config({"sample": True, "data_dir": sample.cfg.data_dir,
+                           "dist_dir": tmp_path / "dist", **overrides}, env={})
+        return load(sb.build_site(cfg) / "data" / "meta.json")["build"]
+
+    assert stamp() == sample.meta["build"]
+    assert stamp(publish_min_age=sample.cfg.publish_min_age + 1) != sample.meta["build"]
+
+    def rename(name: str, df: pd.DataFrame) -> pd.DataFrame:
+        if name == "festivals":
+            df = df.copy()
+            df.loc[df.index[0], "name"] = "Anderes Fest"
+        return df
+
+    _copy_inputs(sample.cfg.processed_dir, tmp_path / "other" / "processed", rename)
+    assert stamp(data_dir=tmp_path / "other") != sample.meta["build"]
 
 
 def _copy_inputs(src: Path, dst: Path, change: Any = None) -> None:
@@ -1128,7 +1164,7 @@ def test_real_bout_files_say_nothing_about_hidden_bouts(real: Site) -> None:
     extra = leaked = 0
     for p in (real.data / "bouts").iterdir():
         obj = load(p)
-        assert set(obj) == {"id", "opps", "names", "unc", "cols", "fests", "other"}, p.name
+        assert set(obj) == {"id", "build", "opps", "names", "unc", "cols", "fests", "other"}, p.name
         assert obj["cols"] == sb.BOUT_SIDE_COLS == ["gang", "opp", "res", "g", "go", "flags", "d"]
         aid = obj["id"]
         for fid, rows in obj["fests"]:
