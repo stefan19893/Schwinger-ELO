@@ -445,6 +445,104 @@ def test_opponent_names_must_match_the_opponent_ids(built: Path, tmp_path: Path,
                                    "expected shape"), rep.fatal
 
 
+def _rated(o: dict[str, Any]) -> list[Any]:
+    """First rated row of a bouts file (the one with a contribution)."""
+    return next(r for f in o["fests"] for r in f[1] if r[6] is not None)
+
+
+def _first_fest_with_rated(o: dict[str, Any]) -> list[Any]:
+    return next(f for f in o["fests"] if any(r[6] is not None for r in f[1]))
+
+
+# What a file would look like that says something about a bout against an athlete who is
+# not published, or that carries more than its contract (phase 9 review: such builds
+# passed the guard). Each case is one tampered copy of a real bouts file.
+TAMPERED = {
+    "a remainder key": lambda o: o.update(rest=[[o["fests"][0][0], 2, -12.3]]),
+    "a count of hidden bouts": lambda o: o.update(hidden=3),
+    "a key missing": lambda o: o.pop("other"),
+    "a row without an opponent": lambda o: _first_fest_with_rated(o)[1].append(
+        [7, None, 1, 9.75, 8.5, 0, 4.2]),
+    "a row with opponent -1": lambda o: _first_fest_with_rated(o)[1].append(
+        [7, -1, 1, 9.75, 8.5, 0, 4.2]),
+    "a row with an opponent beyond the list": lambda o: _first_fest_with_rated(o)[1].append(
+        [7, len(o["opps"]), 1, 9.75, 8.5, 0, 4.2]),
+    "a row with a true as opponent": lambda o: _rated(o).__setitem__(1, True),
+    "an eighth value": lambda o: _rated(o).append(1432.5),
+    "a row that is too short": lambda o: _rated(o).pop(),
+    # a hidden bout passed off under a published opponent: the history file counts the
+    # festival's rated bouts, the listed ones cannot be more
+    "more rated rows than the festival has bouts": lambda o: _first_fest_with_rated(o)[1].extend(
+        [list(_rated(o)) for _ in range(12)]),
+    "rated rows at a festival outside the history": lambda o: o["fests"].append(
+        [987654321, [list(_rated(o))]]),
+    "a contribution at an unrated bout": lambda o: _rated(o).__setitem__(5, dg.BOUT_UNRATED),
+    "no contribution at a rated bout": lambda o: _rated(o).__setitem__(6, None),
+    "a contribution that is text": lambda o: _rated(o).__setitem__(6, "4.2 (1 hidden)"),
+    "another name for an opponent": lambda o: o["names"].__setitem__(0, o["names"][0] + " jun."),
+    "an opponent listed twice": lambda o: (o["opps"].append(o["opps"][0]),
+                                           o["names"].append(o["names"][0])),
+    "other columns": lambda o: o["cols"].append("exp"),
+    "an extra key in the other festivals": lambda o: o["other"].update(hidden=[1]),
+    "a festival entry with a third value": lambda o: o["fests"][0].append({"rest": -3.1}),
+}
+
+
+@pytest.mark.parametrize("case", sorted(TAMPERED))
+def test_bout_files_must_keep_to_their_contract(built: Path, tmp_path: Path, case: str,
+                                                caplog: pytest.LogCaptureFixture) -> None:
+    """A bouts file lists bouts between published athletes and says nothing about any
+    other bout. A file with a key, a row or a value beyond that is not deployable, and no
+    override lifts it; the log line carries a count, never the file's athlete."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    assert dg.check_site(cfg, dist, meta).ok
+    target = next(p for p in sorted((dist / "data" / "bouts").iterdir())
+                  if any(r[6] is not None for f in json.loads(p.read_bytes())["fests"]
+                         for r in f[1]))
+    _edit(target, TAMPERED[case])
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 1, rep.fatal
+    assert rep.fatal[0] == ("data/bouts: 1 file(s) missing, unreadable or not in the "
+                            "expected shape - rebuild"), rep.fatal
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes"]) == 1
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    slug_logged = target.stem[len("bouts_"):] in logged
+    assert "must not be deployed" in logged and not slug_logged
+
+
+def test_guard_contract_is_the_exporters() -> None:
+    """The guard keeps its own copy of the bouts-file contract; it must be the one the
+    exporter writes (the stamp key is added by the build, see the exporter)."""
+    from src.exporter import static_builder as sb
+    assert dg.BOUT_COLS == sb.BOUT_SIDE_COLS
+    assert dg.BOUT_OTHER_COLS == sb.OTHER_FEST_COLS
+    assert dg.BOUT_UNRATED == sb.B_UNRATED
+
+
+def test_untampered_bout_files_pass_and_are_held_against_the_history(built: Path,
+                                                                     tmp_path: Path) -> None:
+    """The contract check is not vacuous: on the built site every bouts file passes, the
+    files hold rated rows, and the history files gave the reader the bouts per festival."""
+    _site(built, tmp_path)
+    dist = tmp_path / "dist"
+    people = dg._published(dist)
+    assert people and all(isinstance(n, str) and n for n in people.values())
+    seen = dg._Seen(names=people)
+    for p in sorted((dist / "data" / "history").iterdir()):
+        dg._history_ids(json.loads(p.read_bytes()), p.stem, seen)
+    assert len(seen.fest_bouts) == len(people)
+    rows = 0
+    for p in sorted((dist / "data" / "bouts").iterdir()):
+        obj = json.loads(p.read_bytes())
+        dg._bout_file_ids(obj, p.stem, seen)
+        rows += sum(1 for f in obj["fests"] for r in f[1] if r[6] is not None)
+    assert rows > 1000
+
+
 @pytest.mark.parametrize("case", sorted(REFERENCES))
 def test_every_referenced_athlete_must_be_published(built: Path, tmp_path: Path, case: str,
                                                     caplog: pytest.LogCaptureFixture) -> None:
