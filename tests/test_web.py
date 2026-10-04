@@ -390,6 +390,11 @@ def test_comparison_gang_rules() -> None:
     # density: the single Gänge get points only while there is room for them
     assert "var DOT_PX = 3;" in js and "var FIRST_BOUTS = 60;" in js
     assert "chart.on('datazoom'" in js and "<= dotLimit()" in js
+    # ... and that is decided anew when the width changes (phone rotated, window resized)
+    resize = js[js.index("window.addEventListener('resize'"):js.index("window.addEventListener('popstate'")]
+    assert "chart.resize();" in resize and "syncGangDots();" in resize
+    assert resize.index("chart.resize();") < resize.index("syncGangDots();")
+    assert js.count("<= dotLimit()") == 2          # at draw and in syncGangDots, nowhere else
     assert "zoomTo === 'common' || zoomTo === 'first' ? zoomTo : 'all'" in js
     about = (WEB / "about.html").read_text(encoding="utf-8")
     for needle in ("pro Fest berechnet", "Beitrag jedes Gangs"):

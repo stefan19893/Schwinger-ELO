@@ -1080,6 +1080,19 @@
     return html;
   }
 
+  /* Show or hide the single Gänge according to the visible range and the width of the
+   * chart as it is now. Called when the range changes (slider) and when the width does
+   * (phone rotated, window resized): the same range has room for the points in landscape
+   * and not in portrait. */
+  function syncGangDots() {
+    if (!chart || !gangPoints.length) { return; }
+    var z = chart.getOption().dataZoom[0];
+    var show = (z.endValue - z.startValue) <= dotLimit();
+    if (show === gangDots) { return; }
+    gangDots = show;
+    chart.setOption({ series: gangPoints.map(function (g) { return { id: g.id, data: show ? g.data : [] }; }) });
+  }
+
   function drawChart(list) {
     var el = SE.$('se-chart');
     if (chart) { chart.dispose(); chart = null; }
@@ -1090,14 +1103,7 @@
       chart.setOption(chartOption(drawable(list)), true);
       /* the single Gänge come and go with the visible range (slider) */
       var mine = chart;
-      chart.on('datazoom', function () {
-        if (!gangPoints.length || mine !== chart) { return; }
-        var z = mine.getOption().dataZoom[0];
-        var show = (z.endValue - z.startValue) <= dotLimit();
-        if (show === gangDots) { return; }
-        gangDots = show;
-        mine.setOption({ series: gangPoints.map(function (g) { return { id: g.id, data: show ? g.data : [] }; }) });
-      });
+      chart.on('datazoom', function () { if (mine === chart) { syncGangDots(); } });
     } catch (err) {
       chart = null;
       el.innerHTML = SE.note('Das Diagramm konnte nicht gezeichnet werden; die Werte stehen in den Tabellen und in den Profilen.');
@@ -1394,7 +1400,12 @@
     window.scrollTo(0, y);
   });
 
-  window.addEventListener('resize', function () { if (chart) { chart.resize(); } });
+  /* the new width decides anew whether the single Gänge have room */
+  window.addEventListener('resize', function () {
+    if (!chart) { return; }
+    chart.resize();
+    syncGangDots();
+  });
   window.addEventListener('popstate', function () {
     ui.x = parseX(SE.param('x'));
     setIds(parseIds(SE.param('ids')), false);
