@@ -1,6 +1,18 @@
 # Schwinger-ELO
 
-Historical ELO ratings for Swiss Schwingen athletes (2011–present).
+Historical ELO ratings for Swiss Schwingen athletes (2004–present).
+
+**Range of the data.** Seasons 2004 to today, from schlussgang.ch only (`from_year` in
+`src/config.py`; `meta.json` carries `first_season`, and the pages quote it instead of a
+fixed year). 2004–2010 hold Kranzfeste only (33–37 festivals a season), read from the old
+"Statistik" sheets by a positional table parser (`src/scraper/grid_parser.py`, festivals
+before 2011 only). Those sheets often print only the athletes who wrestled all Gänge: a
+bout against anyone else is known from one side (`one_sided,unlisted_opponent`, no grade
+for the opponent; 11,328 bouts, rated at full weight), and 423 athletes are known only as
+such opponents (rated, never ranked). Identities before 2011 rest mostly on the name.
+Regional festivals start in 2011 (three) and 2012 (about a hundred a season). 2004 is the
+burn-in season (rated, no places); 2001–2003 are downloaded and parsed but not in the
+data set (extracts of the first ranks).
 
 Pipeline: collect festival results (schlussgang.ch) → clean & resolve athlete
 identities → Schwingen-specific ELO → static JSON + HTML site, served locally or on
@@ -51,7 +63,7 @@ python -m src.cli COMMAND [options]
 | `crawl` | Festival listings, statistic PDFs, ranking lists and portraits from schlussgang.ch into the cache `data/raw/` and SQLite. Incremental; 0.5–1.0 s between requests, request caps per run. Options: `--from-year`, `--to-year`, `--no-pdfs`, `--no-portraits`, `--portraits-only`, `--backfill` (one-time download of old seasons, with `--from-year` / `--to-year`: 2–4 s between requests, at most 400 requests per run — re-run to continue —, listings and PDFs of that range only, stops at the first HTTP 403 / 429) |
 | `parse` | Cached PDFs → SQLite (`bouts`, `athletes_raw`, identity evidence). Offline. `--force` re-parses everything |
 | `clean` | Identity resolution → `data/processed/*.parquet` |
-| `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (rating change per bout). `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
+| `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (rating change per bout). `--evaluate` also prints the evidence report behind the model parameters, including the sections on the history before 2011 (cold start, one-sided bouts, cut sheets, scale without Regional festivals; about two minutes) |
 | `build` | Static site → `dist/`. Exits 1 without rating data; `--allow-empty` writes pages without content (never for a deployment) |
 | `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one; a file in `data/bouts` that holds anything beyond its contract (an extra key, a row that is not seven values, an opponent index outside its list, a name that is not the search index's, more rated rows at a festival than the athlete's history counts bouts) — such a file could say something about a bout against an athlete who is not published; and history or bouts files whose `build` stamp is not `meta.json`'s. Reads every data file (real data: 14,400 files in about 1.5 s). `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
 | `pack-site OUTPUT` | Pack `dist/` into the tar file GitHub Pages deploys (uncompressed; hidden files left out, as `actions/upload-pages-artifact` does) **without listing its files** — they are named after athletes, and a workflow log is public. Logs counts and sizes only. Exits 1 on a missing site, on a symbolic link or special file in it, on an archive of 1 GB or more, and when `OUTPUT` lies inside `dist/`. Always packs the site directory; there is no option for another source |
@@ -79,7 +91,7 @@ configured model). The model parameters are `elo_k_scale`, `season_reversion_del
 | Setting | Default | Effect |
 |---|---|---|
 | `publish_min_age` | `18` | Athletes who are not certainly 18 at the data date (data year − birth year ≤ 18) are not published by name: they count in the ratings, but have no profile, no search entry and no rank, and a festival lists them as "Jungschwinger, Name nicht veröffentlicht". No rating is displayed for them (their festival rows carry no rating value). **This withholds the display, not the information:** their ratings are calculated from public results and follow from the published athletes' histories (see "What you accept by opting in"). Ranks are the places among the published athletes. `0` publishes everyone. On the data of 2026-09-27: 726 athletes withheld, 525 of them otherwise ranked |
-| `publish_unknown_recent_seasons` | `3` | Athletes **without a known birth year** are withheld in the same way when their first season is one of the last three of the data year (2024–2026): they may be minors (97.7 % of debutants are at least 16; a 16-year-old debutant is not certainly 18 for three data years). 8 of the 726. The 1,737 athletes without a birth year who started earlier are published. `0` switches the rule off; the `--sample` demo runs without it |
+| `publish_unknown_recent_seasons` | `3` | Athletes **without a known birth year** are withheld in the same way when their first season is one of the last three of the data year (2024–2026): they may be minors (97.7 % of debutants are at least 16; a 16-year-old debutant is not certainly 18 for three data years). 8 of the 726. The 4,196 athletes without a birth year who started earlier are published — 3,073 of them were first seen in 2004–2010 (2,461 never after 2010): they competed among the actives at least sixteen years before the data date. `0` switches the rule off; the `--sample` demo runs without it |
 | `site_noindex` | `True` | `<meta name="robots" content="noindex">` on every page and a `robots.txt`. Under `<user>.github.io/Schwinger-ELO/` crawlers do not read that `robots.txt` (only the one at the root of the host counts) and the JSON data files cannot carry the tag — the switch keeps the pages out of search results, it is not access control |
 | `contact_email` | `""` | When set, the about page shows the address as a non-public route for corrections and objections beside the GitHub issues link. Empty: nothing is shown |
 
@@ -103,7 +115,7 @@ inputs and settings, not a time). The comparison page draws an athlete's Gänge 
 his two files carry the same stamp; with a cached file from an earlier build it falls back
 to one point per festival and says so. `check-site` refuses a bouts file that holds
 anything beyond its contract and files of mixed builds.
-The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 103 MB).
+The same inputs give a byte-identical `dist/` (real data from 2004: about 19,700 files, 125 MB).
 
 `build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with
 an empty `ratings.parquet`) it exits with status 1 and leaves an existing `dist/` untouched,
@@ -392,7 +404,8 @@ artifact" → "Deploy" have not run on GitHub yet. Look at, in this order:
 
 - "Check the built site (deploy guard)": `check-site: ok` with the athlete counts you
   know (6,306 published, 726 withheld on the data of 2026-09-27); no `accept_changes`
-  needed — the counts do not change with this release;
+  needed — the counts do not change with that release (they do with the history from
+  2004, see below);
 - "Pack the site": one line with counts and sizes ("… files in … directories, …; file
   names are not logged");
 - "Upload the Pages artifact": one file `artifact.tar`, artifact name `github-pages`;
@@ -404,6 +417,41 @@ artifact" → "Deploy" have not run on GitHub yet. Look at, in this order:
   minutes a browser that visited before may show the note "Gänge nicht einzeln gezeigt …
   nicht vom selben Datenstand" — it still holds a file of the previous site; a reload
   clears it.
+
+**The update that brings the history from 2004 (Phase 10) is a data update — case B —
+with three differences.** It needs no crawl (the old seasons are in `data/raw/` of this
+machine; `crawl --backfill --from-year 2001 --to-year 2010` fetched them once and would
+fetch nothing again), and it changes what is published, so the deploy guard refuses it
+until you accept it:
+
+- published athletes 6,306 → 8,830 (+2,524: Kranzfest participants of 2004–2010);
+- share of rated athletes with a known birth year 75.2 % → 56.0 % (the old sheets print
+  none);
+- withheld athletes 726 → 726 (525 ranked, 8 without a birth year) — **this number must
+  not move**; ranked athletes 1,495 → 1,495; festivals 1,811 → 2,055; rated bouts
+  491,597 → 581,164; first season 2011 → 2004;
+- not visible to the guard: 19 athlete URLs of the live site no longer exist (6 moved to
+  a `…-p<id>` id, 13 merged into another athlete); such a link shows "Schwinger nicht
+  gefunden" with suggestions. Season lists 2005–2011 are new, those of 2012–2015 change
+  visibly, and today's top 100 moves by at most one place.
+
+`check-site` prints exactly these lines and ends with the command to use. Steps, on this
+machine, after the pull request is merged and `main` is pulled:
+
+```bash
+python -m src.cli all --skip-crawl                   # parse, clean, elo, build - no request
+python -m src.cli serve                              # look at it (2004 seasons, old festivals)
+python -m src.cli check-site                         # refuses: read the lines above
+python -m src.cli check-site --accept-changes --record   # once: accept, new baseline
+```
+
+then the upload of case B from `old="$(gh release view …` on: **the state bundle on the
+draft release must be replaced by a new export from this machine before the deploy** —
+the deploy run rebuilds from that bundle, and the old one has neither the seasons before
+2011 nor the accepted baseline. With the baseline recorded here and exported, the deploy
+guard of the run passes without `accept_changes`; if you exported without `--record`,
+start the run with `accept_changes` ticked, once. Do not tick it for any later run
+without reading the numbers. The upload is larger than before (the cache `data/raw/` grew from 540 to about 600 MB; the bundle itself was not built for this note).
 
 **B. New festival results (crawl locally)** — needs your machine, on an up-to-date
 `main` (`git switch main && git pull`). New festivals are fetched here, the state is

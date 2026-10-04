@@ -130,8 +130,8 @@
 
   // ------------------------------------------------------------------ seasons
   var SEASON_NOTE = {
-    burn_in: 'Einschwing-Saison: ' +
-      'Die Wertung startet für alle bei 1500 und muss sich erst einpendeln, zudem sind für diese Saison nur wenige Regionalfeste erfasst. ' +
+    burn_in: 'Einschwing-Saison: Es ist die erste Saison der Daten. ' +
+      'Die Wertung startet für alle bei 1500 und muss sich erst einpendeln. ' +
       'Deshalb gibt es keine Rangierung.',
     thin: 'Saison mit sehr wenigen Festen (2020 fielen wegen der Pandemie fast alle aus, es blieben einige Hallenschwinget). ' +
       'Eine Saisonrangliste wäre nicht aussagekräftig, deshalb gibt es keine Rangierung.',
@@ -194,10 +194,11 @@
   }
 
   // ------------------------------------------------------------------ all-time peaks
-  function renderPeaks(data) {
+  function renderPeaks(data, meta) {
     var rows = SE.table(data);
-    var html = SE.note('<strong>Keine Bestenliste aller Zeiten.</strong> Die Daten beginnen 2011, und die Skala wächst bis etwa 2016 noch an: ' +
-      'Höchstwerte aus den letzten Jahren liegen deshalb systematisch höher als jene von 2012–2015. ' +
+    var html = SE.note('<strong>Keine Bestenliste aller Zeiten.</strong> ' +
+      (meta.first_season ? 'Die Daten beginnen ' + SE.esc(meta.first_season) + '. ' : '') + SE.scaleText(meta) +
+      ' Höchstwerte der letzten Jahre stehen deshalb vor den früheren, unabhängig davon, wer besser war. ' +
       'Auch Vergleiche zwischen Teilverbänden sind leicht verzerrt. ' +
       '<a class="se-link" href="about.html#grenzen">Mehr dazu</a>');
     if (!rows.length) {
@@ -217,7 +218,9 @@
     });
     html += '</tbody></table></div>' +
       '<p class="mt-4 text-xs text-stone-500 dark:text-stone-400">Die ' + SE.num(rows.length) +
-      ' höchsten je erreichten Wertungen (nach einem Fest, ab der Saison 2012, erst ab genügend Gängen).</p>';
+      ' höchsten je erreichten Wertungen (nach einem Fest' +
+      (meta.model && meta.model.first_ranked_season ? ', ab der Saison ' + SE.esc(meta.model.first_ranked_season) : '') +
+      ', erst ab genügend Gängen).</p>';
     view.innerHTML = html;
   }
 
@@ -230,7 +233,7 @@
     if (r.tab === 'saison') {
       job = load('seasons').then(function (d) { renderSeason(d, r.season); });
     } else if (r.tab === 'bestwerte') {
-      job = load('alltime_top200').then(renderPeaks);
+      job = Promise.all([load('alltime_top200'), SE.meta()]).then(function (res) { renderPeaks(res[0], res[1]); });
     } else {
       job = Promise.all([load('rankings_latest'), SE.meta()]).then(function (res) {
         if (!res[0].rows.length) {

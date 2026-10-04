@@ -261,6 +261,54 @@ def test_more_published_athletes_fail_beyond_the_tolerance(
     assert cli.main(["check-site", "--accept-changes"]) == 0
 
 
+def test_a_longer_history_is_refused_until_accepted_and_says_what_changed(
+        built: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10: the data begin seven seasons earlier, so more athletes are named and
+    fewer of the rated ones have a birth year. Both findings are those of a broken age
+    filter - the guard still refuses (the override is the owner's), but its lines name
+    the first season, and the last line gives the one-time command. Nothing is recorded
+    by a refused run."""
+    meta = _site(built, tmp_path)
+    c = meta["counts"]
+    base = json.loads(json.dumps(meta))
+    base["first_season"] = meta["first_season"] + 7
+    base["counts"].update(athletes=int(c["athletes"] / 1.4),
+                          birth_year_known=min(c["rated"], int(c["birth_year_known"] * 1.3)))
+    path = tmp_path / "data" / dg.BASELINE_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(base), encoding="utf-8")
+    before = path.read_bytes()
+    cfg = load_config(env=dict(os.environ))
+    rep = dg.check_site(cfg, tmp_path / "dist", base)
+    assert not rep.ok and not rep.fatal and len(rep.changes) == 2, rep.changes
+    old, new = base["first_season"], meta["first_season"]
+    assert all(f"The data now begin in {new} instead of {old}" in line
+               for line in rep.changes)
+    assert f"first season of the data: {old} -> {new}" in rep.notes
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--record"]) == 1
+    assert "check-site --accept-changes --record" in caplog.text
+    assert "accept_changes" in caplog.text and "2 change(s)" in caplog.text
+    assert path.read_bytes() == before                      # a refusal records nothing
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 0
+    assert dg.read_meta(path)["first_season"] == new
+    assert cli.main(["check-site"]) == 0                    # ... once: the next run passes
+    # without a change of the first season the findings carry no such explanation
+    _baseline(tmp_path, meta, athletes=int(c["athletes"] / 1.4))
+    rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path))
+    assert len(rep.changes) == 1 and "The data now begin" not in rep.changes[0]
+
+
+def test_a_site_that_lost_its_first_seasons_needs_the_override(built: Path,
+                                                               tmp_path: Path) -> None:
+    meta = _site(built, tmp_path)
+    base = json.loads(json.dumps(meta))
+    base["first_season"] = meta["first_season"] - 3
+    rep = dg.check_site(load_config(env=dict(os.environ)), tmp_path / "dist", base)
+    assert not rep.ok and not rep.fatal
+    assert [c for c in rep.changes if "loses seasons" in c]
+
+
 def test_year_rollover_releases_exactly_the_announced_cohort(built: Path,
                                                              tmp_path: Path) -> None:
     """In January the oldest withheld cohort becomes publishable: no override needed for
@@ -415,6 +463,8 @@ REFERENCES = {
         s for s in o["seasons"] if s["peak"])["peak"].update(id=GHOST)),
     "festival row": ("fests", lambda o: _set_first_id(o["athletes"], GHOST)),
     "namesake": ("history", lambda o: o["namesakes"].append({"id": GHOST, "unc": 0})),
+    "twin of the search index": ("athletes.json",
+                                 lambda o: o.setdefault("twins", {}).update({GHOST: [1, 6]})),
     "not a string": ("bouts", lambda o: (o["opps"].append(["x"]), o["names"].append("X Y"))),
 }
 
@@ -589,7 +639,7 @@ def test_reference_check_reads_the_real_shapes(built: Path, tmp_path: Path) -> N
     problems, n_read = dg._reference_problems(dist)
     per_athlete = len(json.loads((data / "athletes.json").read_text(encoding="utf-8"))["rows"])
     assert problems == [] and per_athlete > 100
-    assert n_read == 3 + len(list((data / "fests").iterdir())) + 2 * per_athlete
+    assert n_read == 4 + len(list((data / "fests").iterdir())) + 2 * per_athlete
     anon = sum(1 for p in (data / "fests").iterdir() for r in json.loads(
         p.read_text(encoding="utf-8"))["athletes"]["rows"] if r[0] is None)
     assert anon > 0                                   # rows without an id exist and pass

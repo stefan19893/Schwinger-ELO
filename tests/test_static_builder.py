@@ -244,7 +244,21 @@ def test_meta(site: Site) -> None:
     assert set(m["counts"]) == {"athletes", "ranked", "festivals", "festivals_partial",
                                 "festivals_missing", "bouts", "history_rows", "withheld",
                                 "withheld_ranked", "withheld_unknown", "rated",
-                                "birth_year_known"}
+                                "birth_year_known", "bouts_one_sided", "name_only"}
+    # the reach of the data, read from the data (the pages quote it instead of fixed years)
+    seasons = {int(str(d)[:4]) for d in site.ratings["date"]}
+    assert m["first_season"] == min(seasons) and m["last_season"] == max(seasons)
+    b = site.bouts[site.bouts["elo_eligible"].astype(bool)]
+    one = b["flags"].fillna("").str.contains("unlisted_opponent")
+    assert m["counts"]["bouts_one_sided"] == int(one.sum())
+    printed = set(b["athlete_a_id"]) | set(b.loc[~one, "athlete_b_id"])
+    assert m["counts"]["name_only"] == len(set(b.loc[one, "athlete_b_id"]) - printed
+                                           - site.withheld)
+    fests = pd.read_parquet(site.cfg.processed_dir / "festivals.parquet")
+    regional = fests[(fests["category"] == "Regional") & (fests["n_bouts"] > 0)
+                     & fests["elo_eligible"].astype(bool)]
+    assert m["first_regional_season"] == (int(regional["year"].min()) if len(regional)
+                                          else None)
     rated = set(site.ar.loc[site.ar["n_bouts"] > 0, "athlete_id"])
     assert m["counts"]["withheld"] == len(site.withheld & rated)
     assert m["counts"]["withheld_unknown"] == len(site.withheld_unknown & rated)
@@ -301,7 +315,7 @@ def test_rankings_latest(site: Site) -> None:
 
 
 def test_search_index(site: Site) -> None:
-    assert site.search["cols"] == sb.SEARCH_COLS
+    assert site.search["cols"] == sb.SEARCH_COLS and set(site.search) == {"cols", "rows", "twins"}
     rows = table(site.search)
     ids = [r["id"] for r in rows]
     assert len(set(ids)) == len(ids) and all(ID_RE.match(i) for i in ids)
@@ -459,7 +473,8 @@ def test_history_files(site: Site) -> None:
         for s in table(h["seasons"]):
             assert s["pos"] is None or s["pos"] >= 1
         for n in h["namesakes"]:
-            assert set(n) == {"id", "name", "club", "tv", "by", "first", "last", "unc"}
+            assert set(n) == {"id", "name", "club", "tv", "by", "first", "last", "unc",
+                                  "nf"}
             assert n["unc"] == int(by_id.at[n["id"], "identity_uncertain"])
             assert n["id"] != aid and n["name"].casefold() == h["name"].casefold()
             assert (site.data / "history" / f"history_{n['id']}.json").is_file()
@@ -1249,13 +1264,42 @@ def test_real_unrated_festival_shows_names(real: Site) -> None:
     assert names_only > 0
 
 
+def test_twins_carry_what_is_left_to_tell_them_apart(site: Site) -> None:
+    """`twins` holds exactly the athletes whose search row equals another one's in every
+    distinguishing field, with their number of festivals and bouts (Phase 10)."""
+    rows = table(site.search)
+    groups: dict[tuple[Any, ...], list[str]] = {}
+    for r in rows:
+        groups.setdefault((r["name"].casefold(), r["club"], r["by"], r["tv"], r["first"],
+                           r["last"]), []).append(r["id"])
+    same = {i for ids in groups.values() if len(ids) > 1 for i in ids}
+    twins = site.search["twins"]
+    assert set(twins) == same
+    by_id = site.ar.set_index("athlete_id")
+    for aid, (n_fests, n_bouts) in twins.items():
+        assert (n_fests, n_bouts) == (by_id.at[aid, "n_festivals"], by_id.at[aid, "n_bouts"])
+        # the namesake list of the profile carries the same number
+        assert all(n["nf"] == by_id.at[n["id"], "n_festivals"]
+                   for n in site.history(aid)["namesakes"])
+
+
 def test_real_namesakes_can_be_told_apart(real: Site) -> None:
+    """Every search row differs from every other one in what the page shows. Two pairs of
+    namesakes of the seasons before 2011 share name, Teilverband and seasons and have
+    neither club nor birth year - the sheets print nothing else, and they are two people
+    each because both stand in the same sheets. For such athletes the row shows the
+    number of festivals (`twins`), which is all that is left; the page says so. The
+    assertions give counts only, never a name."""
     rows = table(real.search)
+    twins = real.search["twins"]
     seen: dict[tuple[Any, ...], int] = {}
     for r in rows:
-        key = (r["name"], r["club"], r["by"], r["tv"], r["first"], r["last"])
+        key = (r["name"], r["club"], r["by"], r["tv"], r["first"], r["last"],
+               twins.get(r["id"], [None])[0])            # as SE.subline shows the row
         seen[key] = seen.get(key, 0) + 1
-    assert [k for k, n in seen.items() if n > 1] == []
+    assert sum(1 for n in seen.values() if n > 1) == 0
+    assert 0 < len(twins) <= 10          # rare: it must not become the normal answer
+    assert all(r["flags"] & sb.F_UNCERTAIN for r in rows if r["id"] in twins)
     ranked = [(r["name"], r["club"], r["by"], r["tv"]) for r in table(real.rankings)]
     assert len(ranked) == len(set(ranked))
 
@@ -1271,6 +1315,12 @@ def test_real_payload_sizes(real: Site) -> None:
     bout_sizes = [p.stat().st_size for p in (real.data / "bouts").iterdir()]
     # (60 MB since Phase 9, was 50: the files also carry the contribution per bout and
     # the opponents' names, so that the Gang tooltip needs no 590 KB search index)
-    assert max(bout_sizes) < 70_000 and sum(bout_sizes) < 60_000_000
+    # Phase 10, history from 2004: 8,830 athletes instead of 6,306 and careers of up to 23
+    # seasons. Largest file 71.7 KB (20.5 KB gzip; 252 festivals, 1,481 bouts), all files
+    # 63.7 MB. The bounds follow the data (80 KB / 75 MB): a file is fetched only for an
+    # athlete selected on the comparison page, and trimming it would mean dropping the
+    # opponents' names again or shortening the ids, i.e. a new contract for 3 KB gzip.
+    assert max(bout_sizes) < 80_000 and sum(bout_sizes) < 75_000_000
     n_files, n_bytes = sb.dist_stats(real.dist)
-    assert n_files < 18_000 and n_bytes < 120_000_000
+    # 19,739 files / 125 MB with the history (was 14,447 / 103 MB); Pages allows 1 GB
+    assert n_files < 24_000 and n_bytes < 160_000_000

@@ -1,7 +1,7 @@
 # Project Specification: Schwingen ELO Rating Engine (15-Year Historical Analysis)
 
 ## 1. Project Overview & Objective
-This project builds an automated end-to-end data pipeline and web dashboard to compute historical ELO ratings for Swiss Schwingen athletes ("Schwinger") covering the last 15 years (2011–present).
+This project builds an automated end-to-end data pipeline and web dashboard to compute historical ELO ratings for Swiss Schwingen athletes ("Schwinger") from the first season the source carries usable sheets for (2004–present; originally "the last 15 years", 2011–present — extended in Phase 10).
 
 The application will:
 1. Scrape and parse match-level historical results from publicly available archives (`schlussgang.ch` / `esv.ch`).
@@ -60,7 +60,7 @@ Schwinger-ELO/
 │   ├── scraper/
 │   │   ├── __init__.py
 │   │   ├── client.py               # Rate-limited HTTP client with caching
-│   │   ├── fests_crawler.py        # Discovers all festivals from 2011 to present
+│   │   ├── fests_crawler.py        # Discovers all festivals from `from_year` (2004) to present
 │   │   ├── festival_reference.py   # Tier reference list (validates the category mapping)
 │   │   ├── statistic_pdfs.py       # Downloads + text-extracts the statistic PDFs
 │   │   ├── bouts_parser.py         # Parses statistic sheets: bouts, grades, raw athletes
@@ -128,9 +128,9 @@ Schwinger-ELO/
 │   ├── index.html, athlete.html, compare.html, fests.html, about.html, css/, js/, vendor/, .nojekyll
 │   ├── robots.txt                  # only with site_noindex
 │   └── data/
-│       ├── meta.json               # as_of (last rated festival), `build` (stamp of the build), counts, model parameters, `empty`
+│       ├── meta.json               # as_of (last rated festival), `build` (stamp of the build), `first_season` / `last_season` / `first_regional_season` (read from the data; the pages quote them instead of fixed years), counts (incl. `bouts_one_sided`, `name_only`), model parameters, `empty`
 │       ├── rankings_latest.json    # Every ranked athlete (the only data file the start page needs)
-│       ├── athletes.json           # Search index, loaded on first use of the search
+│       ├── athletes.json           # Search index, loaded on first use of the search; `twins`: id -> [festivals, bouts] for namesakes whose rows are identical in every other field (shown in the row; the sources tell them apart no further)
 │       ├── alltime_top200.json     # 200 highest peak ratings
 │       ├── seasons.json            # Season lists (top 100) and the peak of each season
 │       ├── festivals.json          # Festival index
@@ -238,7 +238,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/`. Exits 1 and writes nothing when the rating data are missing or empty (a deployment must never publish an empty site); `--allow-empty` writes the pages with empty data files instead (`meta.empty = true`). With `--sample` the sample pipeline is run first if its data are missing |
-| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced); a filter that withholds nobody is fatal; also fatal, without override: a data file that names an athlete id outside the search index, per-athlete files that do not match it one to one, a `data/bouts` file that is not exactly its contract (key set, seven values per row, valid `opp` index, the search index's names, `d` exactly at rated rows, rated rows per festival ≤ the history file's `n`) and history / bouts files whose `build` stamp differs from `meta.json`'s; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
+| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced; when the data begin earlier than the baseline's the two findings say so, and they still need the override — Phase 10: 6,306 → 8,830 published, birth year known 75.2 % → 56.0 %, withheld 726 → 726); a first season later than the baseline's also needs the override; a filter that withholds nobody is fatal; also fatal, without override: a data file that names an athlete id outside the search index, per-athlete files that do not match it one to one, a `data/bouts` file that is not exactly its contract (key set, seven values per row, valid `opp` index, the search index's names, `d` exactly at rated rows, rated rows per festival ≤ the history file's `n`) and history / bouts files whose `build` stamp differs from `meta.json`'s; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
 | `python -m src.cli pack-site OUT` | Pack `dist/` into the tar file GitHub Pages deploys: uncompressed GNU tar, members `./…` in sorted order, hidden entries (names starting with a dot, at any depth) left out, modes 0644 / 0755, owner 0:0, file mtimes kept — the same tree gives the same bytes. Logs counts and sizes, never a file name (the files are named after athletes). Exit 1, nothing written: no site or no `index.html`, a symbolic link or special file in the site, an archive ≥ 1 GB, `OUT` inside `dist/`. No option names another source directory |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli state-export OUT` / `state-import SRC` | Bundle / restore the pipeline state (`data/raw`, database, Parquet files, guard baseline) as one verified `.tar.gz`; not for publication |
@@ -315,7 +315,7 @@ Since GitHub Pages serves static files only:
 ## 8. Implementation Milestones for the Coding AI
 
 - [ ] **Milestone 0:** Project skeleton, `src/config.py`, `src/cli.py` with stub subcommands, and a first version of `scripts/deploy_local.sh` that sets up the environment and builds/serves a placeholder `dist/`.
-- [ ] **Milestone 1:** Implement scraper for festival index (2011–2026) with SQLite persistence and polite rate-limiting ($0.5\text{s} - 1.0\text{s}$ delay + caching). Wire up `cli crawl`.
+- [ ] **Milestone 1:** Implement scraper for festival index (2011–2026; since Phase 10 from 2004) with SQLite persistence and polite rate-limiting ($0.5\text{s} - 1.0\text{s}$ delay + caching). Wire up `cli crawl`.
 - [ ] **Milestone 2:** Implement the statistic-sheet (PDF) parser to extract bouts, scores, and athlete metadata into pandas DataFrames. Wire up `cli parse`. Create the `tests/fixtures/sample/` dataset.
 - [ ] **Milestone 3:** Identity resolution and normalization (`cli clean`). Build the `SchwingElo` engine (`cli elo`) with a test suite validating known rivalry behavior (e.g., Glarner vs. Wicki vs. Reichmuth vs. Forrer).
 - [ ] **Milestone 4:** Build the static JSON exporter and client-side frontend (searchable table, ECharts career line graph). `./scripts/deploy_local.sh --sample` shows a working site.

@@ -40,7 +40,7 @@ are intended and have been looked at:
 * no baseline (first deployment);
 * a count that dropped by more than the tolerance (``guard_max_drop``; for the ranked
   athletes ``guard_max_drop_ranked``), e.g. after raising ``publish_min_age``;
-* a data date older than the baseline's;
+* a data date older than the baseline's, or a first season later than the baseline's;
 * publication settings looser than the baseline's (lower ``publish_min_age`` or
   ``publish_unknown_recent_seasons``, ``noindex`` switched off) - they publish more than
   the last accepted site did;
@@ -189,6 +189,18 @@ def _ranking_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     return _table_ids(obj)
 
 
+def _search_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
+    """The ids beside the rows of the search index: ``twins`` (namesakes with identical
+    rows -> [festivals, bouts]). An id there that has no row would be a name slug of
+    somebody who is not published."""
+    twins = obj.get("twins", {})
+    if type(twins) is not dict or not all(
+            type(v) is list and len(v) == 2 and all(_is_int(x) for x in v)
+            for v in twins.values()):
+        raise ValueError("twins is not a map of id -> [festivals, bouts]")
+    return list(twins)
+
+
 def _season_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     out: list[Any] = []
     for season in obj["seasons"]:
@@ -287,6 +299,7 @@ def _history_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
 # reader). A festival row may carry no id (null); every id that is there must be published.
 # The history files come before the bout files, which are held against them.
 ATHLETE_REFERENCES = (
+    ("athletes.json", None, _search_ids),
     ("rankings_latest.json", None, _ranking_ids),
     ("alltime_top200.json", None, _ranking_ids),
     ("seasons.json", None, _season_ids),
@@ -350,11 +363,32 @@ def _release(baseline: dict[str, Any], key: str) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
+def _first_season(meta: dict[str, Any]) -> int | None:
+    v = meta.get("first_season")
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _longer_history(meta: dict[str, Any], baseline: dict[str, Any]) -> str:
+    """Suffix for a finding of :func:`_check_filter` when the data begin earlier than the
+    baseline's: what to compare before accepting. Empty when the first season is the
+    same (then more names or fewer birth years have no such explanation)."""
+    new, old = _first_season(meta), _first_season(baseline)
+    if new is None or old is None or new >= old:
+        return ""
+    return (f". The data now begin in {new} instead of {old}: expected for a longer "
+            f"history only if counts.withheld is unchanged (see above) and the new names "
+            f"are athletes of the added seasons")
+
+
 def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
                   inputs: dict[str, int] | None, rep: GuardReport) -> None:
     """Does the site publish more people than the accepted one, or did the filter's
     inputs fall? (Only called with ``publish_min_age`` > 0.)"""
     new_year, old_year = _year(meta), _year(baseline)
+    # a history that reaches further back names more athletes and brings sheets that print
+    # few birth years: the same two findings as a broken age filter, so the override stays
+    # necessary - but the lines say which of the two the numbers fit
+    longer = _longer_history(meta, baseline)
     allow = {"athletes": 0, "ranked": 0}
     if new_year is not None and old_year is not None and new_year != old_year:
         got = {k: _release(baseline, k) for k in allow}
@@ -389,7 +423,7 @@ def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
             rep.changes.append(
                 f"counts.{key}: {old} -> {new} ({(new - old) / old:+.1%}; allowed rise "
                 f"{tol:.0%} plus {allow[key]} released) - more athletes are published by "
-                f"name than the age filter let through before")
+                f"name than the age filter let through before" + longer)
     shares = []
     for m in (baseline, meta):
         known, rated = _count(m, "birth_year_known"), _count(m, "rated")
@@ -402,7 +436,7 @@ def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
                 + (f"{shares[1]:.1%}" if shares[1] is not None else "unknown")
                 + f" (allowed fall {cfg.guard_max_drop_birth_known:.0%} points)")
         if shares[1] is None or shares[1] < shares[0] - cfg.guard_max_drop_birth_known:
-            rep.changes.append(line + " - the age filter is losing its input")
+            rep.changes.append(line + " - the age filter is losing its input" + longer)
         else:
             rep.notes.append(line)
     old_bd = (baseline.get(INPUTS_KEY) or {}).get("portraits_with_birthday")
@@ -499,6 +533,13 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
             rep.changes.append(line)
         else:
             rep.notes.append(line)
+    new_first, old_first = _first_season(meta), _first_season(baseline)
+    if new_first is not None and old_first is not None:
+        if new_first > old_first:
+            rep.changes.append(f"first season of the data: {old_first} -> {new_first} - the "
+                               f"site loses seasons it had")
+        else:
+            rep.notes.append(f"first season of the data: {old_first} -> {new_first}")
     new_date, old_date = str(meta.get("as_of") or ""), str(baseline.get("as_of") or "")
     if old_date and new_date < old_date:
         rep.changes.append(f"data date went back: {old_date} -> {new_date}")

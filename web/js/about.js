@@ -8,6 +8,12 @@
     if (el) { el.textContent = text; }
   }
 
+  /* a list item with a bold lead; the text holds numbers of meta.json and is escaped */
+  function item(id, lead, text) {
+    var el = SE.$(id);
+    if (el) { el.innerHTML = '<strong>' + SE.esc(lead) + '</strong> ' + SE.esc(text); }
+  }
+
   function show(id) {
     var el = SE.$(id);
     if (el) { el.classList.remove('hidden'); }
@@ -58,6 +64,33 @@
       ['Eidgenössische Anlässe', k.ESAF], ['Bergkranzfeste', k.Bergkranz], ['Teilverbandsfeste', k.Teilverband],
       ['Kantonal- und Gauverbandsfeste', k.Kantonal], ['Regionalfeste', k.Regional]
     ];
+    /* the first seasons of the data, as far as the data say what they are */
+    var first = meta.first_season, regional = meta.first_regional_season;
+    if (first) {
+      set('se-burnin', String(first));
+      set('se-before', 'vor ' + first);
+    }
+    set('se-scale', SE.scaleText(meta));
+    if (c.rated && c.birth_year_known !== undefined) {
+      set('se-noby', ' (der Jahrgang bei rund ' + SE.num(100 - 100 * c.birth_year_known / c.rated) + ' %)');
+    }
+    if (first && regional && regional > first) {
+      item('se-early-fests', 'Nur Kranzfeste.', 'Für ' + first + ' bis ' + (regional - 1) + ' sind nur Kranzfeste erfasst, rund 35 pro Saison. ' +
+        'Regionalfeste kommen erst ' + regional + ' dazu (zuerst nur einzelne, ab ' + (regional + 1) + ' rund hundert pro Saison). ' +
+        'Wer in den frühen Jahren nie an einem Kranzfest antrat, fehlt bis dahin.');
+      item('se-early-sheets', 'Listen ohne die Ausgeschiedenen.', 'Die alten Listen drucken oft nur die vorderen Ränge oder nur die Schwinger, ' +
+        'die alle Gänge bestritten haben. Wer früher ausschied, steht dann nur als Gegner in der Zeile eines anderen: mit Namen und Resultat, ohne eigene Note. ' +
+        'Solche Gänge zählen voll für die Wertung' + (c.bouts_one_sided ? ' (' + SE.num(c.bouts_one_sided) + ' Gänge)' : '') + ', beim Fest stehen sie «ohne Note». ' +
+        (c.name_only ? SE.num(c.name_only) + ' Schwinger sind nur als solche Gegner bekannt: Sie haben eine Wertung, aber nie einen Rang, weil zu wenige ihrer Gänge erfasst sind. ' : '') +
+        'Ihre übrigen Gänge fehlen; ihre Bilanz sieht deshalb schlechter aus, als sie war.');
+      item('se-early-ident', 'Wer ist wer?', 'Bis ' + (regional - 1) + ' nennen die Listen selten Klub oder Jahrgang. Die Gänge wurden einer Person meist allein über den Namen zugeordnet. ' +
+        'Das ist weniger sicher als später: Zwei Schwinger gleichen Namens können in einer Laufbahn stecken, und eine Laufbahn mit langer Pause kann als zwei Schwinger erscheinen. ' +
+        'Wo zwei Namensvetter in der Suche dieselben Angaben haben, steht die Zahl ihrer Feste dabei – mehr unterscheidet sie in den Quellen nicht.');
+      item('se-early-gaps', 'Lücken.', 'Nicht jedes Kranzfest dieser Jahre hat eine lesbare Liste; aus der Südwestschweiz und dem Berner Jura fehlen besonders viele, oder es gibt nur Auszüge. ' +
+        'Die Jahre vor ' + first + ' sind nicht gewertet, weil es von ihnen fast nur Auszüge der vordersten Ränge gibt. ' +
+        first + ' selbst wird gewertet, hat aber keine Plätze (Einschwing-Saison).');
+      show('se-early');
+    }
     set('se-k', groups.filter(function (g) { return g[1]; }).map(function (g) {
       return g[0] + ' K = ' + SE.num(g[1]);
     }).join(', '));

@@ -232,7 +232,11 @@ def test_comparison_page_rules() -> None:
     # the chart keeps the profile's honesty: the reversion comes from SE.careerSeries
     assert "SE.careerSeries(e.h)" in js and "s.reversion" in js and "1. April" in js
     # where the comparison invites it: eras, no common time
-    for needle in ("Keine gemeinsame Zeit", "bis etwa 2016", "nicht direkt vergleichbar",
+    # (the wording of the scale note is shared with the start page: SE.scaleText, app.js)
+    app = (WEB / "js" / "app.js").read_text(encoding="utf-8")
+    assert "ab etwa ' + SE.SCALE_FROM + ' sind untereinander vergleichbar" in app
+    assert "SE.SCALE_FROM = 2016;" in app and "var SCALE_SETTLED = '2016-01-01';" in js
+    for needle in ("Keine gemeinsame Zeit", "SE.scaleText(metaObj)", "nicht direkt vergleichbar",
                    "about.html#grenzen", "jeder Gang einmal gezählt", "ohne Note",
                    "Noch niemand ausgewählt", "höchstens"):
         assert needle in js, needle
@@ -303,7 +307,8 @@ def test_comparison_axis_rules() -> None:
     assert "p.season.pos !== null ? p" in js               # no place = hollow point
     # caveats in visible text, each only when it applies to the selection
     notes = js[js.index("function axisNotes"):js.index("function chartSection")]
-    assert notes.count("if (early.length)") == 3 and "SE.esc(firstSeason)" in notes
+    assert notes.count("if (early.length)") == 3 and notes.count("dataBegin()") == 2
+    assert "SE.esc(firstSeason)" in js[js.index("function dataBegin"):js.index("function names")]
     for needle in ("nicht zwingend der erste der Laufbahn", "nicht zwingend die erste der Laufbahn",
                    "Bekannt ist nur der Jahrgang, nicht der Geburtstag", "bis zu einem Jahr darunter",
                    "gehört zu keinem Fest", "wie in der Tabelle «Saisons»", "hohler Punkt"):
@@ -318,11 +323,15 @@ def test_comparison_axis_rules() -> None:
     assert eras.index("heisst nicht gleiche Zeit'") < eras.index("!old ? '.'")
     assert js.count("scaleNoted = true;") == 1 and js.count("' + eras(shown) + '") == 4
     # F2: who gets the "not the start of his career" note - the thin first seasons of the
-    # data or a first festival at an adult age; worded as likely, not as known
+    # data, a first festival that is a Regional one in the first seasons that have any
+    # (Phase 10: before them the data hold Kranzfeste only), or a first festival at an
+    # adult age; worded as likely, not as known
     rule = js[js.index("function likelyTruncated"):js.index("function startText")]
     assert "var EARLY_SEASONS = 2;" in js and "var ADULT_AGE = 20;" in js
-    assert ("(firstSeason !== null && y < firstSeason + EARLY_SEASONS) || "
-            "(hasBirthYear(e) && y - e.h.by >= ADULT_AGE)") in rule
+    assert "(firstSeason !== null && y < firstSeason + EARLY_SEASONS) ||" in rule
+    assert ("firstRegional > firstSeason && e.rows[0].cat === 'Regional' "
+            "&& y < firstRegional + EARLY_SEASONS") in rule
+    assert "(hasBirthYear(e) && y - e.h.by >= ADULT_AGE)" in rule
     assert notes.count("Wahrscheinlich ") == 3 and notes.count("sicher ist das nicht") == 3
     assert "trat schon in dieser" not in js and "fromTheStart" not in js
     # F3: a single career season does not sit on the border of the chart

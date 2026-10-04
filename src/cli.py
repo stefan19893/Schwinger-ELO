@@ -683,8 +683,12 @@ def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = Fal
             "check-site: %s%s", line, " - accepted (--accept-changes)" if rep.accepted else "")
     if not rep.ok:
         if rep.changes and not rep.fatal:
-            log.error("check-site: FAILED - if this is intended, run once with "
-                      "--accept-changes (workflow input `accept_changes`)")
+            log.error(
+                "check-site: FAILED - %d change(s) above need the owner's decision; nothing "
+                "was recorded. If every one of them is intended: `python -m src.cli "
+                "check-site --accept-changes --record` once on this machine (accepts this "
+                "site and makes it the baseline for later builds), then export the state; "
+                "in a workflow run, tick the input `accept_changes` once", len(rep.changes))
         else:
             log.error("check-site: FAILED - this site must not be deployed")
         return 1

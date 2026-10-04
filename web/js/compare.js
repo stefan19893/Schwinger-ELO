@@ -31,6 +31,9 @@
   /* ?x= value per axis; time has none. Only these fixed values are ever accepted. */
   var X_PARAM = { bouts: 'gaenge', age: 'alter', season: 'saison' };
   var firstSeason = null;      // meta.first_season, for the caveats of the axes
+  var firstRegional = null;    // meta.first_regional_season: before it, Kranzfeste only
+  var firstRanked = null;      // meta.model.first_ranked_season: best values count from it
+  var metaObj = null;
   var metaState = 'pending';   // pending | ok | missing (meta.json failed or names no first season)
   var scaleNoted = false;      // the scale note of caveats() is on the page
   var EARLY_SEASONS = 2;       // the first seasons of the data are thin: a debut there may be none
@@ -314,7 +317,7 @@
       hits.forEach(function (a) {
         html += '<li><a class="se-hit" href="' + SE.esc(compareUrl(ids().concat([a.id]))) + '" data-add="' + SE.esc(a.id) + '">' +
           '<span class="block font-medium">' + SE.esc(a.name) + ((a.flags & SE.F_UNCERTAIN) ? SE.uncertainMark(1) : '') + '</span>' +
-          muted(SE.subline(a, true)) + muted(SE.esc(SE.searchStatus(a))) + '</a></li>';
+          muted(SE.subline(a, true)) + muted(SE.esc(SE.searchStatus(a))) + (a.twin ? muted(SE.TWIN_NOTE) : '') + '</a></li>';
       });
       html += '</ul>';
       if (res.total > hits.length + ids().length) {
@@ -385,14 +388,14 @@
     }, 'Aktuelle Wertung am Datenstand; bei nicht mehr Aktiven die Wertung nach dem letzten Fest');
     html += row('Bestwert', function (h) {
       return h.peak === null ? '–' : '<span class="font-semibold">' + SE.rating(h.peak) + '</span>' + muted(SE.esc(SE.date(h.peak_date)));
-    }, 'Höchste Wertung nach einem Fest (ab der Saison 2012, erst ab genügend Gängen)');
+    }, 'Höchste Wertung nach einem Fest (' + (firstRanked !== null ? 'ab der Saison ' + firstRanked + ', ' : '') + 'erst ab genügend Gängen)');
     html += row('Letzter Kampf', function (h) {
       return SE.esc(SE.date(h.last_date)) +
         (h.idle > IDLE_WARN_DAYS ? '<span class="block text-xs"><span class="se-idle" title="Tage ohne Kampf bis zum Datenstand">' + SE.num(h.idle) + ' Tage</span></span>' : '');
     }, 'Letzter erfasster Kampf; hervorgehoben, wenn er am Datenstand mehr als 180 Tage zurücklag');
     html += row('Erfasste Jahre', function (h) {
       return (h.first ? SE.esc(h.first) + (h.first === h.last ? '' : '–' + SE.esc(h.last)) : '–') + muted(SE.num(h.festivals) + (h.festivals === 1 ? ' Fest' : ' Feste'));
-    }, 'Erstes und letztes Jahr mit einem erfassten Fest (die Daten beginnen 2011)');
+    }, 'Erstes und letztes Jahr mit einem erfassten Fest' + (firstSeason !== null ? ' (die Daten beginnen ' + firstSeason + ')' : ''));
     html += row('Gänge', function (h) { return SE.num(h.bouts); }, 'Gewertete Gänge');
     html += row('Bilanz', function (h) {
       return h.record ? SE.num(h.record[0]) + '–' + SE.num(h.record[1]) + '–' + SE.num(h.record[2]) : '–';
@@ -447,8 +450,7 @@
     if (mixed || (ended && late)) {
       scaleNoted = true;
       out.push(SE.note((mixed ? '<strong>Bestwerte aus verschiedenen Jahren sind nicht direkt vergleichbar.</strong> ' : '') +
-        'Die Skala wächst bis etwa 2016 noch an: Wertungen aus den Jahren 2011 bis 2015 liegen systematisch tiefer als spätere, ' +
-        'unabhängig davon, wer besser war. Verlässlich vergleichen lässt sich, wer zur selben Zeit höher stand. ' +
+        SE.scaleText(metaObj) + ' Das gilt unabhängig davon, wer besser war. Verlässlich vergleichen lässt sich, wer zur selben Zeit höher stand. ' +
         '<a class="se-link" href="about.html#grenzen">Mehr dazu</a>', 'info'));
     }
     return out.join('');
@@ -905,22 +907,36 @@
     return html + '</div>';
   }
 
+  /* "Die Daten beginnen 2004 ..." - where the record starts, for the notes on truncated careers */
+  function dataBegin() {
+    if (firstSeason === null) { return ''; }
+    if (firstRegional !== null && firstRegional > firstSeason) {
+      return 'Die Daten beginnen ' + SE.esc(firstSeason) + ' mit den Kranzfesten; Regionalfeste sind erst ab ' + SE.esc(firstRegional) +
+        ' erfasst, und die ersten Jahre sind jeweils lückenhaft. ';
+    }
+    return 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ';
+  }
+
   function names(list) { return list.map(function (e) { return SE.esc(plainName(e)); }).join(', '); }
 
   /* Year of the first history row: where every curve of the chart starts. */
   function startYear(e) { return e.rows.length ? Number(e.rows[0].date.slice(0, 4)) : null; }
 
-  /* The athletes whose record probably does not begin with their career. Two signs, either
+  /* The athletes whose record probably does not begin with their career. Three signs, any
    * is enough: the first festival lies in the first seasons of the data (they are thin, so
-   * a "debut" there is often only the first sheet that was found), or it lies in the year
-   * of his 20th birthday or later (active athletes usually start in their teens). Neither
-   * proves earlier bouts; the note says "likely". Without meta.json only the second sign
-   * can be read. */
+   * a "debut" there is often only the first sheet that was found); it is a Regional
+   * festival in the first seasons that have Regional festivals at all (before them only
+   * Kranzfeste are recorded, so whoever first appears there at a Regional festival may
+   * have wrestled such festivals for years); or it lies in the year of his 20th birthday
+   * or later (active athletes usually start in their teens). None proves earlier bouts;
+   * the note says "likely". Without meta.json only the last sign can be read. */
   function likelyTruncated(list) {
     return list.filter(function (e) {
       var y = startYear(e);
       if (y === null) { return false; }
-      return (firstSeason !== null && y < firstSeason + EARLY_SEASONS) || (hasBirthYear(e) && y - e.h.by >= ADULT_AGE);
+      return (firstSeason !== null && y < firstSeason + EARLY_SEASONS) ||
+        (firstSeason !== null && firstRegional !== null && firstRegional > firstSeason && e.rows[0].cat === 'Regional' && y < firstRegional + EARLY_SEASONS) ||
+        (hasBirthYear(e) && y - e.h.by >= ADULT_AGE);
     });
   }
 
@@ -947,8 +963,7 @@
     var p = '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">', early = likelyTruncated(shown), html = '';
     var one = early.length === 1;
     /* what is known, and what is only likely */
-    var begin = (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
-      early.map(startText).join(', ') + ': ';
+    var begin = dataBegin() + early.map(startText).join(', ') + ': ';
     if (ui.x === 'bouts' && shown.some(function (e) { return seriesOf(e).perGang; })) {
       var unsure = 0, hidden = false;
       shown.forEach(function (e) {
@@ -1012,7 +1027,7 @@
       if (early.length) {
         /* the age the curve starts at: year of the first history row minus the birth year */
         html += '<div class="mt-2">' + SE.note('<strong>Die Kurve beginnt nicht zwingend am Anfang der Laufbahn.</strong> ' +
-          (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
+          dataBegin() +
           early.map(function (e) {
             return SE.esc(plainName(e)) + ' (ab ' + SE.esc(startYear(e) - e.h.by) + ', erstes erfasstes Fest ' + SE.esc(startYear(e)) + ')';
           }).join(', ') + ': Die Kurve beginnt im Jahr des ersten erfassten Fests und beim Startwert 1500. ' +
@@ -1135,7 +1150,7 @@
     });
     return html + '</tbody></table></div>' +
       '<p class="mt-2 text-xs text-stone-500 dark:text-stone-400">Wertung am Saisonende und Platz in der Saisonrangliste. «ohne Platz»: zu wenige Gänge in der Saison ' +
-      'oder insgesamt, oder eine Saison ohne Rangierung (2011, 2020). Leeres Feld: kein erfasstes Fest in dieser Saison.</p>';
+      'oder insgesamt, oder eine Saison ohne Rangierung (die erste Saison der Daten und 2020). Leeres Feld: kein erfasstes Fest in dieser Saison.</p>';
   }
 
   // ------------------------------------------------------------------ direct bouts
@@ -1227,7 +1242,7 @@
           '<div class="mt-2">' + duelsHtml(a, b, ds) + '</div></details>';
       }
     }
-    html += '</div><p class="mt-2 text-xs text-stone-500 dark:text-stone-400">Alle erfassten Gänge der beiden gegeneinander seit 2011, jeder Gang einmal gezählt; Noten in der Reihenfolge der Namen. ' +
+    html += '</div><p class="mt-2 text-xs text-stone-500 dark:text-stone-400">Alle erfassten Gänge der beiden gegeneinander' + (firstSeason !== null ? ' seit ' + SE.esc(firstSeason) : '') + ', jeder Gang einmal gezählt; Noten in der Reihenfolge der Namen. ' +
       '«ohne Note»: in der Quelle steht keine Note. Der Schlussgang ist nur markiert, wo ihn die Quelle ausweist; bei etwa 2 % der Gänge ist die Nummer unsicher. ' +
       'Feste mit lückenhaften Listen können Gänge vermissen lassen.' +
       /* visible text, not a tooltip (touch): why the tally can exceed the rated festivals below */
@@ -1420,6 +1435,9 @@
    * an error of the redraw is not a download error (renderLoaded). */
   SE.meta().then(function (meta) {
     firstSeason = meta && typeof meta.first_season === 'number' ? meta.first_season : null;
+    firstRegional = meta && typeof meta.first_regional_season === 'number' ? meta.first_regional_season : null;
+    firstRanked = meta && meta.model && typeof meta.model.first_ranked_season === 'number' ? meta.model.first_ranked_season : null;
+    metaObj = meta || null;
     metaState = firstSeason === null ? 'missing' : 'ok';
   }, function () {
     metaState = 'missing';

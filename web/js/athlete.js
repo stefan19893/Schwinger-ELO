@@ -82,7 +82,7 @@
     });
     return html + '</tbody></table></div>' +
       '<p class="mt-2 text-xs text-stone-500 dark:text-stone-400">Platz in der Saisonrangliste; „–“ bei zu wenigen Gängen ' +
-      'oder in Saisons ohne Rangierung (2011, 2020).</p>';
+      'oder in Saisons ohne Rangierung (die erste Saison der Daten und 2020).</p>';
   }
 
   function festivals(h) {

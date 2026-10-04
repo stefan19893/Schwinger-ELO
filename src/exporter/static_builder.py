@@ -9,7 +9,10 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
 ``rankings_latest.json``
     Every currently ranked athlete (``athlete_ratings.ranked``), by rank.
 ``athletes.json``
-    Search index: one row per exportable athlete.
+    Search index: one row per exportable athlete. ``twins`` maps the id of every athlete
+    whose row equals another one's in all that tells namesakes apart (name, club,
+    Teilverband, birth year, first and last season) to ``[festivals, bouts]`` - the only
+    thing left that differs; the pages show it for these athletes (:func:`_twins`).
 ``alltime_top200.json``
     The 200 highest peak ratings.
 ``seasons.json``
@@ -418,6 +421,39 @@ def _search_index(inp: Inputs, people: dict[str, _Person],
     return rows
 
 
+def _twins(inp: Inputs, people: dict[str, _Person]) -> dict[str, list[int]]:
+    """Published namesakes the search row cannot tell apart: same name, club, Teilverband,
+    birth year, first and last season (old sheets print little more than the name; two
+    such athletes are known to be two people because both stand in the same sheet).
+    For them - and only them - the number of rated festivals and bouts, which the pages
+    add to the row. Keyed by athlete id, sorted."""
+    groups: dict[tuple[Any, ...], list[str]] = {}
+    for p in people.values():
+        if p.exportable:
+            groups.setdefault((p.name.casefold(), p.club, p.tv, p.by, p.first, p.last),
+                              []).append(p.id)
+    ar = inp.athlete_ratings.set_index("athlete_id")
+    return {aid: [int(ar.at[aid, "n_festivals"]), int(ar.at[aid, "n_bouts"])]
+            for ids in groups.values() if len(ids) > 1 for aid in sorted(ids)}
+
+
+def _history_notes(inp: Inputs, people: dict[str, _Person]) -> dict[str, Any]:
+    """What the pages say about the reach of the data, read from the data: the first
+    season with a rated Regional festival (before it the data hold Kranzfeste only), the
+    rated bouts against an opponent the sheet does not print (``unlisted_opponent``) and
+    the published athletes known *only* as such opponents."""
+    f = inp.festivals
+    regional = f[(f["category"] == "Regional") & (f["n_bouts"] > 0)
+                 & f["elo_eligible"].astype(bool)]
+    b = inp.bouts[inp.bouts["elo_eligible"].astype(bool)]
+    one = b["flags"].fillna("").str.contains("unlisted_opponent")
+    printed = set(b.loc[one, "athlete_a_id"]) | set(b.loc[~one, "athlete_a_id"]) \
+        | set(b.loc[~one, "athlete_b_id"])
+    only = {a for a in set(b.loc[one, "athlete_b_id"]) - printed if people[a].exportable}
+    return {"first_regional_season": int(regional["year"].min()) if len(regional) else None,
+            "bouts_one_sided": int(one.sum()), "name_only": len(only)}
+
+
 def _alltime(inp: Inputs, people: dict[str, _Person], fest_names: dict[int, str]) -> list[list[Any]]:
     ar = inp.athlete_ratings
     ar = ar[ar["rating_peak"].notna() & ar["athlete_id"].map(lambda a: people[a].exportable)]
@@ -630,7 +666,8 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
             "unc_rows": [_int(a["identity_low_conf_rows"]), _int(a["identity_rows"])],
             "namesakes": [
                 {"id": q.id, "name": q.name, "club": q.club, "tv": q.tv, "by": q.by,
-                 "first": q.first, "last": q.last, "unc": q.unc}
+                 "first": q.first, "last": q.last, "unc": q.unc,
+                 "nf": _int(ar.at[q.id, "n_festivals"])}
                 for q in (people[i] for i in sorted(by_name.get(p.name.casefold(), [])))
                 if q.id != p.id],
             "rev": [cfg.season_reversion_delta, cfg.season_reversion_mean,
@@ -786,18 +823,19 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     sizes: dict[str, Any] = {}
     if inp is None:
         meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": True, "as_of": None,
-                "first_season": None, "last_season": None,
+                "first_season": None, "last_season": None, "first_regional_season": None,
                 "counts": {"athletes": 0, "ranked": 0, "festivals": 0, "festivals_partial": 0,
                            "festivals_missing": 0, "bouts": 0, "history_rows": 0,
                            "withheld": 0, "withheld_ranked": 0, "withheld_unknown": 0,
-                           "rated": 0, "birth_year_known": 0},
+                           "rated": 0, "birth_year_known": 0, "bouts_one_sided": 0,
+                           "name_only": 0},
                 "model": model, "publish": _publish(cfg, None),
                 "contact": cfg.contact_email or None}
         sizes["meta.json"] = _write_json(data / "meta.json", meta)
         sizes["rankings_latest.json"] = _write_json(
             data / "rankings_latest.json", {"as_of": None, "cols": RANKING_COLS, "rows": []})
-        sizes["athletes.json"] = _write_json(data / "athletes.json",
-                                             {"cols": SEARCH_COLS, "rows": []})
+        sizes["athletes.json"] = _write_json(
+            data / "athletes.json", {"cols": SEARCH_COLS, "rows": [], "twins": {}})
         sizes["alltime_top200.json"] = _write_json(
             data / "alltime_top200.json", {"as_of": None, "cols": ALLTIME_COLS, "rows": []})
         sizes["seasons.json"] = _write_json(data / "seasons.json",
@@ -839,8 +877,9 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
 
     sizes["rankings_latest.json"] = _write_json(
         data / "rankings_latest.json", {"as_of": as_of, "cols": RANKING_COLS, "rows": rankings})
-    sizes["athletes.json"] = _write_json(data / "athletes.json",
-                                         {"cols": SEARCH_COLS, "rows": search})
+    sizes["athletes.json"] = _write_json(
+        data / "athletes.json",
+        {"cols": SEARCH_COLS, "rows": search, "twins": _twins(inp, people)})
     sizes["alltime_top200.json"] = _write_json(
         data / "alltime_top200.json",
         {"as_of": as_of, "cols": ALLTIME_COLS, "rows": _alltime(inp, people, fest_names)})
@@ -854,8 +893,10 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     bout_files, bout_bytes, bout_pairs = _write_bouts(inp, people, fests, data / "bouts",
                                                       stamp)
     all_seasons = [s["season"] for s in seasons]
+    notes = _history_notes(inp, people)
     meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": False, "as_of": as_of,
             "build": stamp, "first_season": min(all_seasons), "last_season": max(all_seasons),
+            "first_regional_season": notes["first_regional_season"],
             "counts": {"athletes": len(search), "ranked": len(rankings),
                        "festivals": sum(1 for r in fest_rows if r[8] != "none"),
                        "festivals_partial": sum(1 for r in fest_rows if r[8] == "partial"),
@@ -865,7 +906,10 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                        "withheld": withheld, "withheld_ranked": withheld_ranked,
                        "withheld_unknown": withheld_unknown,
                        # inputs of the age filter, watched by the deploy guard
-                       "rated": len(named), "birth_year_known": birth_year_known},
+                       "rated": len(named), "birth_year_known": birth_year_known,
+                       # the old sheets: bouts known from one side, athletes known only so
+                       "bouts_one_sided": notes["bouts_one_sided"],
+                       "name_only": notes["name_only"]},
             "model": model,
             "publish": _publish(cfg, withhold_from, withhold_first_from, release),
             "contact": cfg.contact_email or None}

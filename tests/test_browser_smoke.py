@@ -389,7 +389,11 @@ def test_comparison_axis_caveats(browser: str, site: Path, base_url: str, tmp_pa
 
     def truncated(h: dict) -> bool:          # the rule of compare.js, written out again
         y = _starts(h["history"]["rows"])
-        return y < meta["first_season"] + 2 or (h["by"] is not None and y - h["by"] >= 20)
+        regional = meta.get("first_regional_season")
+        return (y < meta["first_season"] + 2
+                or (regional is not None and regional > meta["first_season"]
+                    and h["history"]["rows"][0][3] == "Regional" and y < regional + 2)
+                or (h["by"] is not None and y - h["by"] >= 20))
 
     noted = next((h for h in heads if truncated(h)), None)
     plain = next((h for h in heads if not truncated(h)
