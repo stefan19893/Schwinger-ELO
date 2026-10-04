@@ -236,7 +236,7 @@ def test_comparison_page_rules() -> None:
     assert "x.flags & B_UNRATED" in duels
     slots = js[js.index("function renderSlots"):js.index("function suggest")]
     assert "Die Daten zur Kennung «' + SE.esc(e.id)" in slots and ".message" not in js
-    assert "if (list.length > 3)" in js and "Einen Namen antippen" in js
+    assert "if (shown.length > 3)" in js and "Einen Namen antippen" in js
     # day counts relate to the data date, nothing is computed from today's date
     assert "Date.now" not in js and "new Date" not in js and "Datenstand" in js
     # the search index and the ranking are only loaded on demand
