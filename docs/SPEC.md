@@ -135,7 +135,7 @@ Schwinger-ELO/
 │       ├── festivals.json          # Festival index
 │       ├── fests/fest_<fest_id>.json           # One festival: participants and bouts (on demand)
 │       ├── history/history_<athlete_id>.json   # One athlete: profile, seasons, rating history (on demand)
-│       └── bouts/bouts_<athlete_id>.json       # One athlete: his bouts against published opponents (comparison page, on demand)
+│       └── bouts/bouts_<athlete_id>.json       # One athlete: his bouts against published opponents with the rating contribution per bout (comparison page, on demand)
 ├── pyproject.toml                  # Project metadata + pytest config
 ├── requirements.txt
 ├── requirements-lock.txt            # exact versions + wheel hashes for the publishing workflows (scripts/make_lock.py)
@@ -201,6 +201,7 @@ All model parameters live in `src/config.py` so they can be tuned without code c
 - **Identity uncertainty:** every bout is rated; `athlete_ratings.parquet` marks athletes whose history rests on low-confidence identity rows (`identity_uncertain`).
 - `ratings.parquet`: `athlete_id, date, fest_id, rating_before, rating_after` + `season, category, n_bouts, score, expected, bouts_before, days_inactive, provisional, provisional_reason`; `rating_before` includes the April reversion.
 - `bout_ratings.parquet` (Phase 9): what each rated bout contributed to the ratings — **two rows per rated bout, one per side**, sorted by `(date, fest_id, gang_nr, bout_id, side)` (the engine's processing order, A before B). Columns, all non-nullable:
+- Published form of `bout_ratings.parquet` (Phase 9, exporter): only inside `dist/data/bouts/bouts_<athlete_id>.json`, as the 7th value `d` of a bout row (`cols` = `gang, opp, res, g, go, flags, d`) — the athlete's `delta` rounded to one decimal, `null` for a bout at a festival that does not count. The file also holds `names` (the opponents' names, parallel to `opps`) and `unc` (indices of identity-uncertain opponents). **Privacy rule:** rows exist only for bouts between two published athletes; for a bout against a withheld athlete nothing is exported — no contribution, no count, no Gang, and never `expected`, `k` or `mov_lambda` of any bout. The comparison page derives the combined remainder of a festival from the history file (`n` − listed bouts; `after` − `before` − Σ `d`) and draws it as one stretch at the end of the festival. The page presents the Gang values as a breakdown of the festival's change (`before` + running sum in the order Gang, opponent id), states that the rating is calculated per festival, and marks festivals whose Gang order is uncertain (flag or repeated Gang number). `build` requires `bout_ratings.parquet` and refuses one that lacks rated bouts of `bouts.parquet`.
 
   | Column | Type | Meaning |
   |---|---|---|

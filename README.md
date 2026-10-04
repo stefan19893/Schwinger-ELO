@@ -93,8 +93,11 @@ gefunden" with suggestions (on the comparison page for the affected athlete only
 `athletes.json` (search index), `alltime_top200.json`, `seasons.json`, `festivals.json`,
 one `history/history_<athlete_id>.json` per athlete, one `fests/fest_<fest_id>.json`
 per festival and one `bouts/bouts_<athlete_id>.json` per athlete (his bouts against other
-published athletes; read only by the comparison page, one file per selected athlete).
-The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 87 MB).
+published athletes, each with what it contributed to his rating, and the opponents' names;
+read only by the comparison page, one file per selected athlete). The contributions come
+from `bout_ratings.parquet`, so `build` needs the output of the current `elo`. Nothing is
+exported about a bout against an athlete who is not published by name.
+The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 103 MB).
 
 `build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with
 an empty `ratings.parquet`) it exits with status 1 and leaves an existing `dist/` untouched,
@@ -108,7 +111,7 @@ Pages (German, static, relative URLs only, so they work under `/Schwinger-ELO/`)
 |---|---|
 | `index.html` | current ranking with Teilverband filter, season lists (`#saison-2019`), highest ratings (`#bestwerte`), search |
 | `athlete.html?id=<athlete_id>` | profile, career chart, seasons, festivals |
-| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings in one chart — over time or, with the switch above the chart, by number of bouts (`&x=gaenge`), by age (`&x=alter`, calendar year minus birth year; athletes without a known birth year are not drawn and named) or by season of the recorded career (`&x=saison`, season-end ratings); any other value of `x` shows time — seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
+| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings in one chart — over time or, with the switch above the chart, by number of bouts (`&x=gaenge`; there the line moves Gang by Gang: the rating is calculated per festival, and the chart shows how the festival's change is made up of the contributions of its Gänge — a breakdown, not a rating after each Gang; bouts against athletes who are not published appear only as one combined remainder per festival), by age (`&x=alter`, calendar year minus birth year; athletes without a known birth year are not drawn and named) or by season of the recorded career (`&x=saison`, season-end ratings); any other value of `x` shows time — seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
 | `fests.html`, `fests.html?id=<fest_id>` | festival list and one festival with every athlete's bouts |
 | `about.html` | method, source, known limitations, how to report errors |
 
