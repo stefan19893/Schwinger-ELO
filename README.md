@@ -54,6 +54,7 @@ python -m src.cli COMMAND [options]
 | `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`. `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
 | `build` | Static site → `dist/`. Exits 1 without rating data; `--allow-empty` writes pages without content (never for a deployment) |
 | `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one. `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
+| `pack-site OUTPUT` | Pack `dist/` into the tar file GitHub Pages deploys (uncompressed; hidden files left out, as `actions/upload-pages-artifact` does) **without listing its files** — they are named after athletes, and a workflow log is public. Logs counts and sizes only. Exits 1 on a missing site, on a symbolic link or special file in it, on an archive of 1 GB or more, and when `OUTPUT` lies inside `dist/`. Always packs the site directory; there is no option for another source |
 | `all` | `crawl → parse → clean → elo → build`. `--skip-crawl` leaves the crawl out |
 | `serve` | Serve `dist/` at `http://localhost:8000` (`--port`, `--host`) |
 | `state-export OUTPUT` | Bundle `data/raw`, the database, the Parquet files and the guard baseline into one `.tar.gz` (`OUTPUT` ending in `.tar.gz` is the file; anything else is a directory, created if missing, for a time-stamped name). The bundle is readable by you only (mode 0600). **Not for publication** |
@@ -147,7 +148,7 @@ Three workflows:
 | Workflow | Starts | Does | Needs the opt-in |
 |---|---|---|---|
 | `ci.yml` | push to `main`, pull requests | install (Python 3.11: `requirements.txt`; 3.14: the hashed `requirements-lock.txt`), `pytest` (incl. the browser smoke test), sample build, `check-site --sample`. No request to schlussgang.ch, publishes nothing | no |
-| `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, deploy to Pages. No crawl | **yes** |
+| `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, pack the site (`pack-site`), deploy to Pages. No crawl | **yes** |
 | `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site-crawl-locally) | **yes** |
 
 "Opt-in" is the repository variable `PUBLISH_ENABLED`. Unless it is exactly `true`, every
@@ -239,12 +240,23 @@ test fails if a workflow sets one).
   `--require-hashes` (exact versions, wheel hashes verified against the local
   installation; whether a GitHub runner is offered the same binary wheels is untested —
   if not, the install fails). `pip` itself and the actions (`actions/checkout@v5` …,
-  major tags written from memory) are not pinned by hash, and project code plus these
+  major tags) are not pinned by hash — except `actions/upload-artifact`, which is pinned to
+  the commit that `upload-pages-artifact@v4` itself uses (v4.6.2) — and project code plus these
   dependencies run in the same job that later holds the `contents: write` token: a job
   without third-party code is not possible while the state must not travel through a
   (publicly readable) artifact.
 - **Workflow logs are public.** At the default log level no stage prints athlete names
   or ids (tested on the sample pipeline); a traceback from an unexpected crash could.
+  The site's files are named after athletes (`data/history/history_<id>.json`), so the
+  workflows do not use `actions/upload-pages-artifact` — its `tar` step lists every file
+  it packs — but `pack-site`, which logs counts only, followed by the same upload step
+  that action ends with.
+- **The log of the first deployment (2026-10-04) does contain those file names.** It was
+  made with `upload-pages-artifact@v4`, whose archive step printed 12,612 lines such as
+  `data/history/history_<id>.json` and `data/bouts/bouts_<id>.json`: the ids (name slugs)
+  of the *published* athletes — nobody the site withholds, nothing the site itself does
+  not show, but in a place that was promised to hold no names. The owner can remove it:
+  Actions → that run → "⋯" → **Delete all logs** (the run and the deployment stay).
 
 **2. Get the workflows onto `main`** (merge / push the branch). `ci.yml` starts running;
 the other two stay inert.
@@ -313,8 +325,17 @@ This first run is also the first real test of the workflows — they were valida
       release is not listed for a signed-out browser (`…/releases` shows nothing).
 - [ ] After step 7: the local action `./.github/actions/pipeline-state` found the draft
       with the workflow token (steps "Download the pipeline state" and "Upload the new
-      state" green), `upload-pages-artifact@v4` / `deploy-pages@v4` resolved, the site
-      is served under `/Schwinger-ELO/`, and the run's log shows no athlete name.
+      state" green), `deploy-pages@v4` resolved, the site is served under
+      `/Schwinger-ELO/`, and the run's log shows no athlete name. **The first deploy
+      run (2026-10-04) failed the last point:** the action then in use
+      (`upload-pages-artifact@v4`) listed every file of the site, named after the
+      published athletes, in the log. Delete that log (Actions → the run → "Delete all
+      logs"); see "Workflow logs are public" above.
+- [ ] After the first deployment with `pack-site` (not yet run on GitHub): the step
+      "Pack the site" prints one line with counts, "Upload the Pages artifact" uploads
+      one file `artifact.tar` under the name `github-pages`, the job "Deploy" accepts
+      it, and a search of the run's log for `history_` finds nothing. If "Deploy"
+      rejects the artifact, nothing was published: the previous deployment stays online.
 - [ ] Only if you ever start `scrape_and_update.yml` by hand: the "Incremental crawl"
       step reports on the order of 100–350 network requests (not thousands), and
       schlussgang.ch answered the runner.

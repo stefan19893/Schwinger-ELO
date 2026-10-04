@@ -1,7 +1,7 @@
 """Single entry point for every pipeline stage (spec §5).
 
-    python -m src.cli {crawl|parse|clean|elo|build|check-site|all|serve|state-export|state-import}
-                      [options]
+    python -m src.cli {crawl|parse|clean|elo|build|check-site|pack-site|all|serve|
+                       state-export|state-import} [options]
 
 Global options (``--sample``, ``--data-dir``, ``--skip-crawl``, ``--refresh``,
 ``-v``) are accepted before or after the subcommand. Local runs
@@ -638,6 +638,27 @@ def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = Fal
     return 0
 
 
+def cmd_pack_site(cfg: Config, output: str) -> int:
+    """Write the site in ``cfg.dist_dir`` as the tar file GitHub Pages deploys (see
+    :mod:`src.exporter.pages_artifact`). The source is always the site directory - there
+    is no option for another one - and no file name is logged: athlete ids are name
+    slugs, and the log of a workflow run is public."""
+    from pathlib import Path
+
+    from src.exporter.pages_artifact import PagesArtifactError, pack_site
+
+    try:
+        info = pack_site(cfg.dist_dir, Path(output).expanduser())
+    except PagesArtifactError as exc:
+        log.error("pack-site: %s - nothing written", exc)
+        return 1
+    log.info("pack-site: %s -> %s (%d files in %d directories, %.1f MB; tar %.1f MB; %d "
+             "hidden entries left out; file names are not logged)", cfg.dist_dir, info.path,
+             info.n_files, info.n_dirs + 1, info.n_bytes / 1e6, info.tar_bytes / 1e6,
+             info.n_hidden)
+    return 0
+
+
 def cmd_all(cfg: Config, skip_crawl: bool = False, portraits: bool = True) -> int:
     stages: list[tuple[str, Callable[[Config], int]]] = [
         ("crawl", functools.partial(cmd_crawl, portraits=portraits)),
@@ -749,6 +770,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "baseline (<data-dir>/published_meta.json)")
     sp.add_argument("--baseline", default=None,
                     help="baseline file (default: <data-dir>/published_meta.json)")
+    sp = add("pack-site", "pack dist/ into the tar file GitHub Pages deploys, without "
+                          "listing its files (they are named after athletes)")
+    sp.add_argument("output", help="the tar file to write (uncompressed; outside dist/)")
     sp = add("state-export", "bundle the pipeline state (data/raw, database, Parquet files, "
                              "guard baseline) into one file - not for publication")
     sp.add_argument("output", help="a *.tar.gz file to write, or a directory (created if "
@@ -837,6 +861,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_state_export(cfg, args.output)
         if args.command == "state-import":
             return cmd_state_import(cfg, args.source, force=args.force)
+        if args.command == "pack-site":
+            return cmd_pack_site(cfg, args.output)
         if args.command == "check-site":
             return cmd_check_site(cfg, accept_changes=args.accept_changes, record=args.record,
                                   baseline=args.baseline)

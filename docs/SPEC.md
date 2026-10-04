@@ -53,7 +53,7 @@ Schwinger-ELO/
 │   └── schwingen.db                # SQLite staging database
 ├── src/
 │   ├── __init__.py
-│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | check-site | all | serve | state-export | state-import
+│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | check-site | pack-site | all | serve | state-export | state-import
 │   ├── config.py                   # Paths, year range, rate limits, ELO params, publication switches (defaults + env overrides)
 │   ├── state_bundle.py             # Pipeline state as one verified bundle; cold-start check (--require-state)
 │   ├── scraper/
@@ -84,7 +84,8 @@ Schwinger-ELO/
 │   └── exporter/
 │       ├── __init__.py
 │       ├── static_builder.py       # Copies web/ and writes JSON slices into dist/data/; age filter, noindex
-│       └── deploy_guard.py         # check-site: empty / shrunken site against the last accepted meta.json
+│       ├── deploy_guard.py         # check-site: empty / shrunken site against the last accepted meta.json
+│       └── pages_artifact.py       # pack-site: dist/ as the Pages tar, no file name logged
 ├── web/                            # Frontend source (static pages, German UI; copied to dist/ as is)
 │   ├── index.html                  # Current ranking, season lists, highest ratings, search
 │   ├── athlete.html                # Athlete profile & career chart (?id=<athlete_id>)
@@ -214,6 +215,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/`. Exits 1 and writes nothing when the rating data are missing or empty (a deployment must never publish an empty site); `--allow-empty` writes the pages with empty data files instead (`meta.empty = true`). With `--sample` the sample pipeline is run first if its data are missing |
 | `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced); a filter that withholds nobody is fatal; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
+| `python -m src.cli pack-site OUT` | Pack `dist/` into the tar file GitHub Pages deploys: uncompressed GNU tar, members `./…` in sorted order, hidden entries (names starting with a dot, at any depth) left out, modes 0644 / 0755, owner 0:0, file mtimes kept — the same tree gives the same bytes. Logs counts and sizes, never a file name (the files are named after athletes). Exit 1, nothing written: no site or no `index.html`, a symbolic link or special file in the site, an archive ≥ 1 GB, `OUT` inside `dist/`. No option names another source directory |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli state-export OUT` / `state-import SRC` | Bundle / restore the pipeline state (`data/raw`, database, Parquet files, guard baseline) as one verified `.tar.gz`; not for publication |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |
@@ -281,7 +283,7 @@ Since GitHub Pages serves static files only:
 - **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name and their festival rows carry no rating; ranks are re-numbered among the published), `publish_unknown_recent_seasons = 3` (the same for athletes without a birth year whose first season is within the last three of the data year), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
 - **State between runs:** one bundle (`state-export` / `state-import`) as an asset of a *draft* release `pipeline-state` — durable, not publicly downloadable, seeded from the owner's machine. Runs upload a new generation and delete the older ones afterwards. A missing state fails the run before any request (`--require-state`).
 - **No schedule (decision 2026-10-04):** the owner crawls locally and uploads the state; `scrape_and_update.yml` starts by hand only.
-- **Sequence of the crawl run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → Pages artifact → `actions/deploy-pages@v4`. The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
+- **Sequence of the crawl run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → `pack-site "$RUNNER_TEMP/artifact.tar"` → `actions/upload-artifact` (v4.6.2 by commit; that one file, artifact name `github-pages`, retention 1 day, `if-no-files-found: error`) → `actions/deploy-pages@v4`. The two steps before the deployment are what `actions/upload-pages-artifact@v4` consists of, with its verbose `tar` replaced by the CLI: that `tar` printed every file name of the site — athlete ids — into the public log. No other upload step is allowed in these workflows (`tests/test_workflows.py`). The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
 - **Deploy guard:** see `check-site` in §5; the baseline travels inside the state bundle.
 
 ---
