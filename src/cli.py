@@ -70,6 +70,18 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
     conn = connect(cfg.db_path)
     try:
         with client_from_config(cfg, transport=transport, offline=cfg.offline) as client:
+            if not cfg.backfill and not cfg.offline:
+                problem = _old_seasons_not_cached(cfg, client, conn)
+                if problem:
+                    log.error("crawl: %s - nothing was requested. A normal crawl never "
+                              "downloads the seasons before %d: they are fetched once, "
+                              "slowly, with `crawl --backfill --from-year %d --to-year %d`, "
+                              "or come with the pipeline state of the machine that has "
+                              "them (`state-import`; README, \"Updating the site\"). To "
+                              "crawl the later seasons only: `--from-year %d`", problem,
+                              OLD_SEASONS_BEFORE, cfg.from_year, OLD_SEASONS_BEFORE - 1,
+                              OLD_SEASONS_BEFORE)
+                    return 1
             try:
                 report = fc.crawl_festivals(
                     client, conn, cfg.from_year, cfg.to_year,
@@ -182,6 +194,41 @@ def cmd_state_import(cfg: Config, source: str, force: bool = False) -> int:
     for line in problems:
         log.error("state-import: imported state is not usable: %s", line)
     return 1 if problems else 0
+
+
+# Seasons before this year are the one-time backfill (Phase 10): old files nobody is
+# waiting for, fetched at the backfill pace only (2-4 s, capped, stop on 403 / 429).
+OLD_SEASONS_BEFORE = 2011
+
+
+def _old_seasons_not_cached(cfg: Config, client: HttpClient,
+                            conn: sqlite3.Connection) -> str | None:
+    """What a normal crawl would have to download for the seasons before
+    :data:`OLD_SEASONS_BEFORE` - as a sentence, ``None`` when everything is cached (then
+    the crawl makes no request for them: their listings and PDFs are final). Checked
+    before the first request: a data directory that does not hold the old seasons (a
+    state bundle from before the history was added, a fresh clone) must not fetch some
+    700 old files at the normal pace, least of all from a workflow runner."""
+    from src.db import load_festivals
+    from src.scraper import fests_crawler as fc
+    from src.scraper.client import build_url
+    from src.scraper.ranking_pdfs import festivals_with_ranking
+
+    last = min(cfg.to_year, OLD_SEASONS_BEFORE - 1)
+    if cfg.from_year > last:
+        return None
+    listings = _not_cached(client, (build_url(fc.API_URL, fc.listing_params(tid, year))
+                                    for year in range(cfg.from_year, last + 1)
+                                    for tid in fc.SOURCE_CATEGORIES))
+    old = [f for f in load_festivals(conn).values() if cfg.from_year <= f.year <= last]
+    pdfs = _not_cached(client, {f.statistic_pdf_url for f in old
+                                if f.kind == "active" and not f.cancelled})
+    pdfs += _not_cached(client, {f.ranking_pdf_url for f in festivals_with_ranking(old)})
+    if not listings and not pdfs:
+        return None
+    return (f"the seasons {cfg.from_year}-{last} are not in this data directory's cache "
+            f"({listings} listing queries and {pdfs} PDFs of {len(old)} known festivals "
+            f"missing)")
 
 
 def _backfill_range(cfg: Config, festivals: Iterable[Festival]) -> list[Festival]:

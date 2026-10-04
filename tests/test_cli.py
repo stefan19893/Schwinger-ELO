@@ -619,6 +619,59 @@ def test_backfill_downloads_slowly_and_only_once(tmp_path: Path,
     assert len(site.api.requests) == 5 and len(site.files) == n  # nothing fetched twice
 
 
+def test_normal_crawl_never_downloads_the_old_seasons(
+        tmp_path: Path, no_sleep: list[float], caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10 review: the seasons before 2011 are fetched by `crawl --backfill` only. A
+    normal crawl on a data directory that does not hold them (a state bundle from before
+    the history, a fresh clone) refuses before the first request instead of downloading
+    some 700 old files at 0.5-1.0 s."""
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _crawl_cfg(tmp_path, crawl_pdfs=True, from_year=2009)      # 2009 .. 2011
+    with caplog.at_level("ERROR"):
+        assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert site.api.requests == [] and site.files == [] and no_sleep == []
+    assert "the seasons 2009-2010 are not in this data directory's cache" in caplog.text
+    assert "nothing was requested" in caplog.text and "crawl --backfill --from-year 2009 " \
+        "--to-year 2010" in caplog.text and "--from-year 2011" in caplog.text
+    # the later seasons alone are crawled as ever
+    later = _crawl_cfg(tmp_path, crawl_pdfs=True)
+    assert cli.cmd_crawl(later, transport=httpx.MockTransport(site), portraits=False) == 0
+    assert site.api.requests and site.files
+    # --offline asks nothing anyway and keeps reporting what is missing
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path, from_year=2009, offline=True),
+                         transport=httpx.MockTransport(site), portraits=False) == 1
+
+
+def test_normal_crawl_passes_once_the_backfill_has_cached_the_old_seasons(
+        tmp_path: Path, no_sleep: list[float], monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture) -> None:
+    """With the old seasons in the cache a normal crawl goes ahead and requests nothing
+    for them; one missing old PDF is enough to refuse. (The 2011 fixtures stand in for an
+    old season: the boundary is moved for the test.)"""
+    import httpx
+
+    monkeypatch.setattr(cli, "OLD_SEASONS_BEFORE", 2012)
+    site = _BackfillSite()
+    normal = _crawl_cfg(tmp_path, crawl_pdfs=True)
+    assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert site.api.requests == [] and site.files == []
+    assert cli.cmd_crawl(_backfill_cfg(tmp_path), transport=httpx.MockTransport(site)) == 0
+    n_api, n_files = len(site.api.requests), len(site.files)
+    assert n_files >= 6
+    assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 0
+    assert (len(site.api.requests), len(site.files)) == (n_api, n_files)   # all from cache
+    # one old PDF gone from the cache: refused again, nothing requested
+    from src.scraper.client import build_url, client_from_config
+    with client_from_config(normal, offline=True) as client:
+        client.cache_paths(build_url(site.files[0]))[0].unlink()
+    with caplog.at_level("ERROR"):
+        assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert "0 listing queries and 1 PDFs" in caplog.text
+    assert (len(site.api.requests), len(site.files)) == (n_api, n_files)
+
+
 def test_backfill_cap_covers_listings_and_pdfs_and_resumes(tmp_path: Path,
                                                            no_sleep: list[float]) -> None:
     import httpx
