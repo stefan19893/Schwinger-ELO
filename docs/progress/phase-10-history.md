@@ -29,7 +29,7 @@ Extend the data from "2011–present" to as far back as the permitted source car
 - [x] 3. (data-engineer) Parser for the old PDF layouts; fixtures and tests; parse success per year; rejects documented
 - [x] 4. (data-engineer) Identity resolution across old and new data; id stability measured
 - [x] 5. (data-engineer) `from_year` and everything that depends on it; `clean` output; counts
-- [ ] 6. (elo-modeler) Re-evaluate burn-in and parameters on the longer history; record decisions; effect on current ranking
+- [~] 6. (elo-modeler) Re-evaluate burn-in and parameters on the longer history; record decisions; effect on current ranking
 - [ ] 7. (web-builder) Texts and rules that assume 2011; guard baseline; README / SPEC / about page
 - [ ] 8. phase-reviewer
 
