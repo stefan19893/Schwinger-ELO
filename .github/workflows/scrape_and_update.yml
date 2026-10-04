@@ -93,9 +93,19 @@ jobs:
           mode: upload
           token: ${{ github.token }}
 
-      - uses: actions/upload-pages-artifact@v4
+      # The site is packed by the CLI, not by actions/upload-pages-artifact: that action
+      # runs a verbose tar, which lists every file of the site in this public log - and the
+      # files are named after athletes. What follows is the rest of that action, unchanged:
+      # one tar file, uploaded under the name actions/deploy-pages looks for.
+      - name: Pack the site (no file name in the log)
+        run: python -m src.cli pack-site "$RUNNER_TEMP/artifact.tar"
+      - name: Upload the Pages artifact (that one file)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
-          path: dist
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
 
   deploy:
     name: Deploy

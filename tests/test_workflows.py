@@ -2,7 +2,9 @@
 
 What these pin down: nothing crawls or deploys unless the owner has set the repository
 variable ``PUBLISH_ENABLED``; the workflows call only the CLI; a crawl can never start on
-a runner without the pipeline state; least-privilege tokens; pinned actions.
+a runner without the pipeline state; least-privilege tokens; pinned actions; the only
+thing uploaded is the site, packed by ``pack-site`` so that no file name (the files are
+named after athletes) is printed into the public log.
 """
 
 from __future__ import annotations
@@ -22,6 +24,22 @@ PIP_LOCKED = "python -m pip install --require-hashes -r requirements-lock.txt"
 ACCEPT = "${{ inputs.accept_changes && '--accept-changes' || '' }}"
 GATED = ["deploy_pages.yml", "scrape_and_update.yml"]
 GATE = "if: vars.PUBLISH_ENABLED == 'true' && github.ref == 'refs/heads/main'"
+# The Pages artifact. `actions/upload-pages-artifact` is a composite of a verbose `tar`
+# (every file name of the site in the log) and this very upload step; the workflows run
+# the CLI instead of the tar and keep the upload - same commit of the action, same inputs.
+PACK = 'python -m src.cli pack-site "$RUNNER_TEMP/artifact.tar"'
+UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+PAGES_STEPS = (
+    "      - name: Pack the site (no file name in the log)\n"
+    f"        run: {PACK}\n"
+    "      - name: Upload the Pages artifact (that one file)\n"
+    f"        uses: {UPLOAD_ACTION}   # v4.6.2\n"
+    "        with:\n"
+    "          name: github-pages\n"
+    "          path: ${{ runner.temp }}/artifact.tar\n"
+    "          retention-days: 1\n"
+    "          if-no-files-found: error\n"
+    "\n")
 
 
 def _text(name: str) -> str:
@@ -102,7 +120,8 @@ def test_only_cli_calls_in_the_workflows(name: str) -> None:
         assert "--allow-empty" not in cmd and "--refresh" not in cmd and "--force" not in cmd
         argv = [a for a in cmd.split()[3:] if not a.startswith(("\"$", "${{", "&&", "||", "''",
                                                                 "'--", "inputs.", "}}"))]
-        args = parser.parse_args(argv + (["x"] if argv[0].startswith("state-") else []))
+        args = parser.parse_args(argv + (["x"] if argv[0].startswith(("state-", "pack-"))
+                                         else []))
         assert args.command == argv[0]             # the CLI really has these options
 
 
@@ -145,18 +164,20 @@ def test_no_crawl_without_state(name: str) -> None:
         if cmd.split()[3] in ("crawl", "all"):
             assert "--require-state" in cmd, cmd
     if name == "deploy_pages.yml":                 # this workflow never talks to the source
+        assert stages == ["state-import", "all", "check-site", "state-export", "pack-site"]
         assert "crawl" not in stages and all("--skip-crawl" in c for c in commands
                                              if c.split()[3] == "all")
     else:
         assert stages == ["state-import", "crawl", "state-export", "all", "check-site",
-                          "state-export"]
+                          "state-export", "pack-site"]
         assert "python -m src.cli all --skip-crawl --require-state" in commands
     assert any(c.startswith("python -m src.cli check-site --record") for c in commands)
-    # download (draft checked) -> import -> ... -> last export -> upload (draft checked
-    # again, immediately before) -> Pages artifact
+    # download (draft checked) -> import -> ... -> deploy guard -> last export -> upload
+    # (draft checked again, immediately before) -> the site is packed -> Pages artifact
     order = [text.index("mode: download"), text.index("state-import"),
+             text.index("python -m src.cli check-site"),
              text.rindex("state-export"), text.index("mode: upload"),
-             text.index("upload-pages-artifact")]
+             text.index(PACK), text.index(f"uses: {UPLOAD_ACTION}")]
     assert order == sorted(order) and "--clobber" not in text and "gh " not in text
     assert text.count(f"uses: {STATE_ACTION}\n") == 2
 
@@ -201,30 +222,45 @@ def check_token_scope(text: str) -> None:
 
 EXPECTED_USES = {
     "deploy_pages.yml": ["actions/checkout@v5", "actions/setup-python@v6", STATE_ACTION,
-                         STATE_ACTION, "actions/upload-pages-artifact@v4",
-                         "actions/deploy-pages@v4"],
+                         STATE_ACTION, UPLOAD_ACTION, "actions/deploy-pages@v4"],
     "scrape_and_update.yml": ["actions/checkout@v5", "actions/setup-python@v6", STATE_ACTION,
-                              STATE_ACTION, "actions/upload-pages-artifact@v4",
-                              "actions/deploy-pages@v4"],
+                              STATE_ACTION, UPLOAD_ACTION, "actions/deploy-pages@v4"],
     "ci.yml": ["actions/checkout@v5", "actions/setup-python@v6"],
 }
 
 
 def check_uses(name: str, text: str) -> None:
     """Exactly these actions, in this order: an added upload step (e.g. an artifact of
-    `data/`, readable by every signed-in user of a public repository) is an error."""
+    `data/`, readable by every signed-in user of a public repository) is an error. The
+    one upload step of a publishing workflow is the Pages artifact (`check_pages_artifact`
+    pins what it uploads); CI uploads nothing."""
     assert re.findall(r"uses: (\S+)", text) == EXPECTED_USES[name]
-    assert "upload-artifact" not in text and "actions/cache" not in text
+    # however a second one is spelled (`uses:  x`, quoted, ...), it is counted here
+    assert text.count("upload-artifact") == (1 if name in GATED else 0)
+    assert "actions/cache" not in text
+    # the action that prints the site's file names does not come back
+    assert not re.search(r"^[^#\n]*upload-pages-artifact", text, flags=re.M)
 
 
 def check_pages_artifact(text: str) -> None:
-    """The Pages artifact is `dist` and nothing else (`.` would publish the checkout,
-    `data` the pipeline state)."""
-    assert text.count("upload-pages-artifact") == 1
-    assert ("      - uses: actions/upload-pages-artifact@v4\n        with:\n"
-            "          path: dist\n\n") in text
-    assert re.findall(r"^ *path: *(.*)$", text, flags=re.M) == ["dist"]
-    assert "data/" not in text and "data\n" not in text.split("upload-pages-artifact")[1]
+    """The Pages artifact is the site and nothing else: the two steps below, verbatim, as
+    the last steps of the build job. `pack-site` has no source argument (it packs
+    `dist/`), the upload names the one file it wrote. Anything else - another path (`.`
+    the checkout, `data` or the runner's temp directory the pipeline state), a second
+    upload, another command writing that file, a condition, a verbose flag - is an error."""
+    assert text.count(PAGES_STEPS) == 1
+    assert text.split(PAGES_STEPS)[1].startswith("  deploy:\n")     # nothing runs after them
+    # the only upload: one step, one path, and that path is the packed site
+    assert text.count("upload-artifact") == 1
+    assert text.count("github-pages") == 2          # the artifact and the deploy environment
+    assert re.findall(r"^ *\W?path\W? *: *(.*)$", text, flags=re.M) == \
+        ["${{ runner.temp }}/artifact.tar"]
+    assert text.count("runner.temp") == 1
+    # the only writer of that file is `pack-site`, called exactly like this
+    assert [c for c in _commands(text) if "pack-site" in c or "artifact.tar" in c] == [PACK]
+    assert text.count("pack-site") == 1 and text.count("artifact.tar") == 2
+    assert "data/" not in text and "SCHWINGEN_DIST_DIR" not in text and "--data-dir" not in text
+    assert not re.search(r"^[^#\n]*upload-pages-artifact", text, flags=re.M)
 
 
 def check_accept_changes(text: str) -> None:
@@ -251,9 +287,17 @@ def test_dangerous_edits_checks_pass_on_the_real_files(name: str) -> None:
 
 JOB_ENV = ("    permissions:\n      contents: write",
            "    env:\n      GH_TOKEN: ${{ github.token }}\n    permissions:\n      contents: write")
-ARTIFACT_STEP = ("      - uses: actions/upload-pages-artifact@v4\n",
+PACK_STEP = "      - name: Pack the site (no file name in the log)\n"
+UPLOAD_STEP = f"        uses: {UPLOAD_ACTION}   # v4.6.2\n"
+PATH_LINE = "          path: ${{ runner.temp }}/artifact.tar\n"
+# a second upload: the pipeline state as a workflow artifact
+ARTIFACT_STEP = (PACK_STEP,
                  "      - uses: actions/upload-artifact@v4\n        with:\n          name: state\n"
-                 "          path: data/\n      - uses: actions/upload-pages-artifact@v4\n")
+                 "          path: data/\n" + PACK_STEP)
+# the same, spelled so that the `uses:` / `path:` patterns do not see it
+HIDDEN_STEP = (PACK_STEP,
+               '      - "uses":  actions/upload-artifact@v4\n        with:\n'
+               '          "path": data\n' + PACK_STEP)
 
 
 @pytest.mark.parametrize("name", GATED)
@@ -261,17 +305,60 @@ ARTIFACT_STEP = ("      - uses: actions/upload-pages-artifact@v4\n",
     # the four edits of the Phase 6 review that left the old tests green
     ("token", *JOB_ENV),
     ("uses", *ARTIFACT_STEP),
-    ("pages", "          path: dist\n", "          path: .\n"),
+    ("pages", *ARTIFACT_STEP),
+    ("pages", PATH_LINE, "          path: .\n"),
     ("accept", f"check-site --record {ACCEPT}", "check-site --record --accept-changes"),
     # and their neighbours
     ("token", "\npermissions: {}\n", "\nenv:\n  GH_TOKEN: ${{ github.token }}\n\npermissions: {}\n"),
     ("token", "        run: python -m pytest\n",
      "        run: python -m pytest\n      - run: python -m src.cli build\n        env:\n"
      "          GH_TOKEN: ${{ github.token }}\n"),
-    ("pages", "          path: dist\n", "          path: data\n"),
-    ("uses", "      - uses: actions/upload-pages-artifact@v4\n",
+    ("pages", PATH_LINE, "          path: data\n"),
+    ("uses", PACK_STEP,
      "      - uses: actions/cache@v4\n        with:\n          path: data\n          key: s\n"
-     "      - uses: actions/upload-pages-artifact@v4\n"),
+     + PACK_STEP),
+    # --- the Pages artifact since `pack-site` (2026-10-04) ---
+    # wrong artifact path: the loose site, the runner's temp directory (it holds the
+    # exported state bundle), a glob over it, a second path beside the right one
+    ("pages", PATH_LINE, "          path: dist\n"),
+    ("pages", PATH_LINE, "          path: ${{ runner.temp }}\n"),
+    ("pages", PATH_LINE, "          path: ${{ runner.temp }}/**\n"),
+    ("pages", PATH_LINE, "          path: |\n            ${{ runner.temp }}/artifact.tar\n"
+                         "            data\n"),
+    # `data/` as the source of the archive: an argument, an option, the environment, or
+    # another command writing the uploaded file (before or instead of `pack-site`)
+    ("pages", PACK, 'python -m src.cli pack-site data "$RUNNER_TEMP/artifact.tar"'),
+    ("pages", PACK, PACK + " --data-dir data"),
+    ("pages", f"        run: {PACK}\n",
+     f"        env:\n          SCHWINGEN_DIST_DIR: data\n        run: {PACK}\n"),
+    ("token", f"        run: {PACK}\n",
+     f"        env:\n          SCHWINGEN_DIST_DIR: data\n        run: {PACK}\n"),
+    ("accept", f"        run: {PACK}\n",
+     f"        env:\n          SCHWINGEN_DIST_DIR: data\n        run: {PACK}\n"),
+    ("pages", PACK, 'python -m src.cli state-export "$RUNNER_TEMP/artifact.tar"'),
+    ("pages", "      - name: Upload the Pages artifact (that one file)\n",
+     '      - run: python -m src.cli state-export "$RUNNER_TEMP/artifact.tar"\n'
+     "      - name: Upload the Pages artifact (that one file)\n"),
+    # a second upload step, also in a spelling the patterns for `uses:` / `path:` miss,
+    # and one after the Pages artifact
+    ("uses", *HIDDEN_STEP),
+    ("pages", *HIDDEN_STEP),
+    ("uses", "          if-no-files-found: error\n",
+     "          if-no-files-found: error\n      - uses: actions/upload-artifact@v4\n"
+     "        with:\n          path: data\n"),
+    ("pages", "          if-no-files-found: error\n",
+     "          if-no-files-found: error\n      - uses: actions/upload-artifact@v4\n"
+     "        with:\n          path: data\n"),
+    # file names back in the log: the old action, a verbose run
+    ("uses", UPLOAD_STEP, "        uses: actions/upload-pages-artifact@v4\n"),
+    ("pages", UPLOAD_STEP, "        uses: actions/upload-pages-artifact@v4\n"),
+    ("uses", UPLOAD_STEP, "        uses: actions/upload-artifact@v4\n"),       # not the pin
+    ("pages", PACK, PACK + " -v"),
+    # the artifact of a run whose guard failed; one that outlives the deployment; one
+    # `deploy-pages` does not find
+    ("pages", f"        run: {PACK}\n", f"        if: always()\n        run: {PACK}\n"),
+    ("pages", "          retention-days: 1\n", "          retention-days: 90\n"),
+    ("pages", "          name: github-pages\n", "          name: site\n"),
     ("accept", f"check-site --record {ACCEPT}",
      "check-site --record ${{ github.event_name == 'schedule' && '--accept-changes' || '' }}"),
     ("accept", "        run: python -m pytest\n",
@@ -324,12 +411,13 @@ def test_partial_failure_keeps_the_crawl() -> None:
     update = _jobs(text)["update"]
     assert update.index("id: snapshot") < update.index("all --skip-crawl") < \
         update.index("check-site") < update.index("Export the final state") < \
-        update.index("mode: upload") < update.index("upload-pages-artifact")
+        update.index("mode: upload") < update.index(PACK) < \
+        update.index(f"uses: {UPLOAD_ACTION}")
     # ... and the upload step (the action) carries that condition
     assert ("        if: always() && steps.snapshot.outcome == 'success'\n"
             f"        uses: {STATE_ACTION}\n        with:\n          mode: upload\n") in update
-    # the Pages artifact is only made by a fully successful run (no `if:` on that step)
-    assert "if:" not in update.split("upload-pages-artifact")[1]
+    # the Pages artifact is only made by a fully successful run (no `if:` on these steps)
+    assert "if:" not in update.split("- name: Pack the site")[1]
 
 
 # --------------------------------------------------------------------------- lock file
