@@ -865,6 +865,18 @@ def test_sample_mode_lowers_the_provisional_threshold() -> None:
     assert load_config(env=env).provisional_min_bouts == 30
 
 
+def test_burn_in_configuration() -> None:
+    """The first season of the data is the burn-in: 2004 for the real history, 2011 for
+    the --sample data (which begins there)."""
+    assert load_config(env={}).from_year == 2004
+    assert load_config(env={}).elo_first_ranked_season == 2005
+    assert load_config({"sample": True}, env={}).elo_first_ranked_season == 2012
+    assert load_config({"sample": True, "elo_first_ranked_season": 2019},
+                       env={}).elo_first_ranked_season == 2019
+    env = {"SCHWINGEN_SAMPLE": "1", "SCHWINGEN_ELO_FIRST_RANKED_SEASON": "2005"}
+    assert load_config(env=env).elo_first_ranked_season == 2005
+
+
 def test_k_scale_and_delta_configuration() -> None:
     cfg = load_config(env={})
     assert cfg.elo_k_scale == 2.0 and cfg.season_reversion_delta == 0.05
@@ -1030,8 +1042,155 @@ def test_cli_elo_evaluate_prints_report(sample_run: Path,
     assert "K x 2" in out and "delta=0.05" in out
     for section in ("update modes", "update modes by K scale", "MoV grid", "K scale x delta",
                     "calibration by rating gap", "identity sensitivity",
-                    "rating distribution"):
+                    "rating distribution", "cold start", "without the Regional festivals"):
         assert section in out
+
+
+# =========================================================================== phase 10
+def one_sided(a: str, b: str, outcome: str = "WIN_A", **kw: object) -> dict[str, object]:
+    """A bout of the sheets before 2011 against an opponent who is not printed: known
+    from A's line only, no grade for B."""
+    row = bout(a, b, outcome, gb=None, **kw)  # type: ignore[arg-type]
+    row["flags"] = "one_sided,unlisted_opponent"
+    return row
+
+
+def flagged(*rows: dict[str, object]) -> pd.DataFrame:
+    df = frame(*rows)
+    df["flags"] = df["flags"].fillna("") if "flags" in df.columns else ""
+    return df
+
+
+def test_one_sided_bout_counts_like_any_other_by_default() -> None:
+    assert EloParams().one_sided_weight == 1.0 and load_config(env={}).elo_one_sided_weight == 1.0
+    df = flagged(one_sided("a", "b"), bout("c", "d", gb=None))
+    r = SchwingElo(params(mov_alpha=1.0, mov_baseline_diff=1.36)).run(df)
+    assert r.ratings["a"] - 1500 == pytest.approx(16 * 0.5)       # outcome only: lambda = 1
+    assert r.ratings["a"] == pytest.approx(r.ratings["c"])
+    assert r.ratings["b"] == pytest.approx(3000 - r.ratings["a"])  # zero-sum
+    assert (r.bouts["mov_lambda"] == 1.0).all()
+
+
+@pytest.mark.parametrize("mode", ee.UPDATE_MODES)
+def test_one_sided_weight_scales_only_the_flagged_bouts(mode: str) -> None:
+    df = flagged(one_sided("a", "b", cat="Kantonal"), bout("c", "d", cat="Kantonal"),
+                 one_sided("d", "a", "DRAW", fest=2, date="2015-07-01", cat="Bergkranz"),
+                 bout("b", "c", "WIN_B", fest=2, date="2015-07-01", cat="Bergkranz"))
+    full = SchwingElo(params(update_mode=mode, k_scale=2.0)).run(df)
+    half = SchwingElo(params(update_mode=mode, k_scale=2.0, one_sided_weight=0.5)).run(df)
+    fb, hb = (r.bouts.set_index("bout_id") for r in (full, half))
+    ids = list(df["bout_id"])
+    assert hb.loc[ids, "k"].tolist() == [24.0, 48.0, 40.0, 80.0]   # 0.5 * 2 * 24, 2 * 24, ...
+    assert fb.loc[ids, "k"].tolist() == [48.0, 48.0, 80.0, 80.0]
+    assert hb.loc[ids[0], "delta_a"] == pytest.approx(0.5 * fb.loc[ids[0], "delta_a"])
+    assert hb.loc[ids[1], "delta_a"] == pytest.approx(fb.loc[ids[1], "delta_a"])
+    # still zero-sum, and the per-bout table still adds up to the history
+    assert sum(half.ratings.values()) == pytest.approx(4 * 1500)
+    c = ee.bout_contributions(half)
+    assert np.allclose(c["delta"], c["k"] * c["mov_lambda"] * (c["score"] - c["expected"]))
+    per = c.groupby(["athlete_id", "fest_id"])["delta"].sum()
+    h = half.history.set_index(["athlete_id", "fest_id"])
+    assert np.allclose(per.reindex(h.index), h["rating_after"] - h["rating_before"])
+
+
+def test_one_sided_weight_zero_leaves_the_bout_unrated() -> None:
+    df = flagged(one_sided("a", "ghost"), bout("a", "b"), one_sided("b", "a", fest=2,
+                                                                    date="2015-07-01"))
+    r = SchwingElo(params(one_sided_weight=0.0)).run(df)
+    assert set(r.ratings) == {"a", "b"}                 # the unprinted opponent is not rated
+    assert list(r.bouts["bout_id"]) == [df["bout_id"].iloc[1]]
+    assert r.history["n_bouts"].tolist() == [1, 1]      # no career bout counted for it
+    same = SchwingElo(params()).run(df.iloc[[1]])
+    assert r.ratings == same.ratings
+    assert len(ee.rated_bouts(df, 0.0)) == 1 and len(ee.rated_bouts(df, 0.5)) == 3
+
+
+def test_one_sided_weight_ignores_other_flags_and_a_missing_flags_column() -> None:
+    """Only `unlisted_opponent` is meant: the one-sided Schlussgang bouts of 2011+ (the
+    sheet omits the loser's line) and extra bouts keep their full weight."""
+    rows = [bout("a", "b", gb=None), bout("c", "d", gb=None), bout("e", "f")]
+    df = frame(*rows)
+    assert not ee.unlisted_opponent(df).any()            # no flags column at all
+    df["flags"] = ["one_sided", "extra_bout,gang_collision", None]
+    assert not ee.unlisted_opponent(df).any()
+    assert final(df, one_sided_weight=0.25) == final(df)
+    df.loc[2, "flags"] = "gang_collision,unlisted_opponent"
+    assert ee.unlisted_opponent(df).tolist() == [False, False, True]
+    assert final(df, one_sided_weight=0.25)["e"] - 1500 == pytest.approx(0.25 * 8)
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.5, math.nan, math.inf])
+def test_one_sided_weight_validation(value: float) -> None:
+    with pytest.raises(ValueError, match="one-sided"):
+        params(one_sided_weight=value)
+    with pytest.raises(ValueError, match="one-sided"):
+        load_config(env={"SCHWINGEN_ELO_ONE_SIDED_WEIGHT": str(value)})
+
+
+def test_one_sided_weight_from_config() -> None:
+    cfg = load_config(env={"SCHWINGEN_ELO_ONE_SIDED_WEIGHT": "0.5"})
+    assert EloParams.from_config(cfg).one_sided_weight == 0.5
+    df = flagged(one_sided("a", "b"), bout("a", "c", fest=2, date="2015-07-01"))
+    athletes = athletes_frame(("a", "x"), ("b", "x"), ("c", "x"))
+    result, table, _ = er.compute(df, athletes, None, cfg_with(
+        elo_one_sided_weight=0.5, provisional_min_bouts=0, mov_alpha=0.0))
+    assert result.bouts["k"].tolist() == [16.0, 32.0]
+    assert table.set_index("athlete_id").loc["b", "n_bouts"] == 1   # rated, at half weight
+
+
+def censor_fixture() -> pd.DataFrame:
+    """One festival of four Gänge: f1..f4 wrestle all of them, e1 / e2 only two (one
+    against each other, one against a finisher)."""
+    rows, pairs = [], {1: [("f1", "f2"), ("f3", "f4"), ("e1", "e2")],
+                       2: [("f1", "f3"), ("f2", "f4")],
+                       3: [("f1", "f4"), ("f2", "f3")],
+                       4: [("f1", "e1"), ("e2", "f2"), ("f3", "f4")]}
+    for gang, ps in pairs.items():
+        rows += [bout(a, b, "WIN_A", fest=7, gang=gang, cat="Kantonal") for a, b in ps]
+    return frame(*rows)
+
+
+def test_censoring_a_complete_sheet_like_the_old_ones() -> None:
+    df = censor_fixture()
+    counts = ev.festival_gang_counts(df).set_index("athlete_id")
+    assert counts.loc["f1", "n"] == 4 and counts.loc["e1", "n"] == 2
+    assert counts["finished"].to_dict() == {"e1": False, "e2": False, "f1": True, "f2": True,
+                                            "f3": True, "f4": True}
+    cut = ev.censor_like_old_sheets(df)
+    by_pair = {(r.athlete_a_id, r.athlete_b_id, r.gang_nr): r for r in cut.itertuples()}
+    assert len(cut) == len(df) - 1 and ("e1", "e2", 1) not in by_pair   # among the unprinted
+    printed_a, printed_b = by_pair[("f1", "e1", 4)], by_pair[("e2", "f2", 4)]
+    assert printed_a.flags == printed_b.flags == "one_sided,unlisted_opponent"
+    assert printed_a.grade_a == 10.0 and pd.isna(printed_a.grade_b)
+    assert pd.isna(printed_b.grade_a) and printed_b.grade_b == 8.75
+    assert printed_b.outcome == "WIN_A"                   # the outcome stays as it was
+    assert by_pair[("f1", "f2", 1)].flags == "" and by_pair[("f1", "f2", 1)].grade_b == 8.75
+    assert ee.unlisted_opponent(cut).sum() == 2
+
+
+def test_one_sided_and_cold_start_tables() -> None:
+    df = random_bouts(n_fests=60)   # 2012 .. 2019, mixed categories
+    df["flags"] = ""
+    p = params(provisional_min_bouts=8)
+    exp = ev.censoring_experiment(df, p, seasons=(2012, 2015), weights=(1.0, 0.0),
+                                  top_n=5, min_festivals=2)
+    assert np.isnan(exp.index[0]) and list(exp.index[1:]) == [1.0, 0.0]
+    assert 0 <= exp["one_sided_share"].iloc[0] < 1 and (exp["rmse"].iloc[1:] >= 0).all()
+    marked = pd.concat([ev.censor_like_old_sheets(df[df["date"] < "2016"]),
+                        df[df["date"] >= "2016"]])
+    w = ev.compare_one_sided_weights(marked, p, weights=(1.0, 0.0),
+                                     windows=((2012, 2015), (2016, 2019)))
+    assert list(w.index) == [1.0, 0.0] and list(w.columns) == ["2012-2015", "2016-2019"]
+    cold = ev.cold_start_table(df, p, (2013, 2015), seasons_after=3, min_bouts=8, top_n=10)
+    assert list(cold.index.get_level_values("start").unique()) == [2013, 2015]
+    assert (cold["seasons_since_start"] >= 1).all() and cold["top20_overlap"].between(0, 20).all()
+    assert cold["brier"].notna().all() and cold["brier_full"].notna().all()
+    scale = ev.scale_without_category(df, p, "Regional")
+    assert (scale["athletes_without"].fillna(0) <= scale["athletes"]).all()
+    assert {"sd", "top20_mean", "sd_without", "top20_mean_without"} <= set(scale.columns)
+    # a start in the data's own first season is the full history itself
+    same = ev.cold_start_table(df, p, (2012,), seasons_after=2, min_bouts=8, top_n=10)
+    assert (same["shift"].abs() < 1e-9).all() and (same["brier"] == same["brier_full"]).all()
 
 
 # =========================================================================== task 6: real data
@@ -1082,8 +1241,23 @@ def real() -> Real:
     ("Wicki Joel", 2022, 3),           # Schwingerkönig 2022
     ("Reichmuth Pirmin", 2019, 8),
     ("Reichmuth Pirmin", 2023, 8),
-    ("Forrer Arnold", 2012, 12),       # König 2001, still elite in his late career
-    ("Forrer Arnold", 2013, 10),
+    # König 2001. His bound for 2013 was 10 while the data began in 2011 - the rank that
+    # model measured, without margin. The model is the same; with the seasons 2004-2010
+    # the ratings of 2013 no longer come from a cold start two seasons earlier (a start
+    # at 1500 still moves the top 100 of its third season by tens of points against each
+    # other: `test_real_burn_in_is_the_first_season`), and the better-informed order has
+    # him 11th. What the test is about - still among the best in his mid-thirties -
+    # holds; his best seasons, which the data now has, are checked directly.
+    ("Forrer Arnold", 2007, 5),
+    ("Forrer Arnold", 2009, 5),
+    ("Forrer Arnold", 2012, 12),
+    ("Forrer Arnold", 2013, 15),
+    ("Abderhalden Jörg", 2005, 3),     # Schwingerkönig 2004
+    ("Abderhalden Jörg", 2007, 3),     # Schwingerkönig 2007
+    ("Abderhalden Jörg", 2010, 5),     # his last season
+    ("Stucki Christian", 2008, 3),     # Kilchberg 2008
+    ("Wenger Kilian", 2010, 5),        # Schwingerkönig 2010
+    ("Bösch Daniel", 2011, 3),         # Unspunnen 2011
     ("Sempach Matthias", 2013, 3),     # Schwingerkönig 2013
     ("Sempach Matthias", 2014, 3),     # Kilchberg 2014
     ("Stucki Christian", 2017, 3),     # Unspunnen 2017
@@ -1103,10 +1277,10 @@ def test_real_elite_rivals_are_far_above_the_field(real: Real) -> None:
     peaks = real.table.loc[real.table["n_bouts"] >= 24, "rating_peak"]
     for name in ("Glarner Matthias", "Wicki Joel", "Reichmuth Pirmin"):
         assert t.loc[real.athlete(name), "rating_peak"] > peaks.quantile(0.99), name
-    # Forrer peaks in 2013, while the top of the scale is still spreading out (the 20
-    # best average 2073 then, 2200+ from 2016): top 3 % all-time, top 4 of his season
+    # Forrer's highest rating falls in 2013, when the scale was still narrower than from
+    # 2016 on (the 20 best average 2400 then, 2470-2545 later): top 3 % all-time
     assert t.loc[real.athlete("Forrer Arnold"), "rating_peak"] > peaks.quantile(0.97)
-    # Forrer's best years were before 2011: the three younger ones peak higher here
+    # his best years lie in the narrow scale before 2012: the younger ones peak higher here
     assert t.loc[real.athlete("Forrer Arnold"), "rating_peak"] < \
         t.loc[real.athlete("Wicki Joel"), "rating_peak"]
 
@@ -1115,7 +1289,10 @@ def test_real_esaf_winners_lead_after_their_festival(real: Real) -> None:
     """After an ESAF the König is one of the three best-rated participants."""
     fests = pd.read_parquet(real.cfg.processed_dir / "festivals.parquet")
     h = real.result.history
-    for year, king in [(2013, "Sempach Matthias"), (2016, "Glarner Matthias"),
+    # 2007 is left out: the sheet of the ESAF 2007 yields only four of the König's eight
+    # bouts (Gänge 1, 3, 5, 7 - parser, reported in phase-10-history.md)
+    for year, king in [(2004, "Abderhalden Jörg"), (2010, "Wenger Kilian"),
+                       (2013, "Sempach Matthias"), (2016, "Glarner Matthias"),
                        (2019, "Stucki Christian"), (2022, "Wicki Joel"),
                        (2025, "Orlik Armon")]:
         fid = fests[(fests["eidg_type"] == "ESAF") & (fests["year"] == year)]["fest_id"].iloc[0]
@@ -1131,7 +1308,7 @@ def test_real_ratings_are_zero_sum_and_centred(real: Real) -> None:
     assert np.allclose(change, 0.0, atol=1e-6)
     assert np.mean(list(real.result.ratings.values())) == pytest.approx(1500.0, abs=1e-6)
     assert h[["rating_before", "rating_after"]].notna().all().all()
-    assert h["rating_after"].between(800, 2900).all()   # nothing runs away (844 .. 2823)
+    assert h["rating_after"].between(800, 2900).all()   # nothing runs away (848 .. 2828)
 
 
 def test_real_rankings_exclude_garbage_and_provisional_athletes(real: Real) -> None:
@@ -1159,7 +1336,61 @@ def test_real_no_inflation_after_burn_in(real: Real) -> None:
     assert full["mean"].between(1500, 1600).all()
     assert full["mean"].max() - full["mean"].min() < 40
     assert full["top20_mean"].max() - full["top20_mean"].min() < 120
-    assert (drift["newcomer_mean"].loc[2012:] < 1500).all()  # newcomers are below average
+    first = real.cfg.elo_first_ranked_season
+    assert (drift["newcomer_mean"].loc[first:] < 1500).all()  # newcomers are below average
+
+
+def test_real_scale_before_2016_is_narrower(real: Real) -> None:
+    """What the site has to say about comparing years: the top of the scale is built up
+    during the first seasons of the data, stays on a lower level while only Kranzfeste
+    are recorded (to 2011) and widens again until about 2016."""
+    drift = ev.season_drift(real.result.history, real.cfg.provisional_min_bouts)
+    if drift.index.min() > 2004:
+        pytest.skip("history before 2011 not in the data")
+    top = drift["top20_mean"]
+    settled = top.loc[[y for y in top.index if y >= 2016 and y != 2020]]
+    assert top.loc[2004] < top.loc[2006] < top.loc[2008]         # 1999, 2193, 2304
+    assert top.loc[2008:2012].max() - top.loc[2008:2012].min() < 80   # 2281 .. 2355
+    assert settled.min() - top.loc[2008:2012].max() > 80         # 2467+ against 2355
+    assert drift["sd"].loc[2016:2019].min() - drift["sd"].loc[2008:2012].max() > 40
+
+
+def test_real_burn_in_is_the_first_season(real: Real) -> None:
+    """Decision of Phase 10: one burn-in season. A cold start distorts the *order* in
+    its first season only; the *level* of the scale takes about five seasons."""
+    assert real.cfg.elo_first_ranked_season == real.result.bouts["season"].min() + 1
+    t = ev.cold_start_table(real.bouts, real.result.params, (2008, 2011), seasons_after=6)
+    for start in (2008, 2011):
+        part = t.loc[start].set_index("seasons_since_start")
+        assert part.loc[1, "brier"] > part.loc[1, "brier_full"] + 0.02   # +0.036 / +0.038
+        assert part.loc[2:, "top20_overlap"].min() >= 18
+        assert part.loc[2:, "rank_corr"].min() > 0.94
+        assert part.loc[2, "brier"] < part.loc[2, "brier_full"] + 0.015
+        shift = part["shift"]
+        assert (shift < 0).all() and shift.is_monotonic_increasing   # -240 .. -29
+        assert shift.loc[6] > -40 > shift.loc[3]
+
+
+def test_real_one_sided_bouts_count_fully(real: Real) -> None:
+    """Decision of Phase 10: bouts against an opponent the old sheets do not print count
+    like any other bout (`elo_one_sided_weight = 1`)."""
+    if not ee.unlisted_opponent(real.bouts).any():
+        pytest.skip("no one-sided bouts in the data")
+    assert real.result.params.one_sided_weight == 1.0
+    # they help to predict the bouts known from both sides, the more the fuller they count
+    w = ev.compare_one_sided_weights(real.bouts, real.result.params,
+                                     windows=((2005, 2007), (2008, 2010), (2011, 2012)))
+    assert list(w.index) == [1.0, 0.5, 0.25, 0.0]
+    assert all(w[c].is_monotonic_increasing for c in w.columns)
+    assert w.loc[0.0, "2005-2007"] - w.loc[1.0, "2005-2007"] > 0.003    # 0.1449 vs 0.1401
+    # complete sheets cut like the old ones: full weight comes closest to the uncut data
+    # and neither lifts the printed athletes nor sinks the others
+    c = ev.censoring_experiment(real.bouts, real.result.params)
+    cut = c.loc[[1.0, 0.5, 0.25, 0.0]]
+    assert cut["rmse"].idxmin() == 1.0 and cut.loc[1.0, "rmse"] < 0.7 * cut.loc[0.5, "rmse"]
+    assert cut["check_brier"].idxmin() == 1.0
+    assert abs(cut.loc[1.0, "bias_finishers"]) < 15 and abs(cut.loc[1.0, "bias_eliminated"]) < 15
+    assert cut.loc[0.0, "bias_finishers"] < -40 and cut.loc[0.0, "bias_eliminated"] > 40
 
 
 def test_real_predictions_beat_a_coin_flip_and_are_monotone(real: Real) -> None:
@@ -1236,15 +1467,17 @@ def test_real_k_scale_decision(real: Real) -> None:
     ranked, spec_ranked = (t[t["ranked"]].sort_values("rank") for t in (real.table, spec_table))
     assert 1.3 < ranked["rating"].std() / spec_ranked["rating"].std() < 1.6   # 295 vs 201
     assert 1.8 < moves(real.result).mean() / moves(spec).mean() < 2.2         # 26.0 vs 12.9
-    assert moves(real.result).max() < 450                                     # 398 vs 172
+    assert moves(real.result).max() < 450                                     # 343 vs 171
     assert len(set(ranked.head(20)["athlete_id"]) & set(spec_ranked.head(20)["athlete_id"])) >= 17
     assert len(set(ranked.head(100)["athlete_id"])
                & set(spec_ranked.head(100)["athlete_id"])) >= 90
-    # the numbers recorded in docs/progress (only comparable on the same data)
-    if str(real.result.as_of.date()) == "2026-09-27" and len(real.result.bouts) == 491_597:
-        assert brier(spec) == pytest.approx(0.12495, abs=5e-5)
-        assert spec_ranked["rating"].iloc[0] == pytest.approx(2408.6, abs=0.1)
+    # the numbers recorded in docs/progress (only comparable on the same data): the
+    # history from 2004 (Phase 10; from 2011 it was 491,597 bouts, 0.12495 / 2408.6 and
+    # 0.11263 / 2703.4)
+    if str(real.result.as_of.date()) == "2026-09-27" and len(real.result.bouts) == 581_147:
+        assert brier(spec) == pytest.approx(0.12476, abs=5e-5)
+        assert spec_ranked["rating"].iloc[0] == pytest.approx(2409.8, abs=0.1)
         assert spec_ranked["full_name"].iloc[0] == "Staudenmann Fabian"
-        assert brier(real.result) == pytest.approx(0.11263, abs=5e-5)
-        assert ranked["rating"].iloc[0] == pytest.approx(2703.4, abs=0.1)
+        assert brier(real.result) == pytest.approx(0.11232, abs=5e-5)
+        assert ranked["rating"].iloc[0] == pytest.approx(2707.1, abs=0.1)
         assert ranked["full_name"].iloc[0] == "Giger Samuel"

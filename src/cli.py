@@ -586,12 +586,13 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     out = run_elo(cfg)
     p, h, table = out.result.params, out.ratings, out.athletes
     log.info("elo: mode=%s, K x %g (%s), alpha=%g, baseline_diff=%g, lambda in [%g, %g], "
-             "delta=%g, provisional below %d bouts / after %.1f seasons, ranked from "
-             "season %d", p.update_mode, p.k_scale,
+             "delta=%g, one-sided bouts x %g, provisional below %d bouts / after %.1f "
+             "seasons, ranked from season %d", p.update_mode, p.k_scale,
              " / ".join(f"{p.k(c):g}" for c in p.k_factors), p.mov_alpha,
              p.mov_baseline_diff, p.mov_lambda_min,
-             p.mov_lambda_max, p.reversion_delta, p.provisional_min_bouts,
-             p.provisional_inactive_seasons, cfg.elo_first_ranked_season)
+             p.mov_lambda_max, p.reversion_delta, p.one_sided_weight,
+             p.provisional_min_bouts, p.provisional_inactive_seasons,
+             cfg.elo_first_ranked_season)
     log.info("elo: %d bouts at %d festivals, %d athletes rated, %d history rows, as of %s "
              "(%.1f s)", len(out.result.bouts), h["fest_id"].nunique(),
              len(out.result.ratings), len(h),

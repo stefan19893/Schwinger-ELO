@@ -1189,7 +1189,9 @@ def test_real_bout_files_say_nothing_about_hidden_bouts(real: Site) -> None:
 
 def test_real_known_weaknesses_are_represented(real: Site) -> None:
     seasons = {s["season"]: s for s in real.seasons["seasons"]}
-    assert seasons[2011]["status"] == "burn_in"
+    # the burn-in is the first season of the data (2004 since Phase 10, task 6; was 2011)
+    first = min(seasons)
+    assert first == real.cfg.elo_first_ranked_season - 1 and seasons[first]["status"] == "burn_in"
     assert seasons[2020]["status"] == "thin" and seasons[2020]["n_festivals"] < 20
     assert all(seasons[y]["status"] == "ok" for y in (2012, 2016, 2019, 2021, 2025))
     # the season lists need 12 season bouts: no place on a single festival

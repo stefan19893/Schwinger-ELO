@@ -6,12 +6,15 @@ Model, per bout between athletes A and B at a festival of category ``c``::
     S_A    = 1 (A wins) | 0.5 (gestellt) | 0 (B wins)
     lambda = clamp(1 + alpha * (grade_winner - grade_loser - baseline_diff))
              for wins with both grades known, else 1         margin of victory
-    delta  = k_scale * K[c] * lambda * (S_A - E_A)
+    delta  = k_scale * K[c] * w * lambda * (S_A - E_A)
     R_A   += delta ;  R_B -= delta                           zero-sum per bout
 
 ``K[c]`` are the per-category K-factors of the spec, ``k_scale`` one multiplier for all
 of them (``elo_k_scale`` in ``src/config.py``): it sets the speed of the ratings, and
-with it the spread of the scale, without touching the ratio between the tiers.
+with it the spread of the scale, without touching the ratio between the tiers. ``w`` is 1
+except for a bout flagged ``unlisted_opponent`` (sheets before 2011: the opponent is not
+printed, the bout is known from one side), where it is ``one_sided_weight`` - 1.0 as
+configured, i.e. such a bout counts like any other; with 0 it is not rated at all.
 
 The model is symmetric in A / B: swapping the two sides of a bout (and its
 outcome and grades) gives exactly the mirrored update. That matters because the
@@ -19,7 +22,7 @@ sheets list the better-ranked athlete as A (he wins 70 % of the bouts).
 
 Order of operations (:meth:`SchwingElo.run`):
 
-1. Only ``elo_eligible`` bouts; sorted by ``(date, fest_id, gang_nr, bout_id)``.
+1. Only ``elo_eligible`` bouts (:func:`rated_bouts`); sorted by ``(date, fest_id, gang_nr, bout_id)``.
 2. Before a festival that lies in a later rating year than the previous one
    (rating years start on 1 ``season_start_month``, April), every athlete who
    already has a rating is pulled toward the mean once per boundary crossed::
@@ -62,6 +65,9 @@ if TYPE_CHECKING:
 OUTCOME_SCORE: dict[str, float] = {"WIN_A": 1.0, "DRAW": 0.5, "WIN_B": 0.0}
 UPDATE_MODES: tuple[str, ...] = ("festival", "phase", "gang", "sequential")
 DAYS_PER_SEASON = 365.25
+# Bout flag of the sheets before 2011: the opponent is not printed on the sheet (he did
+# not finish the festival), so the bout is known from the printed athlete's line only.
+UNLISTED_FLAG = "unlisted_opponent"
 
 BOUT_COLUMNS: tuple[str, ...] = (
     "bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
@@ -97,8 +103,13 @@ class EloParams:
     provisional_min_bouts: int = 0
     update_mode: str = "festival"
     phase_split_gang: int = 4
+    # weight of a bout flagged ``unlisted_opponent`` (multiplies its K-factor); 0 = the
+    # bout is not rated at all
+    one_sided_weight: float = 1.0
 
     def __post_init__(self) -> None:
+        if not (0 <= self.one_sided_weight <= 1):  # also rejects NaN
+            raise ValueError("one-sided bout weight must be within 0..1")
         if self.update_mode not in UPDATE_MODES:
             raise ValueError(f"elo update mode {self.update_mode!r} not in {UPDATE_MODES}")
         if self.scale <= 0:
@@ -126,7 +137,8 @@ class EloParams:
             reversion_mean=cfg.season_reversion_mean,
             provisional_inactive_seasons=cfg.provisional_inactive_seasons,
             provisional_min_bouts=cfg.provisional_min_bouts,
-            update_mode=cfg.elo_update_mode, phase_split_gang=cfg.elo_phase_split_gang)
+            update_mode=cfg.elo_update_mode, phase_split_gang=cfg.elo_phase_split_gang,
+            one_sided_weight=cfg.elo_one_sided_weight)
         values.update(overrides)
         return cls(**values)
 
@@ -265,7 +277,7 @@ class SchwingElo:
         of operations). Deterministic: the result depends only on the bout rows, not
         on their order in ``bouts``."""
         p = self.params
-        df = _prepare(bouts)
+        df = _prepare(bouts, p.one_sided_weight)
         n = len(df)
         ids, inverse = np.unique(
             np.concatenate([df["athlete_a_id"].to_numpy(dtype=object),
@@ -276,6 +288,8 @@ class SchwingElo:
         cats = df["category"].to_numpy(dtype=object)
         k_by_cat = {c: p.k(c) for c in pd.unique(cats)}
         k = np.array([k_by_cat[c] for c in cats], dtype=float)
+        if p.one_sided_weight != 1.0:
+            k = np.where(unlisted_opponent(df), k * p.one_sided_weight, k)
         lam = np.asarray(bout_multiplier(score, df["grade_a"].to_numpy(dtype=float),
                                          df["grade_b"].to_numpy(dtype=float), p),
                          dtype=float).reshape(n)
@@ -408,14 +422,32 @@ def _nan(grade: float | None) -> float:
     return math.nan if grade is None else float(grade)
 
 
-def _prepare(bouts: pd.DataFrame) -> pd.DataFrame:
-    """Validate the bout table, keep the eligible bouts, sort them chronologically."""
-    missing = [c for c in BOUT_COLUMNS if c not in bouts.columns]
-    if missing:
-        raise ValueError(f"bouts: missing columns {missing}")
+def unlisted_opponent(bouts: pd.DataFrame) -> np.ndarray:
+    """Mask of the bouts flagged :data:`UNLISTED_FLAG` (all False without a ``flags``
+    column)."""
+    if "flags" not in bouts.columns:
+        return np.zeros(len(bouts), dtype=bool)
+    return bouts["flags"].fillna("").astype(str).str.split(",").map(
+        lambda xs: UNLISTED_FLAG in xs).to_numpy(dtype=bool)
+
+
+def rated_bouts(bouts: pd.DataFrame, one_sided_weight: float = 1.0) -> pd.DataFrame:
+    """The bouts the engine rates: ``elo_eligible`` ones, without the bouts against an
+    unlisted opponent when their weight is 0."""
     df = bouts
     if "elo_eligible" in df.columns:
         df = df[df["elo_eligible"].astype(bool)]
+    if one_sided_weight == 0:
+        df = df[~unlisted_opponent(df)]
+    return df
+
+
+def _prepare(bouts: pd.DataFrame, one_sided_weight: float = 1.0) -> pd.DataFrame:
+    """Validate the bout table, keep the rated bouts, sort them chronologically."""
+    missing = [c for c in BOUT_COLUMNS if c not in bouts.columns]
+    if missing:
+        raise ValueError(f"bouts: missing columns {missing}")
+    df = rated_bouts(bouts, one_sided_weight)
     df = df.assign(date=pd.to_datetime(df["date"]))
     unknown = sorted(set(df["outcome"]) - set(OUTCOME_SCORE))
     if unknown:
