@@ -15,7 +15,7 @@ import hashlib
 import logging
 import sqlite3
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +24,8 @@ from tqdm import tqdm
 from src.db import Festival, load_festivals
 from src.scraper import bouts_parser as bp
 from src.scraper.client import CacheMiss, FetchError, HttpClient
+from src.scraper.grid_parser import parse_grid
+from src.scraper.pdf_layout import Row, Word, pdf_rows
 from src.scraper.statistic_pdfs import fetch_statistic_pdf, pdf_to_text
 from src.scraper.supplements import fetch_interim_sheet
 
@@ -31,8 +33,9 @@ log = logging.getLogger("schwingen.parse")
 
 # Bump whenever parsing rules change so cached sheets are re-parsed.
 # v2: extra bouts, wrapped / no-grade lines, Gang count (review fixes); v3: one_sided
-# Schlussgang, interim sheets, entries_overflow, duplicate-content check
-PARSER_VERSION = 3
+# Schlussgang, interim sheets, entries_overflow, duplicate-content check; v4: sheets
+# before 2011 (positional table reader, unlisted opponents) - 2011+ results unchanged
+PARSER_VERSION = 4
 
 _ATHLETE_COLS = ["athlete_raw_id", "fest_id", "idx", "rank", "name_raw", "name", "name_key",
                  "name_base_key", "status", "mark", "sennen_turner", "withdrawn", "points",
@@ -111,6 +114,75 @@ def parse_text(fest: Festival, text: str, *, min_pair_rate: float,
                              min_pair_rate=min_pair_rate, interim_text=interim_text)
 
 
+# Sheets of festivals before this year are the old newspaper tables (Phase 10): read by
+# position as well, opponents the sheet does not print are kept as one-sided bouts.
+OLD_SHEETS_BEFORE = 2011
+
+
+def parse_quality(res: bp.FestivalParse) -> tuple[int, int, int]:
+    """Order of two readings of one sheet: athletes whose total is the sum of their
+    grades, then entries paired from both sides, then bouts."""
+    two_sided = sum(2 for b in res.bouts if "one_sided" not in str(b["flags"]).split(","))
+    return bp.consistent_blocks(res)[0] if res.bouts else 0, two_sided, len(res.bouts)
+
+
+def parse_pdf(fest: Festival, content: bytes, *, min_pair_rate: float,
+              interim_text: str | None = None) -> bp.FestivalParse:
+    """Parse one statistic PDF. Festivals from 2011 on: the text layouts, as ever.
+    Before 2011: the text layouts and the positional table reader
+    (:mod:`src.scraper.grid_parser`), whichever reads the sheet better."""
+    text = pdf_to_text(content)
+    if fest.year >= OLD_SHEETS_BEFORE:
+        return parse_text(fest, text, min_pair_rate=min_pair_rate, interim_text=interim_text)
+    return parse_old(fest, text, pdf_rows(content), min_pair_rate=min_pair_rate)
+
+
+def _split_words(words: Sequence[Word]) -> list[Word]:
+    """Words of a decoded row: the decoded text has its spaces inside PDFium's words."""
+    out: list[Word] = []
+    for w in words:
+        parts = w.text.split()
+        step = (w.x1 - w.x0) / max(len(w.text), 1)
+        pos = 0
+        for p in parts:
+            pos = w.text.index(p, pos)
+            out.append(Word(p, w.x0 + pos * step, w.x0 + (pos + len(p)) * step))
+            pos += len(p)
+    return out
+
+
+def parse_old(fest: Festival, text: str, rows: Sequence[Row], *,
+              min_pair_rate: float) -> bp.FestivalParse:
+    """An old sheet from its plain text and its printed rows (see :func:`parse_pdf`)."""
+    kw = {"max_gang": bp.max_gaenge(fest.category, fest.eidg_type),
+          "min_pair_rate": min_pair_rate, "unlisted": True}
+    if bp.decode_shifted_text(text) is not None:   # shifted character codes: decode both
+        text = bp.decode_shifted_text(text) or text
+        rows = [Row(r.page, r.y, tuple(Word("".join(bp._unshift(c) for c in w.text), w.x0, w.x1)
+                                        for w in r.words)) for r in rows]
+        rows = [Row(r.page, r.y, tuple(_split_words(r.words))) for r in rows]
+    by_text = bp.parse_festival(text, fest.fest_id, fest.date, fest.name, **kw)
+    by_grid = bp.festival_from_sheet(parse_grid(rows, fest.year), fest.fest_id, fest.date,
+                                     fest.name, **kw)
+    return by_text if text_reads_better(parse_quality(by_text), parse_quality(by_grid)) \
+        else by_grid
+
+
+# The text reading replaces the table reading only when it is clearly better: this many
+# more athletes with a proven total, or this share more entries paired from both sides.
+TEXT_MARGIN_BLOCKS = 5
+TEXT_MARGIN_PAIRED = 1.03
+
+
+def text_reads_better(text: tuple[int, int, int], grid: tuple[int, int, int]) -> bool:
+    """The table reading keeps residence, association and birth-year suffix apart from
+    the name; where both readings find about the same bouts it is the one to keep."""
+    if not grid[2]:         # no bouts from the table: the text reading, or its diagnosis
+        return text >= grid
+    return text[0] > grid[0] + TEXT_MARGIN_BLOCKS or (
+        text[0] >= grid[0] and text[1] > grid[1] * TEXT_MARGIN_PAIRED)
+
+
 def parse_all(conn: sqlite3.Connection, client: HttpClient, *, today: _dt.date | None = None,
               min_pair_rate: float = 0.5, force: bool = False, progress: bool = False,
               pdf_max_age_hours: float = 24.0, pdf_grace_days: int = 14) -> ParseRunReport:
@@ -150,13 +222,19 @@ def parse_all(conn: sqlite3.Connection, client: HttpClient, *, today: _dt.date |
         if not force and old_sha == sha and old_version == PARSER_VERSION:
             rep.unchanged += 1
             continue
+        old = fest.year < OLD_SHEETS_BEFORE
         try:
             text = pdf_to_text(pdf.content)
+            rows = pdf_rows(pdf.content) if old else []
         except Exception as exc:  # noqa: BLE001 - any PDFium failure is recorded, not raised
             _store_failure(conn, fest, rep, "pdf_error", sha, "pdf_unreadable",
                            f"{type(exc).__name__}: {exc}")
             continue
-        res = parse_text(fest, text, min_pair_rate=min_pair_rate, interim_text=interim_text)
+        if old:
+            res = parse_old(fest, text, rows, min_pair_rate=min_pair_rate)
+        else:
+            res = parse_text(fest, text, min_pair_rate=min_pair_rate,
+                             interim_text=interim_text)
         res.rejects.extend(extra)
         store_result(conn, fest, res, status=res.status, sha=sha)
         rep.parsed += 1

@@ -88,6 +88,15 @@ def _is_uniform(uniform: dict[tuple[int, str], str], fid: int, source: str,
     return bool(code) and uniform.get((fid, source)) == code.strip().upper()  # type: ignore[union-attr]
 
 
+# The club registry (names, spellings, Teilverband votes) is learned from the ranking
+# lists from this date on and from the portraits. The lists of the seasons before 2011
+# (Phase 10) are read against it but do not shape it: they rarely print a club, their
+# club column holds remarks ("Couronne", "Punkte", "Neueidgenosse") in several layouts,
+# and their spellings would rename clubs of published athletes ("Basel-Stadt" -> "Basel")
+# and unfold established ones ("Sense" from "Sense/La Singine").
+CLUB_REGISTRY_FROM = "2011-01-01"
+
+
 def build_registry(conn: sqlite3.Connection, uniform: dict[tuple[int, str], str] | None = None
                    ) -> tuple[ClubRegistry, dict[int, str | None]]:
     uniform = uniform or {}
@@ -99,6 +108,8 @@ def build_registry(conn: sqlite3.Connection, uniform: dict[tuple[int, str], str]
     for fid, club, code, n in conn.execute(
             "SELECT fest_id, club_raw, assoc_code, COUNT(*) FROM ranking_entries "
             "WHERE club_raw IS NOT NULL GROUP BY 1, 2, 3"):
+        if fests[fid].date < CLUB_REGISTRY_FROM:
+            continue
         if _is_uniform(uniform, fid, "ranking", _ranking_code(code, club)):
             code = None                         # a blanket code is no vote for the club
         reg.add(club, code=code, festival_sub=fest_sub.get(fid) if fid in home else None, count=n)

@@ -139,3 +139,53 @@ def split_cells(words: tuple[Word, ...] | list[Word], gap: float) -> list[list[W
         else:
             cells.append([w])
     return cells
+
+
+@dataclass(frozen=True)
+class Row:
+    """One printed row across the whole page width: words sorted by x."""
+    page: int
+    y: float
+    words: tuple[Word, ...]
+
+    @property
+    def text(self) -> str:
+        return " ".join(w.text for w in self.words)
+
+
+def _overlap(a: tuple[Word, ...] | list[Word], b: tuple[Word, ...] | list[Word]) -> bool:
+    """True if a word of ``a`` and a word of ``b`` cover the same x range (> 1 pt)."""
+    return any(min(wa.x1, wb.x1) - max(wa.x0, wb.x0) > 1.0 for wa in a for wb in b)
+
+
+def merge_rows(lines: list[Line], tol: float = 3.5) -> list[Row]:
+    """Printed rows from PDFium lines: lines of one page whose baselines agree within
+    ``tol`` points (a descender lowers a run by ~2 pt; rows are >= 9 pt apart) are one
+    row when their words do not cover each other.
+
+    Table PDFs often emit a row in several runs (all ranks and totals of a header row
+    first, the names much later; signs and names in one run, grades in another); plain
+    text order then tears the columns apart. Two runs printed on top of each other (a
+    typesetting fault of some sheets) stay separate rows, in text order."""
+    rows: list[Row] = []
+    by_page: dict[int, list[tuple[int, Line]]] = {}
+    for n, ln in enumerate(lines):
+        by_page.setdefault(ln.page, []).append((n, ln))
+    for page in sorted(by_page):
+        groups: list[tuple[float, int, list[Word]]] = []  # (y, first index, words)
+        for n, ln in by_page[page]:
+            for k, (gy, gn, gw) in enumerate(groups):
+                if abs(gy - ln.y) <= tol and not _overlap(gw, ln.words):
+                    gw.extend(ln.words)
+                    groups[k] = (gy, gn, gw)
+                    break
+            else:
+                groups.append((ln.y, n, list(ln.words)))
+        groups.sort(key=lambda g: (-g[0], g[1]))
+        rows.extend(Row(page, y, tuple(sorted(ws, key=lambda w: w.x0))) for y, _n, ws in groups)
+    return rows
+
+
+def pdf_rows(content: bytes, tol: float = 3.5) -> list[Row]:
+    """All printed rows of all pages, top to bottom per page (see :func:`merge_rows`)."""
+    return merge_rows(pdf_lines(content), tol)

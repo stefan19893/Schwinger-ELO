@@ -57,6 +57,10 @@ class Block:
     mark: str = ""             # '*' (Kranz/award) or '°' (withdrawn) before the name
     interim: bool = False      # block taken from an interim sheet (see merge_interim_sheet)
     entries: list[Entry] = field(default_factory=list)
+    # printed beside the name in table layouts (grid parser); override the hints that
+    # are otherwise read from the name text
+    place: str | None = None
+    association: str | None = None
 
 
 @dataclass
@@ -160,6 +164,35 @@ def decode_glyph_ids(text: str) -> str:
             open_paren = out[-1] == "("
     return "\n".join(re.sub(r"(?<=[a-zß-ÿ?])(?=[A-ZÀ-Þ])", " ", ln)
                      for ln in "".join(out).split("\n"))
+
+
+def _unshift(ch: str) -> str:
+    if ch.isspace():
+        return ch
+    try:
+        b = ch.encode("mac_roman")[0]
+    except UnicodeEncodeError:
+        try:   # PDFium returns U+2126 (ohm sign) for Mac Roman 0xBD (Greek omega)
+            b = unicodedata.normalize("NFKC", ch).encode("mac_roman")[0]
+        except UnicodeEncodeError:
+            return "?"
+    orig = b - 29 if b < 0x7F else b - 30
+    if orig < 0x20:
+        return "?"
+    return bytes([orig]).decode("mac_roman")
+
+
+def decode_shifted_text(text: str) -> str | None:
+    """Text layers whose character codes are shifted by 29 (30 above 0x7E), read as Mac
+    Roman - three ISV sheets of 2006 / 2008 ("pÅÜäìëëê~åÖäáëíÉ" = "Schlussrangliste",
+    "=" = space). Returns the decoded text, or None if the text is not of this kind."""
+    printable = [c for c in text if not c.isspace()]
+    if len(printable) < 200 or text.count("=") < 0.08 * len(printable):
+        return None
+    decoded = "".join(_unshift(c) for c in text)
+    if len(GRADE_TOKEN_RE.findall(decoded)) < 10:
+        return None
+    return decoded
 
 
 def normalize_text(text: str) -> list[str]:
@@ -928,16 +961,30 @@ _GENERIC_WORDS = {"schwinget", "schwingfest", "schwingertag", "kantonalschwingfe
                   "hallenschwinget", "abendschwinget", "rangschwinget", "schwing", "älplerfest"}
 
 
-def verify_header(header: list[str], fest_date: str, fest_name: str) -> tuple[str, str]:
-    """('ok' | 'mismatch' | 'unverified', detail): does the sheet belong to this festival?"""
+_PRINT_DATE_RE = re.compile(r"\bDatum:\s*\d{1,2}\.\d{1,2}\.\d{2,4}")
+
+
+def verify_header(header: list[str], fest_date: str, fest_name: str, *,
+                  hand_set: bool = False) -> tuple[str, str]:
+    """('ok' | 'mismatch' | 'unverified', detail): does the sheet belong to this festival?
+
+    ``hand_set`` (sheets before 2011, typed by hand from a template): "Datum: 12.05.2005"
+    is the day the table was made, and a date with the festival's day and month but
+    another year ("26. Juni 2002" on the 2005 sheet, "15 juillet 2207") is a misprint
+    when the header also names the festival."""
     target = _dt.date.fromisoformat(fest_date)
+    if hand_set:
+        header = [_PRINT_DATE_RE.sub(" ", ln) for ln in header]
     dates = header_dates(header)
+    words = {w.casefold() for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", fest_name)} - _GENERIC_WORDS
+    head = " ".join(header).casefold()
     if dates:
         if any(abs((d - target).days) <= HEADER_DATE_TOLERANCE_DAYS for d in dates):
             return "ok", "date"
+        if hand_set and any((d.month, d.day) == (target.month, target.day) for d in dates) \
+                and any(w in head for w in words):
+            return "ok", "date (year misprinted) + name"
         return "mismatch", f"sheet dates {sorted({d.isoformat() for d in dates})} != {fest_date}"
-    words = {w.casefold() for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", fest_name)} - _GENERIC_WORDS
-    head = " ".join(header).casefold()
     if words and any(w in head for w in words):
         return "ok", "name"
     return "unverified", "no date or name token in sheet header"
@@ -1065,8 +1112,62 @@ def merge_interim_sheet(sheet: Sheet, interim: Sheet) -> int:
     return added
 
 
-def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> FestivalParse:
-    """Pair entries into bouts; everything that cannot be paired becomes a Reject."""
+def squash_name(base: str) -> str:
+    """Name key that ignores case, accents, hyphens, dots and spaces
+    ("Pellet Hans-Peter" = "Pellet Hanspeter")."""
+    s = unicodedata.normalize("NFKD", base.casefold())
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def _edit_distance_le(a: str, b: str, limit: int) -> bool:
+    """Levenshtein distance <= ``limit`` (small strings, early exit)."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (ca != cb)))
+        if min(cur) > limit:
+            return False
+        prev = cur
+    return prev[-1] <= limit
+
+
+def similar_names(a: str, b: str, max_edit: int = 2) -> bool:
+    """Two printed spellings that may be one athlete on a hand-set sheet: equal apart
+    from hyphens / spaces / accents, the same words in another order ("Edi Philipp"),
+    one cut off ("Pellet Hans-Pete"), or one or two letters apart ("Habheer" /
+    "Halbheer"). Only ever used together with a second piece of evidence."""
+    sa, sb = squash_name(a), squash_name(b)
+    if not sa or not sb:
+        return False
+    if sa == sb:
+        return True
+    if sorted(a.casefold().replace("-", " ").split()) == sorted(b.casefold().replace("-", " ").split()):
+        return True
+    short, long_ = (sa, sb) if len(sa) <= len(sb) else (sb, sa)
+    if len(short) >= 8 and long_.startswith(short):
+        return True
+    return len(short) >= 8 and _edit_distance_le(sa, sb, max_edit)
+
+
+# One-sided bouts against athletes a sheet does not print (old sheets, see
+# ``build_festival(unlisted=True)``): the sign must fit the printed grade.
+_UNLISTED_GRADES = {"+": (9.5, 10.0), "-": (8.5, 9.25), "o": (8.25, 9.0)}
+UNLISTED_FLAG = "unlisted"
+
+
+def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6,
+                   unlisted: bool = False) -> FestivalParse:
+    """Pair entries into bouts; everything that cannot be paired becomes a Reject.
+
+    ``unlisted`` (sheets before 2011, which print only the first ranks or only the
+    athletes who wrestled every Gang): an opponent the sheet has no block for becomes a
+    name-only athlete (flag ``unlisted``) and the entry a bout seen from one side
+    (flags ``one_sided,unlisted_opponent``: outcome from the sign, the opponent's grade
+    unknown). Hand-set spellings are tolerated where the bout is printed from both
+    sides (:func:`similar_names` plus the mirror entry)."""
     res = FestivalParse(fest_id=fest_id, layout=sheet.layout, status="ok",
                         youth_blocks=sheet.youth_blocks)
     rej = res.rejects.append
@@ -1117,6 +1218,10 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
         })
         if res.athletes[-1]["association"] is None:
             res.athletes[-1]["association"] = code_of(b.name_raw)
+        if b.place:
+            res.athletes[-1]["place"] = b.place
+        if b.association:
+            res.athletes[-1]["association"] = b.association
     for key, idxs in by_full.items():
         if len(idxs) > 1:
             rej(Reject(fest_id, "athlete", "duplicate_name_in_sheet",
@@ -1136,7 +1241,26 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
             mirrored = [c for c in cands if base_of[me] in opp_bases[c]]
             if len(mirrored) == 1:
                 return mirrored[0], True
+        if not cands and unlisted:
+            # another spelling of a printed athlete who lists ``me`` in turn
+            near = [c for c in range(len(blocks)) if c != me and similar_names(base, base_of[c])
+                    and any(similar_names(base_of[me], ob) for ob in opp_bases[c])]
+            if len(near) == 1:
+                return near[0], True
         return None, len(cands) > 1
+
+    # athletes the sheet does not print (``unlisted``): squashed name -> athlete index
+    phantom_idx: dict[str, int] = {}
+    phantom_names: list[str] = []
+    phantom_bouts: Counter[tuple[int, int]] = Counter()
+
+    def phantom(opp: str) -> int:
+        name = clean_name(opp)
+        key = squash_name(name_keys(name)[1])
+        if key not in phantom_idx:
+            phantom_idx[key] = len(blocks) + len(phantom_names)
+            phantom_names.append(opp)
+        return phantom_idx[key]
 
     # extra bouts (Zusatzgang): with an odd field one athlete fights one bout more
     # than the festival has Gänge. His line for it shows 0.00 / 0.25 / no grade
@@ -1155,11 +1279,19 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
     last_pos = [sum(1 for e in b.entries if not (_special(e) and (e.extra or surplus[i])))
                 for i, b in enumerate(blocks)]
 
+    # one-sided bouts (``unlisted``) are only taken from a block that proves itself: no
+    # surplus entries and a printed total that is the sum of its grades (a header the
+    # table reader missed leaves the next athlete's Gänge in the block above)
+    sound = [not overflow[i] and (b.points is None or abs(
+        b.points - sum(e.grade for e in b.entries if e.grade is not None and not e.extra)) <= 0.001)
+        for i, b in enumerate(blocks)]
+
     def extra_cand(e: Entry, who: int) -> bool:
         return _special(e) and (e.extra or surplus[who])
 
     # entries -> (a, b) occurrences -------------------------------------------------------
     occ: dict[tuple[int, int], list[tuple[int | None, Entry, int, str]]] = defaultdict(list)
+    pending_unlisted: list[dict[str, object]] = []
     exact: set[int] = set()  # id() of entries whose opponent resolved to exactly one athlete
     for idx, b in enumerate(blocks):
         pos = 0
@@ -1173,6 +1305,39 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
                 epos = e.gang or pos
                 label = f"G{epos}"
             opp, ambiguous_name = resolve(e.opponent, idx)
+            if opp is None and unlisted and not ambiguous_name:
+                obase = name_keys(clean_name(e.opponent))[1]
+                lo, hi = _UNLISTED_GRADES[e.sym]
+                detail = f"{b.name_raw} {label}: {e.sym} {e.opponent} {e.grade}"
+                if any(similar_names(obase, base_of[c], 1) for c in range(len(blocks))
+                       if c != idx):
+                    # a printed athlete under another spelling who does not list this bout
+                    rej(Reject(fest_id, "entry", "unmatched_entry",
+                               detail + " (similar printed name, no mirror entry)", e.line))
+                elif squash_name(obase) == squash_name(base_of[idx]):
+                    rej(Reject(fest_id, "entry", "self_bout", detail, e.line))
+                elif epos is None or _special(e) or e.forfeit or len(squash_name(obase)) < 4:
+                    rej(Reject(fest_id, "entry", "opponent_not_found", detail, e.line))
+                elif not sound[idx]:
+                    rej(Reject(fest_id, "entry", "block_unsound",
+                               detail + " (total is not the sum of the grades, or surplus "
+                               "entries; no mirror entry)", e.line))
+                elif not (_grade_ok(e.grade) and lo <= float(e.grade or 0) <= hi):
+                    rej(Reject(fest_id, "entry", "inconsistent_outcome",
+                               detail + " (sign and grade disagree, no mirror entry)", e.line))
+                else:
+                    ph = phantom(e.opponent)
+                    k = phantom_bouts[(idx, ph)]
+                    phantom_bouts[(idx, ph)] += 1
+                    pending_unlisted.append({
+                        "fest_id": fest_id, "a": idx, "b": ph, "pos_a": epos, "pos_b": epos,
+                        "k": k, "athlete_a_id": ids[idx], "athlete_b_id": f"{fest_id}-{ph:03d}",
+                        "gang_count": gang_count,
+                        "outcome": {"+": "WIN_A", "o": "WIN_B", "-": "DRAW"}[e.sym],
+                        "grade_a": e.grade, "grade_b": None, "schlussgang": e.schlussgang,
+                        "flags": ["one_sided", "unlisted_opponent"], "line": e.line,
+                    })
+                continue
             if opp is None:
                 in_youth = name_keys(clean_name(e.opponent))[1] in sheet.youth_names
                 reason = ("ambiguous_opponent" if ambiguous_name else
@@ -1283,6 +1448,20 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
                 "schlussgang": bool(ea.schlussgang or eb.schlussgang),
                 "flags": flags, "line": ea.line,
             })
+    for ph, raw in enumerate(phantom_names, start=len(blocks)):
+        name = clean_name(raw)
+        full, base = name_keys(name)
+        res.athletes.append({
+            "athlete_raw_id": f"{fest_id}-{ph:03d}", "fest_id": fest_id, "idx": ph, "rank": None,
+            "name_raw": raw, "name": name, "name_key": full, "name_base_key": base,
+            "status": status_of(raw), "mark": None, "sennen_turner": _st_marker(raw),
+            "withdrawn": False, "points": None, "points_mismatch": False,
+            "flags": UNLISTED_FLAG, "n_entries": 0, "grade_sum": 0.0, **name_details(name),
+        })
+        if res.athletes[-1]["association"] is None:
+            res.athletes[-1]["association"] = code_of(raw)
+    pending.extend(pending_unlisted)
+    names_of = [b.name_raw for b in blocks] + phantom_names
     _assign_gaenge(pending, [len(b.entries) >= gang_count for b in blocks])
     # Schlussgang: only known where the sheet marks it ('s+' / 's-' / 'so' entries in
     # block layouts); everywhere else it is unknown (None), never a misleading 0
@@ -1291,8 +1470,8 @@ def build_festival(sheet: Sheet, fest_id: int, *, max_gang: int = 6) -> Festival
         gang = int(p["gang_nr"])  # type: ignore[call-overload]
         if gang > max_gang:
             rej(Reject(fest_id, "bout", "gang_out_of_range",
-                       f"G{gang} > {max_gang}: {blocks[p['a']].name_raw} vs "
-                       f"{blocks[p['b']].name_raw}", p["line"]))
+                       f"G{gang} > {max_gang}: {names_of[p['a']]} vs "
+                       f"{names_of[p['b']]}", p["line"]))
             continue
         res.bouts.append({
             "bout_id": f"{fest_id}-{gang}-{p['a']:03d}-{p['b']:03d}-{p['k']}",
@@ -1323,7 +1502,23 @@ def paired_entries(res: FestivalParse) -> int:
     return 2 * len(res.bouts) - sum("one_sided" in str(b["flags"]).split(",") for b in res.bouts)
 
 
-def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> FestivalParse:
+# ``unlisted`` sheets: at least this share of the printed athletes must have a total
+# that is the sum of their grades, else the columns were not read correctly.
+MIN_CONSISTENT_BLOCKS = 0.5
+
+
+def consistent_blocks(res: FestivalParse) -> tuple[int, int]:
+    """(printed athletes whose total equals the sum of their grades, printed athletes
+    with a total and entries) - the structural check of a table read by position."""
+    listed = [a for a in res.athletes if UNLISTED_FLAG not in str(a["flags"]).split(",")
+              and a["points"] is not None and a["n_entries"]]
+    good = sum(1 for a in listed
+               if abs(float(a["points"]) - float(a["grade_sum"])) <= 0.001)  # type: ignore[arg-type]
+    return good, len(listed)
+
+
+def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5,
+                      unlisted: bool = False) -> FestivalParse:
     """Festival-level validation on top of the pairing checks (in place).
 
     * pair rate below ``min_pair_rate`` -> structurally unreliable sheet: all
@@ -1334,6 +1529,17 @@ def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> Fest
     """
     if not res.entries_total or not res.bouts:
         return res
+    if unlisted:
+        # a one-sided bout has no mirror entry to contradict a misread column, so the
+        # sheet must prove its structure: totals = sums of the grades
+        good, listed = consistent_blocks(res)
+        if listed and good / listed < MIN_CONSISTENT_BLOCKS:
+            res.rejects.append(Reject(res.fest_id, "festival", "structure_unreliable",
+                                      f"total = sum of grades for {good} of {listed} printed "
+                                      f"athletes; {len(res.bouts)} bouts not imported"))
+            res.bouts = []
+            res.status = "failed"
+            return res
     rate = paired_entries(res) / res.entries_total
     if rate < min_pair_rate:
         res.rejects.append(Reject(res.fest_id, "festival", "low_pair_rate",
@@ -1361,13 +1567,23 @@ def validate_festival(res: FestivalParse, *, min_pair_rate: float = 0.5) -> Fest
 
 def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
                    max_gang: int = 6, min_pair_rate: float = 0.5,
-                   interim_text: str | None = None) -> FestivalParse:
+                   interim_text: str | None = None, unlisted: bool = False) -> FestivalParse:
     """Full pipeline for one sheet: layout -> blocks -> header check -> bouts -> validation.
 
     ``interim_text``: an interim statistic sheet of the same festival whose extra
-    athletes are merged in (see :func:`merge_interim_sheet`)."""
-    sheet = parse_sheet(text, int(fest_date[:4]))
-    check, detail = verify_header(sheet.header, fest_date, fest_name)
+    athletes are merged in (see :func:`merge_interim_sheet`). ``unlisted``: see
+    :func:`build_festival`."""
+    return festival_from_sheet(parse_sheet(text, int(fest_date[:4])), fest_id, fest_date,
+                               fest_name, max_gang=max_gang, min_pair_rate=min_pair_rate,
+                               interim_text=interim_text, unlisted=unlisted)
+
+
+def festival_from_sheet(sheet: Sheet, fest_id: int, fest_date: str, fest_name: str, *,
+                        max_gang: int = 6, min_pair_rate: float = 0.5,
+                        interim_text: str | None = None,
+                        unlisted: bool = False) -> FestivalParse:
+    """Header check -> bouts -> validation for an already read sheet."""
+    check, detail = verify_header(sheet.header, fest_date, fest_name, hand_set=unlisted)
     if check == "mismatch":
         res = FestivalParse(fest_id=fest_id, layout=sheet.layout, status="header_mismatch",
                             header_check=check)
@@ -1383,11 +1599,11 @@ def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
             n = merge_interim_sheet(sheet, interim)
             interim_note = Reject(fest_id, "athlete", "interim_sheet_merged",
                                   f"{n} athletes added from the interim sheet")
-    res = build_festival(sheet, fest_id, max_gang=max_gang)
+    res = build_festival(sheet, fest_id, max_gang=max_gang, unlisted=unlisted)
     if interim_note:
         res.rejects.append(interim_note)
     res.header_check = check if check == "ok" else f"{check}: {detail}"
-    return validate_festival(res, min_pair_rate=min_pair_rate)
+    return validate_festival(res, min_pair_rate=min_pair_rate, unlisted=unlisted)
 
 
 # ----------------------------------------------------------------------------- frames
