@@ -22,9 +22,12 @@ On `compare.html` the visitor can switch the x-axis of the career chart from cal
 - About-page text / README / SPEC mention the switch; `web/css/style.css` only rebuilt if new classes are really needed.
 
 ## Tasks
-- [ ] 1. Read `web/js/compare.js` / `charts.js`; confirm the data suffices (`n` vs `bouts`); note the series design
-- [ ] 2. Implement switch, URL state, bout-axis series, tooltip, zoom buttons, caveat note
+- [x] 1. Read `web/js/compare.js` / `charts.js`; confirm the data suffices (`n` vs `bouts`); note the series design
+- [~] 2. Implement switch, URL state, bout-axis series, tooltip, zoom buttons, caveat note
 - [ ] 3. Tests (page rules, browser smoke) and verification against Parquet on real data
 - [ ] 4. About-page text, README, SPEC
 
 ## Handoff notes
+- 2026-10-04 — **Task 1 done; only this file and `STATE.md` touched.** The data suffice, no exporter change. Measured on the real build (`dist/data/history/`, 6,306 files): the sum of the history rows' `n` equals the header's `bouts` in **every** file (0 differences; `bouts` counts rated bouts, and unrated festivals have no history row). Between two consecutive rows `before` differs from the previous `after` in 21,562 cases, **always** with a 1 April in between and never without one (83 pairs with a 1 April in between show no difference: rating exactly at the mean) — so a gap between `after` and the next `before` can be drawn as the reversion step without re-deriving anything. 1,720 of 6,306 athletes have `first` = 2011 = `meta.first_season` (the caveat applies to them).
+  - **Series design (bout axis), built in `web/js/compare.js`, `SE.careerSeries` / `charts.js` untouched:** cumulative count `c` = sum of `n`; line starts at (0, first `before`), per festival one point at (`c`, `after`), the points joined by straight solid segments (the rating is only known before and after a festival; a horizontal-then-vertical step would put the festival's step and the dashed reversion step on the same x and make them unreadable). Where the next `before` differs from `after`: line broken at `c`, dashed vertical segment (`c`, `after`) → (`c`, next `before`) in its own series, as in the time chart. Several idle seasons collapse into one dashed step. No tail. x axis of type `value` from 0.
+  - **URL:** `x=gaenge` (anything else / absent = time); `compareUrl` appends it only in bout mode, so every time-mode address stays as it is today.
