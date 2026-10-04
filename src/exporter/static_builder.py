@@ -20,7 +20,19 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
 ``festivals.json``
     Index of all active festivals.
 ``fests/fest_<fest_id>.json``
-    One festival: participants (rating before / after) and bouts.
+    One festival: participants (rating before / after with one decimal, as in the history
+    files, and ``exp``, the sum of the expected scores of the athlete's bouts) and bouts.
+    A bout row ends with ``d``: what the bout contributed to the rating of athlete ``a``
+    (``bout_ratings.parquet``, one decimal; for ``b`` it is the negative) - the same number
+    as in the two athletes' bouts files, and under the same rule: **only for a rated bout
+    between two published athletes**, ``null`` otherwise (a festival that does not count,
+    or a withheld athlete on either side). A withheld athlete's row carries no rating
+    value at all (``before``, ``after``, ``exp`` null), so the page shows his Gänge
+    without numbers, and for a listed athlete the Gänge against withheld opponents have
+    no number of their own; what they add up to is ``after - before`` minus the listed
+    contributions - what the history file implies as well. Opponents the old sheets do
+    not print are published athletes like any other (they have ratings and profiles):
+    their bouts carry a contribution.
 ``history/history_<athlete_id>.json``
     One athlete: profile, season table, rating history per festival.
 ``bouts/bouts_<athlete_id>.json``
@@ -105,7 +117,8 @@ _IGNORED = shutil.ignore_patterns(".gitkeep", "__pycache__", "*.pyc", "*.md")
 # Written into every build; its presence marks a directory as safe to wipe.
 BUILD_MARKER = ".nojekyll"
 
-SCHEMA_VERSION = 1
+# 2: festival files carry the contribution per bout (`d`), `exp` and one-decimal ratings
+SCHEMA_VERSION = 2
 DATA_DIR = "data"
 ALLTIME_TOP_N = 200
 SEASON_TOP_N = 100
@@ -139,9 +152,9 @@ ALLTIME_COLS = ["pos", "id", "name", "club", "tv", "by", "peak", "date", "fest_i
                 "flags"]
 SEASON_COLS = ["pos", "id", "name", "club", "tv", "by", "rating", "peak", "bouts", "unc"]
 FESTIVAL_COLS = ["id", "name", "date", "cat", "eidg", "loc", "athletes", "bouts", "status"]
-FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "w", "d", "l", "pts", "unc",
-                     "anon"]
-FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags"]
+FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "exp", "w", "d", "l", "pts",
+                     "unc", "anon"]
+FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags", "d"]
 HISTORY_COLS = ["date", "fest_id", "fest", "cat", "before", "after", "n", "score", "exp",
                 "flags"]
 ATHLETE_SEASON_COLS = ["season", "rating", "peak", "bouts", "pos"]
@@ -559,12 +572,36 @@ def _bout_flags(flags: Any, schlussgang: Any) -> int:
                                             "gang_mismatch"}))
 
 
+def _delta_a(inp: Inputs) -> dict[str, float]:
+    """bout_id -> the contribution of a rated bout to side A (side B: its negative)."""
+    br = inp.bout_ratings
+    side_a = br["side"] == "A"
+    return dict(zip(br.loc[side_a, "bout_id"], br.loc[side_a, "delta"].astype(float)))
+
+
+def _contribution(delta_a: dict[str, float], bout_id: str, fest_id: int) -> float:
+    """The engine's change of a rated bout for side A; a rated bout without one means the
+    Parquet files are from different runs and fails the build."""
+    d = delta_a.get(bout_id)
+    if d is None or not math.isfinite(d):
+        raise ValueError(
+            "bout_ratings.parquet has no contribution for a rated bout of "
+            f"festival {fest_id}: it does not belong to this bouts.parquet - run "
+            "`python -m src.cli elo` again")
+    return d
+
+
 def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
                  out_dir: Path) -> tuple[int, int]:
-    """One file per festival with bouts; returns (files, bytes)."""
-    rated = {(a, int(f)): (b, c) for a, f, b, c in zip(
+    """One file per festival with bouts; returns (files, bytes).
+
+    The contribution ``d`` of a bout is written under the rule of the bouts files: a
+    rated bout between two exportable athletes, nothing else (see the module docstring)."""
+    rated = {(a, int(f)): (b, c, e) for a, f, b, c, e in zip(
         inp.ratings["athlete_id"], inp.ratings["fest_id"],
-        inp.ratings["rating_before"], inp.ratings["rating_after"])}
+        inp.ratings["rating_before"], inp.ratings["rating_after"], inp.ratings["expected"])}
+    delta_a = _delta_a(inp)
+    nothing = (None, None, None)
     meta = {int(r.fest_id): r for r in fests.itertuples(index=False)}
     n_files = n_bytes = 0
     for fest_id, part in inp.bouts.groupby("fest_id", sort=True):
@@ -592,18 +629,22 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
             p = people[a]
             # a withheld athlete's row carries no rating value: before / after would chain
             # into his whole rating history across the festival files
-            before, after = (None, None) if p.withheld else rated.get((a, fest_id),
-                                                                      (None, None))
+            before, after, exp = nothing if p.withheld else rated.get((a, fest_id), nothing)
             # no profile: the name alone (unrated athlete) or nothing (`not_a_name`)
             athletes.append([p.id if p.exportable else None, p.name if p.nameable else None,
                              p.club if p.exportable else None, p.tv if p.exportable else None,
-                             _int(before), _int(after), int(w[a]), int(d[a]), int(l[a]),
+                             _r1(before), _r1(after), _r1(exp) if p.exportable else None,
+                             int(w[a]), int(d[a]), int(l[a]),
                              _r2(pts[a]), p.unc if p.exportable else 0, int(p.withheld)])
-        bouts = sorted(
-            [int(g), index[a], index[b], _RES[o], _r2(ga), _r2(gb), _bout_flags(fl, sg)]
-            for g, a, b, o, ga, gb, fl, sg in zip(
-                part["gang_nr"], part["athlete_a_id"], part["athlete_b_id"], part["outcome"],
-                part["grade_a"], part["grade_b"], part["flags"], part["schlussgang"]))
+        # (`+ 0.0`: never "-0.0"; sorted by the seven values before `d`, as ever)
+        bouts = sorted((
+            [int(g), index[a], index[b], _RES[o], _r2(ga), _r2(gb), _bout_flags(fl, sg),
+             round(_contribution(delta_a, bid, fest_id), 1) + 0.0
+             if ok and people[a].exportable and people[b].exportable else None]
+            for bid, g, a, b, o, ga, gb, fl, sg, ok in zip(
+                part["bout_id"], part["gang_nr"], part["athlete_a_id"], part["athlete_b_id"],
+                part["outcome"], part["grade_a"], part["grade_b"], part["flags"],
+                part["schlussgang"], part["elo_eligible"])), key=lambda r: r[:7])
         obj = {"id": fest_id, "name": _text(m.name) or "?", "date": _date(m.date),
                "season": _int(m.year), "category": _text(m.category),
                "eidg_type": _text(m.eidg_type), "location": _text(m.location),
@@ -706,9 +747,7 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         in_history.setdefault(aid, set()).add(int(fid))
     exportable = {a for a, p in people.items() if p.exportable}
     # contribution of every rated bout to side A (side B: its negative, by construction)
-    br = inp.bout_ratings
-    side_a = br["side"] == "A"
-    delta_a = dict(zip(br.loc[side_a, "bout_id"], br.loc[side_a, "delta"].astype(float)))
+    delta_a = _delta_a(inp)
     # athlete -> fest -> rows [gang, opponent id, res, g, go, flags, d]
     sides: dict[str, dict[int, list[list[Any]]]] = {a: {} for a in exportable}
     n_bouts = 0
@@ -734,12 +773,7 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         if not ok:
             flags |= B_UNRATED
         else:
-            d = delta_a.get(bid)
-            if d is None or not math.isfinite(d):
-                raise ValueError(
-                    "bout_ratings.parquet has no contribution for a rated bout of "
-                    f"festival {fid}: it does not belong to this bouts.parquet - run "
-                    "`python -m src.cli elo` again")
+            d = _contribution(delta_a, bid, fid)
             # `+ 0.0`: never "-0.0" in the file
             da, db = round(d, 1) + 0.0, round(-d, 1) + 0.0
         ga, gb = grade.get(ga, ga), grade.get(gb, gb)

@@ -25,6 +25,11 @@ Never acceptable (no override):
   one), or more rated rows at a festival than the athlete's history file counts bouts
   there. The file must say nothing about bouts against athletes who are not published; a
   row or a key too many is how such a statement would look;
+* a festival file (``data/fests``) that carries a rating value where none may be: on the
+  row of a withheld athlete or of an athlete without profile (``before``, ``after``,
+  ``exp``), or a contribution ``d`` at a bout that is not between two rows with a profile
+  (or at a festival that does not count). The page shows a published athlete's Gänge
+  with what each contributed; one against a withheld athlete must stay without a number;
 * a history or bouts file whose ``build`` stamp is not the one of ``meta.json``: the site
   was put together from different builds, and the comparison page would refuse to draw
   the Gänge of those athletes;
@@ -87,6 +92,11 @@ BOUT_KEYS = frozenset({"id", "build", "opps", "names", "unc", "cols", "fests", "
 BOUT_COLS = ["gang", "opp", "res", "g", "go", "flags", "d"]
 BOUT_OTHER_COLS = ["id", "name", "date", "cat"]
 BOUT_UNRATED = 16
+# ... and of data/fests/fest_<id>.json (static_builder: FEST_ATHLETE_COLS, FEST_BOUT_COLS)
+FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "exp", "w", "d", "l", "pts",
+                     "unc", "anon"]
+FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags", "d"]
+FEST_RATING_COLS = ("before", "after", "exp")     # null on every row without a profile
 
 
 @dataclass
@@ -211,7 +221,47 @@ def _season_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
 
 
 def _fest_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
-    return _table_ids(obj["athletes"])      # null = a row without profile, by design
+    """The athlete ids of a festival file (null = a row without profile, by design) -
+    after the file has been held against the part of its contract that keeps rating
+    values away from athletes who are not published: a withheld athlete's row carries no
+    name and no rating value, a row without profile no rating value, and a bout carries
+    a contribution only between two rows with a profile at a festival that counts. A
+    contribution at any other bout would give away the hidden side's rating."""
+    athletes, bouts = obj["athletes"], obj["bouts"]
+    if athletes["cols"] != FEST_ATHLETE_COLS or bouts["cols"] != FEST_BOUT_COLS:
+        raise ValueError("other columns than the festival contract's")
+    col = {c: i for i, c in enumerate(FEST_ATHLETE_COLS)}
+    width, has_id = len(FEST_ATHLETE_COLS), []
+    for row in athletes["rows"]:
+        if type(row) is not list or len(row) != width:
+            raise ValueError("an athlete row is not the values of the contract")
+        ident, anon = row[col["id"]], row[col["anon"]]
+        if anon not in (0, 1) or not _is_int(anon):
+            raise ValueError("anon is not 0 or 1")
+        values = [row[col[c]] for c in FEST_RATING_COLS]
+        if not all(_is_grade(v) for v in values):
+            raise ValueError("a rating value of another kind than the contract's")
+        if ident is None and any(v is not None for v in values):
+            raise ValueError("a rating value on a row without profile")
+        if anon and (any(row[col[c]] is not None for c in ("id", "name", "club", "tv"))
+                     or row[col["unc"]] != 0):
+            raise ValueError("a withheld athlete's row says more than his bouts")
+        has_id.append(ident is not None and not anon)
+    n, rated = len(has_id), obj["status"] != "unrated"
+    for row in bouts["rows"]:
+        if type(row) is not list or len(row) != len(FEST_BOUT_COLS):
+            raise ValueError("a bout row is not the eight values of the contract")
+        a, b, d = row[1], row[2], row[7]
+        if not (_is_int(a) and _is_int(b) and 0 <= a < n and 0 <= b < n):
+            raise ValueError("a bout does not point at two athlete rows")
+        if d is None:
+            continue
+        if type(d) not in (int, float) or not math.isfinite(d):
+            raise ValueError("a contribution that is no number")
+        if not (rated and has_id[a] and has_id[b]):
+            raise ValueError("a contribution at a bout with an unpublished athlete or at "
+                             "a festival that does not count")
+    return _table_ids(athletes)
 
 
 def _is_int(v: Any) -> bool:

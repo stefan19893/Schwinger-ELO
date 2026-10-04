@@ -573,6 +573,95 @@ def test_guard_contract_is_the_exporters() -> None:
     assert dg.BOUT_COLS == sb.BOUT_SIDE_COLS
     assert dg.BOUT_OTHER_COLS == sb.OTHER_FEST_COLS
     assert dg.BOUT_UNRATED == sb.B_UNRATED
+    assert dg.FEST_ATHLETE_COLS == sb.FEST_ATHLETE_COLS
+    assert dg.FEST_BOUT_COLS == sb.FEST_BOUT_COLS
+
+
+def _col(o: dict[str, Any], table: str, name: str) -> int:
+    return o[table]["cols"].index(name)
+
+
+def _anon_row(o: dict[str, Any]) -> list[Any]:
+    return next(r for r in o["athletes"]["rows"] if r[_col(o, "athletes", "anon")])
+
+
+def _hidden_bout(o: dict[str, Any]) -> list[Any]:
+    """A bout with a withheld athlete on one side."""
+    anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[_col(o, "athletes", "anon")]}
+    return next(b for b in o["bouts"]["rows"] if b[1] in anon or b[2] in anon)
+
+
+def _listed_bout(o: dict[str, Any]) -> list[Any]:
+    return next(b for b in o["bouts"]["rows"] if b[7] is not None)
+
+
+FEST_TAMPERED = {
+    # a contribution where none may be: it would give away the hidden side's rating
+    "a contribution at a bout against a withheld athlete":
+        lambda o: _hidden_bout(o).__setitem__(7, -12.3),
+    "a contribution at a festival that does not count": lambda o: o.update(status="unrated"),
+    "a contribution that is text": lambda o: _listed_bout(o).__setitem__(7, "+4.2"),
+    "a ninth value in a bout row": lambda o: _listed_bout(o).append(0.61),
+    "a bout pointing outside the athlete rows":
+        lambda o: _listed_bout(o).__setitem__(2, len(o["athletes"]["rows"])),
+    # a withheld athlete's own row: no rating value, no name
+    "a rating on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "before"), 1512.3),
+    "an expected score on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "exp"), 2.4),
+    "a name on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "name"), "Muster Hans"),
+    "a remainder column": lambda o: (o["athletes"]["cols"].append("rest"),
+                                     [r.append(-3.1) for r in o["athletes"]["rows"]]),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FEST_TAMPERED))
+def test_festival_files_carry_no_rating_value_for_unpublished_athletes(
+        built: Path, tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10: the festival files carry the contribution per Gang - only between two
+    published athletes. A file with a contribution at any other bout, or with a rating
+    value on a withheld athlete's row, is not deployable, and no override lifts it."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    assert dg.check_site(cfg, dist, meta).ok
+
+    def usable(p: Path) -> bool:          # a rated festival with listed and hidden bouts
+        o = json.loads(p.read_bytes())
+        anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[-1]}
+        return bool(anon) and any(b[7] is not None for b in o["bouts"]["rows"])
+
+    target = next(p for p in sorted((dist / "data" / "fests").iterdir()) if usable(p))
+    _edit(target, FEST_TAMPERED[case])
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 1, rep.fatal
+    assert rep.fatal[0] == ("data/fests: 1 file(s) missing, unreadable or not in the "
+                            "expected shape - rebuild"), rep.fatal
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes"]) == 1
+    assert "must not be deployed" in caplog.text
+
+
+def test_festival_contract_check_is_not_vacuous(built: Path, tmp_path: Path) -> None:
+    """On the built site the festival files pass, and they do hold what the check is
+    about: contributions between published athletes, bouts against withheld athletes
+    without one, rows of withheld athletes without any rating value."""
+    _site(built, tmp_path)
+    listed = hidden = anon_rows = 0
+    for p in sorted((tmp_path / "dist" / "data" / "fests").iterdir()):
+        o = json.loads(p.read_bytes())
+        assert dg._fest_ids(o, p.stem, dg._Seen(names={})) is not None
+        anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[-1]}
+        anon_rows += len(anon)
+        for b in o["bouts"]["rows"]:
+            if b[1] in anon or b[2] in anon:
+                assert b[7] is None
+                hidden += 1
+            elif b[7] is not None:
+                listed += 1
+    assert listed > 0 and hidden > 0 and anon_rows > 0
 
 
 def test_untampered_bout_files_pass_and_are_held_against_the_history(built: Path,

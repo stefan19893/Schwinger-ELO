@@ -88,6 +88,13 @@
     return (r > 0 ? '+' : r < 0 ? '−' : '±') + Math.abs(r);
   };
 
+  /* a change with one decimal: +31.2, −4.0, ±0.0 (contributions per Gang) */
+  SE.signed1 = function (n) {
+    if (n === null || n === undefined) { return ''; }
+    var r = Math.round(n * 10) / 10;
+    return (r > 0 ? '+' : r < 0 ? '−' : '±') + Math.abs(r).toFixed(1);
+  };
+
   SE.date = function (iso) {
     if (!iso) { return '–'; }
     return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4);

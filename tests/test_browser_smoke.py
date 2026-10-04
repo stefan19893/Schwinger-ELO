@@ -506,6 +506,88 @@ def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_ur
     assert "Name nicht lesbar" not in html
 
 
+def _signed1(n: float) -> str:
+    """SE.signed1 of app.js: +31.2, −4.0, ±0.0."""
+    r = round(n * 10) / 10
+    return ("+" if r > 0 else "−" if r < 0 else "±") + f"{abs(r):.1f}"
+
+
+def test_festival_page_shows_the_contribution_per_gang(browser: str, site: Path, base_url: str,
+                                                       tmp_path: Path) -> None:
+    """Phase 10 task 7b: the opened Gänge of a listed athlete carry what each contributed,
+    they add up to the festival's change, Gänge against withheld athletes have no number
+    of their own and appear as one remainder, and a festival file of an earlier build
+    (no `d`) gives the page as it was - no numbers, no remainder."""
+    data = site / SUBPATH / "data"
+    plain = hidden = None                 # (file, athlete row index) without / with hidden bouts
+    for path in sorted((data / "fests").iterdir()):
+        f = json.loads(path.read_text(encoding="utf-8"))
+        if f["status"] == "unrated":
+            continue
+        rows = f["athletes"]["rows"]
+        missing: dict[int, int] = {}
+        for b in f["bouts"]["rows"]:
+            for i in (b[1], b[2]):
+                missing[i] = missing.get(i, 0) + (b[7] is None)
+        for i, r in enumerate(rows):
+            if r[0] is None or r[-1]:
+                continue
+            if missing.get(i) == 0 and plain is None:
+                plain = (f, i)
+            if missing.get(i, 0) > 0 and hidden is None:
+                hidden = (f, i)
+        if plain and hidden:
+            break
+    assert plain is not None
+    cases = {"plain": plain} | ({"hidden": hidden} if hidden else {})
+    urls = {name: base_url + f"fests.html?id={f['id']}&a={f['athletes']['rows'][i][0]}"
+            for name, (f, i) in cases.items()}
+    # the same site with a festival file as an earlier build wrote it
+    other = tmp_path / "site" / SUBPATH
+    shutil.copytree(site / SUBPATH, other)
+    f, i = plain
+    old = json.loads(json.dumps(f))
+    old["bouts"]["cols"] = old["bouts"]["cols"][:7]
+    old["bouts"]["rows"] = [r[:7] for r in old["bouts"]["rows"]]
+    (other / "data" / "fests" / f"fest_{f['id']}.json").write_text(json.dumps(old),
+                                                                  encoding="utf-8")
+    httpd, url = _serve(tmp_path / "site")
+    try:
+        urls["stale"] = url + f"fests.html?id={f['id']}&a={f['athletes']['rows'][i][0]}"
+        got = _load_all(browser, urls, tmp_path / "profiles")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    for name, html in got.items():
+        assert page_problems(html) == [], name
+    text = {name: " ".join(Dom(html).text["se-view"].split()) for name, html in got.items()}
+    for name, (f, i) in cases.items():
+        row = dict(zip(f["athletes"]["cols"], f["athletes"]["rows"][i]))
+        mine = [(b[7] if b[1] == i else -b[7]) if b[7] is not None else None
+                for b in f["bouts"]["rows"] if i in (b[1], b[2])]
+        listed = [d for d in mine if d is not None]
+        t = text[name]
+        assert "Das Fest in Zahlen" in t and "Beitrag des Gangs zur Wertung" in t, name
+        assert "Die Wertung wird pro Fest berechnet" in t and "keine Wertung nach jedem Gang" in t
+        for d in listed:
+            assert _signed1(d) in t, name
+        change = row["after"] - row["before"]
+        assert f"Veränderung am Fest: {_signed1(change)}" in t, name
+        assert f"erwartet waren {row['exp']:.1f}" in t, name
+        n_hidden = len(mine) - len(listed)
+        if n_hidden:
+            assert ("1 Gang gegen einen nicht veröffentlichten Schwinger" if n_hidden == 1
+                    else f"{n_hidden} Gänge gegen nicht veröffentlichte Schwinger") in t
+            assert _signed1(change - sum(listed)) in t and "keinen Einzelwert" in t
+        else:
+            assert "nicht veröffentlichten Schwinger" not in t.split("Veränderung am Fest")[1] \
+                .split("Die Wertung wird pro Fest")[0]
+    stale = text["stale"]
+    assert "Gänge ausblenden" in stale                       # the focus row is open ...
+    for needle in ("Beitrag des Gangs", "Veränderung am Fest", "keinen Einzelwert"):
+        assert needle not in stale, needle                   # ... without numbers
+
+
 def test_smoke_check_catches_a_script_error(browser: str, site: Path, tmp_path: Path) -> None:
     """The check itself: a throwing page script and a missing data file are both caught."""
     broken = tmp_path / "site" / SUBPATH

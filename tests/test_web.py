@@ -267,6 +267,43 @@ def test_comparison_page_rules() -> None:
         assert f'id="{ident}"' in html, ident
 
 
+def test_festival_page_gang_rules() -> None:
+    """Static checks for the contribution per Gang on the festival page (Phase 10 task 7b;
+    the browser smoke test runs the page, the withheld athlete's own row cannot be opened
+    there and is checked here)."""
+    js = (WEB / "js" / "fests.js").read_text(encoding="utf-8")
+    bouts = js[js.index("function boutsHtml"):js.index("var SORTS")]
+    # numbers only for a listed athlete with a rating, from a file that carries them, at a
+    # festival that counts - never on a withheld athlete's own rows
+    assert "var numbers = f.perGang && !!a.id && !a.anon && a.after !== null;" in bouts
+    assert "f.perGang = rated && f.bouts.cols.indexOf('d') !== -1;" in js
+    assert bouts.count("if (numbers)") == 2 and "else if (f.perGang && a.anon)" in bouts
+    # a Gang against a withheld athlete: no number of its own, one remainder for all
+    assert "if (b.d === null) {" in bouts and "hidden += 1;" in bouts
+    assert "var diff = a.after - a.before, rest = diff - sum;" in bouts
+    for needle in ("Kein Einzelwert: Der Gegner wird nicht mit Namen veröffentlicht",
+                   "Für diese Gänge gibt es keinen Einzelwert",
+                   "Beitrag des Gangs zur Wertung", "erwartet waren",
+                   "Die Wertung wird pro Fest berechnet, gegen die Wertungen vor dem Fest",
+                   "keine Wertung nach jedem Gang",
+                   "Ohne Zahlen zur Wertung"):
+        assert needle in bouts, needle
+    # the contribution is the file's value for athlete a, its negative for b
+    assert "(mine ? b.d : -b.d)" in js
+    # the summary counts listed athletes only and says so
+    summary = js[js.index("function summaryHtml"):js.index("function renderFest")]
+    assert "a.after !== null && a.before !== null" in summary
+    assert "nicht mit Namen veröffentlicht" in summary and "Gerechnet ohne" in summary
+    for needle in ("Das Fest in Zahlen", "Am meisten gewonnen", "Am meisten verloren",
+                   "Grösste Überraschung"):
+        assert needle in summary, needle
+    for key in ("pts:", "diff:", "before:", "after:"):
+        assert key in js[js.index("var SORTS"):js.index("var UPSET_MIN_GAP")]
+    # phone width: the row does not wrap, the words of the result only from 640 px
+    assert '<li class="flex items-baseline gap-x-2">' in bouts and "flex-wrap" not in bouts
+    assert 'class="hidden sm:inline"' in bouts
+
+
 def test_comparison_axis_rules() -> None:
     """Static checks for the axis switch of the comparison chart (time, bouts, age, career
     season); that the four axes draw is covered by the browser smoke test."""

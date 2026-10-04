@@ -425,18 +425,73 @@ def test_festival_index_and_files(site: Site) -> None:
             assert a["id"] is None or a["id"] in searchable
             if a["anon"]:   # not certainly of age: the bouts, nothing else - no rating
                 assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"],
-                        a["unc"]) == (None, None, None, None, None, None, 0)
+                        a["exp"], a["unc"]) == (None, None, None, None, None, None, None, 0)
             elif a["id"] is None:   # no profile: at most the name is shown
-                assert (a["club"], a["tv"], a["before"], a["after"], a["unc"]) == \
-                    (None, None, None, None, 0)
+                assert (a["club"], a["tv"], a["before"], a["after"], a["exp"], a["unc"]) == \
+                    (None, None, None, None, None, 0)
             else:
                 assert isinstance(a["name"], str) and a["name"]
             if a["id"] is not None and f["status"] != "unrated":
+                # the values of the athlete's history file (one decimal), expected score too
                 row = rated.loc[(a["id"], fid)]
-                assert a["before"] == round(row["rating_before"])
-                assert a["after"] == round(row["rating_after"])
+                assert a["before"] == round(row["rating_before"], 1)
+                assert a["after"] == round(row["rating_after"], 1)
+                assert a["exp"] == round(row["expected"], 1)
             if f["status"] == "unrated":
-                assert a["before"] is None and a["after"] is None
+                assert a["before"] is None and a["after"] is None and a["exp"] is None
+
+
+def test_festival_contributions(site: Site) -> None:
+    """Phase 10 task 7b: every festival file, every bout. `d` is the engine's contribution
+    for athlete `a` (one decimal) exactly at the rated bouts between two published
+    athletes and null everywhere else; the file's bouts are the festival's bouts; and for
+    a published athlete without hidden bouts the contributions add up to his change."""
+    br = pd.read_parquet(site.cfg.processed_dir / "bout_ratings.parquet")
+    side_a = br[br["side"] == "A"]
+    delta = dict(zip(side_a["bout_id"], side_a["delta"]))
+    published = {r[0] for r in site.search["rows"]}
+    want: dict[int, list[tuple[Any, ...]]] = {}
+    b = site.bouts
+    for bid, fid, gang, a, c, ok in zip(b["bout_id"], b["fest_id"], b["gang_nr"],
+                                        b["athlete_a_id"], b["athlete_b_id"],
+                                        b["elo_eligible"]):
+        both = a in published and c in published
+        want.setdefault(int(fid), []).append(
+            (int(gang), a if a in published else None, c if c in published else None,
+             round(delta[bid], 1) + 0.0 if ok and both else None))
+    n_listed = n_hidden = n_sums = n_files = 0
+    for p in sorted((site.data / "fests").iterdir()):
+        f = load(p)
+        ids = [r[0] for r in f["athletes"]["rows"]]
+        got = sorted(((r[0], ids[r[1]], ids[r[2]], r[7]) for r in f["bouts"]["rows"]),
+                     key=repr)
+        assert got == sorted(want[f["id"]], key=repr), f["id"]
+        n_files += 1
+        athletes = table(f["athletes"])
+        total = [0.0] * len(athletes)
+        hidden = [0] * len(athletes)
+        for r in f["bouts"]["rows"]:
+            assert r[7] is None or (isinstance(r[7], float) and repr(r[7]) != "-0.0")
+            for i, sign in ((r[1], 1), (r[2], -1)):
+                if r[7] is None:
+                    hidden[i] += 1
+                else:
+                    total[i] += sign * r[7]
+            n_listed += r[7] is not None
+            n_hidden += r[7] is None
+        if f["status"] == "unrated":
+            assert all(r[7] is None for r in f["bouts"]["rows"])
+            continue
+        for a, t, h in zip(athletes, total, hidden):
+            if a["anon"] or a["id"] is None:
+                continue
+            if h == 0:      # rounding: one decimal per bout and per rating
+                n = a["w"] + a["d"] + a["l"]
+                assert abs(t - (a["after"] - a["before"])) <= 0.05 * n + 0.1 + 1e-9, f["id"]
+                n_sums += 1
+    assert n_files == len(want) and n_listed > 0 and n_sums > 0
+    if not site.cfg.sample:
+        assert n_hidden > 20_000          # the real site has withheld athletes in bouts
 
 
 def test_history_files(site: Site) -> None:
@@ -1092,7 +1147,7 @@ def test_real_age_filter(real: Site) -> None:
     assert all(r["by"] is None or r["by"] < real.meta["publish"]["withheld_from_birth_year"]
                for r in table(real.search))
     sample_files = sorted((real.data / "fests").iterdir())[-40:]
-    assert any(a[-1] for p in sample_files for a in load(p)["athletes"]["rows"])
+    assert any(a[-1] for p in sample_files for a in load(p)["athletes"]["rows"])   # anon
 
 
 def test_real_unknown_birth_years(real: Site) -> None:
@@ -1115,9 +1170,45 @@ def test_real_withheld_rows_carry_no_rating(real: Site) -> None:
         for a in table(load(p)["athletes"]):
             if a["anon"]:
                 n_anon += 1
-                assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"]) == \
-                    (None,) * 6, p.name
+                assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"],
+                        a["exp"]) == (None,) * 7, p.name
     assert n_anon > 5000
+
+
+def test_real_festival_files_give_no_contribution_for_withheld_athletes(real: Site) -> None:
+    """The leak test of the festival files (Phase 10 task 7b), on every file of the real
+    build and derived from the Parquet files, not from the exporter: no bout with a
+    withheld athlete on either side carries a contribution - neither on a listed
+    athlete's Gang against him nor on his own row -, every such bout is there without
+    one, and nothing else in the file is a number of his rating. Counts only."""
+    withheld = real.withheld
+    b = real.bouts
+    hidden_bouts: dict[int, int] = {}
+    for fid, a, c in zip(b["fest_id"], b["athlete_a_id"], b["athlete_b_id"]):
+        if a in withheld or c in withheld:
+            hidden_bouts[int(fid)] = hidden_bouts.get(int(fid), 0) + 1
+    assert sum(hidden_bouts.values()) > 30_000
+    n_checked = n_listed_athletes_with_hidden = 0
+    for p in sorted((real.data / "fests").iterdir()):
+        f = load(p)
+        assert set(f["athletes"]["cols"]) == set(sb.FEST_ATHLETE_COLS)
+        assert f["bouts"]["cols"] == sb.FEST_BOUT_COLS
+        rows = f["athletes"]["rows"]
+        anon = {i for i, r in enumerate(rows) if r[-1]}
+        with_anon = [r for r in f["bouts"]["rows"] if r[1] in anon or r[2] in anon]
+        assert len(with_anon) == hidden_bouts.get(f["id"], 0)
+        assert all(r[7] is None for r in with_anon)
+        assert all(len(r) == 8 for r in f["bouts"]["rows"])
+        # a bout without contribution at a rated festival has a withheld side: nothing
+        # else is hidden, so "ohne Einzelwert" on the page means exactly that
+        if f["status"] != "unrated":
+            assert all(r[7] is not None or r[1] in anon or r[2] in anon
+                       for r in f["bouts"]["rows"])
+        n_checked += len(with_anon)
+        n_listed_athletes_with_hidden += len(
+            {i for r in with_anon for i in (r[1], r[2]) if i not in anon})
+    assert n_checked == sum(hidden_bouts.values())
+    assert n_listed_athletes_with_hidden > 10_000
 
 
 def test_real_bout_files_name_no_withheld_athlete(real: Site) -> None:
