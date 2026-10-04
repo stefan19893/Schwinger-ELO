@@ -385,6 +385,10 @@ never crawls. The site changes only when "Deploy to GitHub Pages" is started by 
 (with `PUBLISH_ENABLED` = `true`). There are two kinds of update.
 
 **A. New code or page changes (no new data)** — for example a merged pull request.
+**Not for the pull request that brings the history from 2004:** that one changes the
+range of the data and needs the new state bundle first (see "The update that brings the
+history from 2004" below). Merging it and starting the deploy from the old bundle
+publishes nothing — the run stops at the deploy guard — but it is a red run for nothing.
 
 1. Merge the pull request into `main` and wait for the green CI run on `main`.
 2. Start the deployment, either
@@ -439,6 +443,17 @@ until you accept it:
   gefunden" with suggestions. Season lists 2005–2011 are new, those of 2012–2015 change
   visibly, and today's top 100 moves by at most one place.
 
+**Merging alone must not be followed by a deploy.** The bundle on the draft release
+holds the seasons from 2011 only; the new code on that bundle would build the old range
+with the new settings. The deploy guard refuses such a build whatever the options
+(`accept_changes` does not lift it): "the data begin in 2011, but this code expects them
+to begin in 2004 … replace the pipeline state" and "the first ranked season (2005) is not
+after the first season of the data (2011)". Nothing is published, nothing is recorded,
+the state on the release is not replaced and the site stays as it is; replace the bundle
+as below and start the deploy again. (Rehearsed in a scratch data directory: both lines,
+exit 1 with and without `--accept-changes`.) The same holds for the crawl workflow: on a
+state without the old seasons `crawl` stops before its first request.
+
 `check-site` prints exactly these lines and ends with the command to use. Steps, on this
 machine, after the pull request is merged and `main` is pulled:
 
@@ -455,7 +470,16 @@ the deploy run rebuilds from that bundle, and the old one has neither the season
 2011 nor the accepted baseline. With the baseline recorded here and exported, the deploy
 guard of the run passes without `accept_changes`; if you exported without `--record`,
 start the run with `accept_changes` ticked, once. Do not tick it for any later run
-without reading the numbers. The upload is larger than before (the cache `data/raw/` grew from 540 to about 600 MB; the bundle itself was not built for this note).
+without reading the numbers. The bundle is now 584 MB (829 MB unpacked). This path was
+rehearsed in a scratch data directory: refused → accepted once → exported → imported →
+`all --skip-crawl --require-state` (70 s) → `check-site --record` ok without the option,
+8,830 published, 726 withheld, same build stamp as the local build.
+
+After the deploy, check on the site: the start page says "… der Aktiven seit 2004"; the
+season list has 2004 as "(ohne Rangierung)" and 2005–2011 with places; the about page has
+the section "Die frühen Jahre"; a festival page shows "Das Fest in Zahlen" and, with an
+athlete's Gänge opened, the contribution per Gang. If the start page says "seit 2011",
+the old bundle was deployed by an older code version — do not continue, report it.
 
 **B. New festival results (crawl locally)** — needs your machine, on an up-to-date
 `main` (`git switch main && git pull`). New festivals are fetched here, the state is

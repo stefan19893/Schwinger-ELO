@@ -24,6 +24,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SCHWINGEN_DATA_DIR", str(tmp_path / "data"))
     # the site under test is the sample build, which runs without the unknown-birth-year rule
     monkeypatch.setenv("SCHWINGEN_PUBLISH_UNKNOWN_RECENT_SEASONS", "0")
+    # ... and whose data begin in 2011 (the guard holds the site against `from_year`)
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2011")
 
 
 @pytest.fixture(scope="module")
@@ -297,6 +299,45 @@ def test_a_longer_history_is_refused_until_accepted_and_says_what_changed(
     _baseline(tmp_path, meta, athletes=int(c["athletes"] / 1.4))
     rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path))
     assert len(rep.changes) == 1 and "The data now begin" not in rep.changes[0]
+
+
+def test_new_code_on_a_state_without_the_old_seasons_is_never_deployable(
+        built: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10 review: a merge deployed before the state bundle was replaced builds the
+    old range with the new settings - same counts as the baseline, so nothing else trips -
+    and would publish the cold-start season with places. Both signs are fatal, no override
+    lifts them, nothing is recorded, and the message says what to do."""
+    meta = _site(built, tmp_path)                       # data from 2011, ranked from 2012
+    path = _baseline(tmp_path, meta)
+    before = path.read_bytes()
+    assert cli.main(["check-site"]) == 0
+    # the code expects the history from 2004 and ranks from 2005
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2004")
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2005})
+    cfg = load_config(env=dict(os.environ))
+    rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path), accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 2, rep.fatal
+    assert "first ranked season (2005" in rep.fatal[0] and "(2011)" in rep.fatal[0]
+    assert "the data begin in 2011, but this code expects them to begin in 2004" in rep.fatal[1]
+    assert "seasons 2004-2010" in rep.fatal[1]
+    assert all("replace the pipeline state" in line and "Updating the site" in line
+               for line in rep.fatal)
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes", "--record"]) == 1
+    assert "must not be deployed" in caplog.text and path.read_bytes() == before
+    # each sign alone is enough
+    plain = _site(built, tmp_path)                      # ranked from 2012 again
+    rep = dg.check_site(cfg, tmp_path / "dist", plain, accept_changes=True)
+    assert len(rep.fatal) == 1 and "expects them to begin in 2004" in rep.fatal[0]
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2011")
+    cfg = load_config(env=dict(os.environ))
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2011})
+    rep = dg.check_site(cfg, tmp_path / "dist", plain, accept_changes=True)
+    assert len(rep.fatal) == 1 and "must not be ranked" in rep.fatal[0]
+    # a longer burn-in than one season is a setting, not an error
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2013})
+    assert dg.check_site(cfg, tmp_path / "dist", plain).ok
 
 
 def test_a_site_that_lost_its_first_seasons_needs_the_override(built: Path,

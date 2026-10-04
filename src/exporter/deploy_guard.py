@@ -33,6 +33,9 @@ Never acceptable (no override):
 * a history or bouts file whose ``build`` stamp is not the one of ``meta.json``: the site
   was put together from different builds, and the comparison page would refuse to draw
   the Gänge of those athletes;
+* a first ranked season that is not after the first season of the data (the burn-in
+  season would be published with places), or data that do not begin in ``from_year``
+  (new code on a pipeline state without the old seasons): :func:`_range_problems`;
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -430,6 +433,51 @@ def _longer_history(meta: dict[str, Any], baseline: dict[str, Any]) -> str:
             f"are athletes of the added seasons")
 
 
+STATE_HINT = ("replace the pipeline state by a new export from the machine that holds "
+              "these seasons (`state-export`, then the draft release) and deploy again - "
+              "README, \"Updating the site\"")
+
+
+def _range_problems(cfg: Config, meta: dict[str, Any]) -> list[str]:
+    """Is the site built from the seasons the code expects? Never deployable otherwise.
+
+    * The burn-in season is the first season of the data: it is rated and not ranked,
+      because everybody starts at the initial rating there. ``first_ranked_season`` (a
+      setting, ``elo_first_ranked_season``) must therefore lie after the data's first
+      season. If it does not, the data begin later than the setting assumes and their
+      cold-start season would be published with places.
+    * The data must begin in ``from_year``: new code on a pipeline state from before the
+      history was extended (a merge deployed before the state bundle was replaced) gives a
+      site whose counts equal the baseline's - nothing else in the guard would notice.
+
+    Both name what to do. Not checked for ``--sample`` beyond the first rule (the demo
+    data begin where its fixtures begin)."""
+    if meta.get("empty") is not False:
+        return []
+    out = []
+    first = _first_season(meta)
+    ranked = (meta.get("model") or {}).get("first_ranked_season")
+    if first is None or not isinstance(ranked, int) or isinstance(ranked, bool):
+        out.append("meta.json does not name the first season of the data or the first "
+                   "ranked season - rebuild")
+        return out
+    if ranked <= first:
+        out.append(
+            f"the first ranked season ({ranked}, `elo_first_ranked_season`) is not after "
+            f"the first season of the data ({first}): the data's first season is the "
+            f"burn-in and must not be ranked. The data begin later than the model setting "
+            f"assumes - " + (STATE_HINT if not cfg.sample else "set the season for this "
+                             "data set"))
+    if not cfg.sample and first != cfg.from_year:
+        out.append(
+            f"the data begin in {first}, but this code expects them to begin in "
+            f"{cfg.from_year} (`from_year`): the site was built from a pipeline state that "
+            f"does not hold the seasons {min(first, cfg.from_year)}-"
+            f"{max(first, cfg.from_year) - 1}. Nothing was published or recorded; "
+            + STATE_HINT)
+    return out
+
+
 def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
                   inputs: dict[str, int] | None, rep: GuardReport) -> None:
     """Does the site publish more people than the accepted one, or did the filter's
@@ -558,6 +606,7 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
             rep.fatal.append(
                 f"none of the {inputs['portraits']} portraits in {cfg.db_path} has a "
                 f"birthday: the age filter has lost its input")
+    rep.fatal.extend(_range_problems(cfg, meta))
     if cfg.site_noindex and not (dist / "robots.txt").is_file():
         rep.fatal.append("site_noindex is on but robots.txt is missing - rebuild")
     if rep.fatal:
