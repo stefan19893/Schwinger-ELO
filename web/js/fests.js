@@ -108,6 +108,16 @@
 
   var MUTED = 'text-xs text-stone-500 dark:text-stone-400';
 
+  /* The Gänge of a listed athlete against athletes who are not published by name carry no
+   * contribution in their row. Below the Gänge the page gives what they contributed
+   * together (festival change minus the listed contributions) - with a single such Gang
+   * that number is this Gang's contribution, and the page says so. `true` hides that
+   * number, and the sum of the listed contributions with it, for one and for several
+   * Gänge alike; the page then only says how many such Gänge there are. (The about page
+   * describes the number: about.html "Pro Fest, nicht pro Gang" and about.js se-minors3
+   * - adapt them when this is switched.) */
+  var HIDE_REMAINDER = false;
+
   /* The opened Gänge of one athlete. With `f.perGang` (a festival that counts, a file
    * that carries the contributions) a listed athlete's rows show what each Gang
    * contributed, and below them how that adds up to the festival's change. A withheld
@@ -133,7 +143,7 @@
       if (numbers) {
         if (b.d === null) {
           hidden += 1;
-          contribution = '<span class="w-14 shrink-0 text-right text-stone-500 dark:text-stone-400" title="Kein Einzelwert: Der Gegner wird nicht mit Namen veröffentlicht">–</span>';
+          contribution = '<span class="w-14 shrink-0 text-right text-stone-500 dark:text-stone-400" title="Kein Beitrag in dieser Zeile: Der Gegner wird nicht mit Namen veröffentlicht">–</span>';
         } else {
           sum += b.d;
           contribution = '<span class="w-14 shrink-0 text-right font-semibold tabular-nums ' + upDown(b.d) + '" title="Beitrag dieses Gangs zur Wertung">' + SE.signed1(b.d) + '</span>';
@@ -151,11 +161,13 @@
     if (numbers) {
       var diff = a.after - a.before, rest = diff - sum;
       html += '<p class="mt-2 text-xs">Veränderung am Fest: <strong class="tabular-nums ' + upDown(diff) + '">' + SE.signed1(diff) + '</strong>';
-      if (hidden) {
-        html += ' = Beiträge oben <span class="tabular-nums">' + SE.signed1(sum) + '</span> und ' +
-          (hidden === 1 ? '1 Gang gegen einen nicht veröffentlichten Schwinger' : hidden + ' Gänge gegen nicht veröffentlichte Schwinger') +
-          ' <span class="tabular-nums">' + SE.signed1(rest) + '</span>' + (hidden === 1 ? '' : ' zusammen') +
-          '. Für diese Gänge gibt es keinen Einzelwert.';
+      if (hidden && HIDE_REMAINDER) {
+        html += '. Darin ' + SE.hiddenGaenge(hidden) + '; ' + (hidden === 1 ? 'sein Beitrag wird' : 'ihre Beiträge werden') + ' hier nicht gezeigt.';
+      } else if (hidden) {
+        /* true for one and for several: one hidden Gang - the number is its contribution */
+        html += ' = Beiträge oben <span class="tabular-nums">' + SE.signed1(sum) + '</span> und ' + SE.hiddenGaenge(hidden) +
+          ' <span class="tabular-nums">' + SE.signed1(rest) + '</span>' +
+          (hidden === 1 ? ' – der Beitrag dieses einen Gangs.' : ' – ihre Summe; einzeln werden sie nicht gezeigt.');
       } else {
         html += Math.abs(rest) >= 0.05 ? ' (die Beiträge sind gerundet und ergeben ' + SE.signed1(sum) + ').' : ' – die Summe der Beiträge.';
       }
@@ -296,7 +308,7 @@
         'keine offizielle Rangliste (dafür die Quelle beachten). Wertung vor → nach dem Fest, +/− die Veränderung' +
         (f.perGang ? '; bei den geöffneten Gängen steht, was jeder Gang dazu beigetragen hat. Die Wertung wird pro Fest berechnet, gegen die Wertungen vor dem Fest – die Beiträge teilen diese Änderung auf die Gänge auf' : '') +
         '. Schwinger ohne veröffentlichten Namen stehen ohne Wertung da' +
-        (f.perGang ? ', und Gänge gegen sie haben keinen Einzelwert' : '') + '. ' +
+        (f.perGang ? ', und bei Gängen gegen sie steht kein Beitrag in der Zeile' : '') + '. ' +
         'Der Schlussgang ist nur markiert, wo ihn die Quelle ausweist.</p>';
       view.innerHTML = html;
 

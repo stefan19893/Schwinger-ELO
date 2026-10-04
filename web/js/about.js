@@ -51,8 +51,9 @@
         'daneben legt, kann eine solche Zeile einer Person zuordnen – dort stehen die Namen ohnehin. Auch ihre Wertungen werden ' +
         'aus den öffentlichen Resultaten berechnet, wie alle anderen. Sie werden hier nicht angezeigt, lassen sich aber ausrechnen: ' +
         'aus den Wertungen ihrer namentlich aufgeführten Gegner vor und nach einem Fest ziemlich genau, und mit dem öffentlichen ' +
-        'Programm dieser Auswertung und den öffentlichen Resultatlisten vollständig. Im Vergleich steht zudem pro Fest, wie viel die ' +
-        'Gänge gegen nicht genannte Schwinger zusammen zur Wertung eines aufgeführten Schwingers beigetragen haben.');
+        'Programm dieser Auswertung und den öffentlichen Resultatlisten vollständig. Beim Fest und im Vergleich steht zudem pro Fest, wie viel die ' +
+        'Gänge gegen nicht genannte Schwinger zusammen zur Wertung eines aufgeführten Schwingers beigetragen haben; ' +
+        'ist es nur ein solcher Gang, ist die Zahl der Beitrag dieses einen Gangs.');
       show('se-minors3');
       show('se-minors2');
       show('se-minors');
@@ -85,7 +86,7 @@
         'Ihre übrigen Gänge fehlen; ihre Bilanz sieht deshalb schlechter aus, als sie war.');
       item('se-early-ident', 'Wer ist wer?', 'Bis ' + (regional - 1) + ' nennen die Listen selten Klub oder Jahrgang. Die Gänge wurden einer Person meist allein über den Namen zugeordnet. ' +
         'Das ist weniger sicher als später: Zwei Schwinger gleichen Namens können in einer Laufbahn stecken, und eine Laufbahn mit langer Pause kann als zwei Schwinger erscheinen. ' +
-        'Wo zwei Namensvetter in der Suche dieselben Angaben haben, steht die Zahl ihrer Feste dabei – mehr unterscheidet sie in den Quellen nicht.');
+        'Wo die Zuordnung unsicher blieb, steht beim Namen ein «?». Wo zwei Namensvetter in der Suche dieselben Angaben haben, steht die Zahl ihrer Feste dabei – mehr unterscheidet sie in den Quellen nicht.');
       item('se-early-gaps', 'Lücken.', 'Nicht jedes Kranzfest dieser Jahre hat eine lesbare Liste; aus der Südwestschweiz und dem Berner Jura fehlen besonders viele, oder es gibt nur Auszüge. ' +
         'Die Jahre vor ' + first + ' sind nicht gewertet, weil es von ihnen fast nur Auszüge der vordersten Ränge gibt. ' +
         first + ' selbst wird gewertet, hat aber keine Plätze (Einschwing-Saison).');

@@ -281,8 +281,18 @@ def test_festival_page_gang_rules() -> None:
     # a Gang against a withheld athlete: no number of its own, one remainder for all
     assert "if (b.d === null) {" in bouts and "hidden += 1;" in bouts
     assert "var diff = a.after - a.before, rest = diff - sum;" in bouts
-    for needle in ("Kein Einzelwert: Der Gegner wird nicht mit Namen veröffentlicht",
-                   "Für diese Gänge gibt es keinen Einzelwert",
+    # review fix F3: what the remainder is - one hidden Gang: that Gang's contribution
+    # (no sentence denying it); several: their sum, no single value. One constant hides
+    # the number (and the sum of the listed contributions) in both cases; off by default.
+    assert "var HIDE_REMAINDER = false;" in js and js.count("HIDE_REMAINDER") == 2
+    assert "if (hidden && HIDE_REMAINDER) {" in bouts and "} else if (hidden) {" in bouts
+    off = bouts[bouts.index("if (hidden && HIDE_REMAINDER) {"):bouts.index("} else if (hidden) {")]
+    assert "SE.signed1" not in off and "SE.hiddenGaenge(hidden)" in off
+    assert "keinen Einzelwert" not in js and "SE.hiddenGaenge(hidden)" in bouts
+    for needle in ("Kein Beitrag in dieser Zeile: Der Gegner wird nicht mit Namen veröffentlicht",
+                   "– der Beitrag dieses einen Gangs.",
+                   "– ihre Summe; einzeln werden sie nicht gezeigt.",
+                   "hier nicht gezeigt",
                    "Beitrag des Gangs zur Wertung", "erwartet waren",
                    "Die Wertung wird pro Fest berechnet, gegen die Wertungen vor dem Fest",
                    "keine Wertung nach jedem Gang",
@@ -439,7 +449,10 @@ def test_comparison_gang_rules() -> None:
         assert needle in notes, needle
     assert "(Aufteilung des Fests, keine eigene Wertung)" in js           # Gang tooltip
     assert "var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';" in js
-    assert "gegen einen nicht veröffentlichten Gegner" in js
+    # (the wording is shared with the festival page: SE.hiddenGaenge in app.js)
+    assert "SE.hiddenGaenge(rest.n) + (rest.n === 1 ? ': ' : ': zusammen ')" in js
+    assert "gegen einen nicht veröffentlichten Gegner" in (WEB / "js" / "app.js").read_text(
+        encoding="utf-8")
     # opponents are named from the file's own list, escaped, with the identity marker
     text = js[js.index("function gangText"):js.index("function restText")]
     assert "SE.esc(e.bouts.names[it.opp]" in text and "e.bouts.unc" in text and "' ?'" in text

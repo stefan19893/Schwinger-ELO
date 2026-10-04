@@ -519,7 +519,8 @@ def test_festival_page_shows_the_contribution_per_gang(browser: str, site: Path,
     of their own and appear as one remainder, and a festival file of an earlier build
     (no `d`) gives the page as it was - no numbers, no remainder."""
     data = site / SUBPATH / "data"
-    plain = hidden = None                 # (file, athlete row index) without / with hidden bouts
+    # (file, athlete row index) without hidden bouts, with exactly one, with several
+    plain = hidden = several = None
     for path in sorted((data / "fests").iterdir()):
         f = json.loads(path.read_text(encoding="utf-8"))
         if f["status"] == "unrated":
@@ -534,12 +535,15 @@ def test_festival_page_shows_the_contribution_per_gang(browser: str, site: Path,
                 continue
             if missing.get(i) == 0 and plain is None:
                 plain = (f, i)
-            if missing.get(i, 0) > 0 and hidden is None:
+            if missing.get(i, 0) == 1 and hidden is None:
                 hidden = (f, i)
-        if plain and hidden:
+            if missing.get(i, 0) > 1 and several is None:
+                several = (f, i)
+        if plain and hidden and several:
             break
-    assert plain is not None
-    cases = {"plain": plain} | ({"hidden": hidden} if hidden else {})
+    assert plain is not None and (hidden or several) is not None
+    cases = {"plain": plain} | ({"hidden": hidden} if hidden else {}) \
+        | ({"several": several} if several else {})
     urls = {name: base_url + f"fests.html?id={f['id']}&a={f['athletes']['rows'][i][0]}"
             for name, (f, i) in cases.items()}
     # the same site with a festival file as an earlier build wrote it
@@ -551,13 +555,25 @@ def test_festival_page_shows_the_contribution_per_gang(browser: str, site: Path,
     old["bouts"]["rows"] = [r[:7] for r in old["bouts"]["rows"]]
     (other / "data" / "fests" / f"fest_{f['id']}.json").write_text(json.dumps(old),
                                                                   encoding="utf-8")
+    # ... and with the switch that hides the remainder number (review fix F3)
+    switched = tmp_path / "site2" / SUBPATH
+    shutil.copytree(site / SUBPATH, switched)
+    script = switched / "js" / "fests.js"
+    js = script.read_text(encoding="utf-8")
+    assert js.count("var HIDE_REMAINDER = false;") == 1
+    script.write_text(js.replace("var HIDE_REMAINDER = false;", "var HIDE_REMAINDER = true;"),
+                      encoding="utf-8")
     httpd, url = _serve(tmp_path / "site")
+    httpd2, url2 = _serve(tmp_path / "site2")
     try:
         urls["stale"] = url + f"fests.html?id={f['id']}&a={f['athletes']['rows'][i][0]}"
+        for name, (g, k) in cases.items():
+            urls["off-" + name] = url2 + f"fests.html?id={g['id']}&a={g['athletes']['rows'][k][0]}"
         got = _load_all(browser, urls, tmp_path / "profiles")
     finally:
-        httpd.shutdown()
-        httpd.server_close()
+        for server in (httpd, httpd2):
+            server.shutdown()
+            server.server_close()
     for name, html in got.items():
         assert page_problems(html) == [], name
     text = {name: " ".join(Dom(html).text["se-view"].split()) for name, html in got.items()}
@@ -575,16 +591,31 @@ def test_festival_page_shows_the_contribution_per_gang(browser: str, site: Path,
         assert f"Veränderung am Fest: {_signed1(change)}" in t, name
         assert f"erwartet waren {row['exp']:.1f}" in t, name
         n_hidden = len(mine) - len(listed)
-        if n_hidden:
-            assert ("1 Gang gegen einen nicht veröffentlichten Schwinger" if n_hidden == 1
-                    else f"{n_hidden} Gänge gegen nicht veröffentlichte Schwinger") in t
-            assert _signed1(change - sum(listed)) in t and "keinen Einzelwert" in t
+        line = t.split("Veränderung am Fest")[1].split("Geholt:")[0]
+        off = text["off-" + name].split("Veränderung am Fest")[1].split("Geholt:")[0]
+        rest = _signed1(change - sum(listed))
+        assert "Einzelwert" not in t and "Einzelwert" not in text["off-" + name]
+        if n_hidden == 1:
+            # one hidden Gang: the number is that Gang's contribution, and the page says so
+            assert f"1 Gang gegen einen nicht veröffentlichten Gegner {rest} – der Beitrag " \
+                   "dieses einen Gangs." in line, name
+            assert "Darin 1 Gang gegen einen nicht veröffentlichten Gegner; sein Beitrag " \
+                   "wird hier nicht gezeigt." in off
+        elif n_hidden:
+            assert f"{n_hidden} Gänge gegen nicht veröffentlichte Gegner {rest} – ihre " \
+                   "Summe; einzeln werden sie nicht gezeigt." in line, name
+            assert f"Darin {n_hidden} Gänge gegen nicht veröffentlichte Gegner; ihre " \
+                   "Beiträge werden hier nicht gezeigt." in off
         else:
-            assert "nicht veröffentlichten Schwinger" not in t.split("Veränderung am Fest")[1] \
-                .split("Die Wertung wird pro Fest")[0]
+            assert "nicht veröffentlicht" not in line
+            assert off == line                 # the switch changes nothing without hidden Gänge
+        if n_hidden:      # switched off: the change, no remainder and no sum of the listed
+            assert off.strip().startswith(f": {_signed1(change)}. Darin"), name
+            assert "Beiträge oben" not in off and "Beiträge oben" in line
+            assert off.count("+") + off.count("−") + off.count("±") == 1
     stale = text["stale"]
     assert "Gänge ausblenden" in stale                       # the focus row is open ...
-    for needle in ("Beitrag des Gangs", "Veränderung am Fest", "keinen Einzelwert"):
+    for needle in ("Beitrag des Gangs", "Veränderung am Fest", "nicht gezeigt"):
         assert needle not in stale, needle                   # ... without numbers
 
 

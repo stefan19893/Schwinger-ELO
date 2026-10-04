@@ -95,6 +95,13 @@
     return (r > 0 ? '+' : r < 0 ? '−' : '±') + Math.abs(r).toFixed(1);
   };
 
+  /* "1 Gang gegen einen nicht veröffentlichten Gegner" / "3 Gänge gegen nicht
+   * veröffentlichte Gegner": the Gänge of a listed athlete against athletes who are not
+   * published by name - one wording for the festival page and the comparison. */
+  SE.hiddenGaenge = function (n) {
+    return SE.num(n) + (n === 1 ? ' Gang gegen einen nicht veröffentlichten Gegner' : ' Gänge gegen nicht veröffentlichte Gegner');
+  };
+
   SE.date = function (iso) {
     if (!iso) { return '–'; }
     return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4);

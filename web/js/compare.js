@@ -714,7 +714,7 @@
   }
 
   function restText(rest) {
-    return SE.num(rest.n) + (rest.n === 1 ? ' Gang gegen einen nicht veröffentlichten Gegner: ' : ' Gänge gegen nicht veröffentlichte Gegner: zusammen ') + points1(rest.d);
+    return SE.hiddenGaenge(rest.n) + (rest.n === 1 ? ': ' : ': zusammen ') + points1(rest.d);
   }
 
   var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';
