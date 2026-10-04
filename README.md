@@ -48,7 +48,7 @@ python -m src.cli COMMAND [options]
 
 | Command | Does |
 |---|---|
-| `crawl` | Festival listings, statistic PDFs, ranking lists and portraits from schlussgang.ch into the cache `data/raw/` and SQLite. Incremental; 0.5–1.0 s between requests, request caps per run. Options: `--from-year`, `--to-year`, `--no-pdfs`, `--no-portraits`, `--portraits-only` |
+| `crawl` | Festival listings, statistic PDFs, ranking lists and portraits from schlussgang.ch into the cache `data/raw/` and SQLite. Incremental; 0.5–1.0 s between requests, request caps per run. Options: `--from-year`, `--to-year`, `--no-pdfs`, `--no-portraits`, `--portraits-only`, `--backfill` (one-time download of old seasons, with `--from-year` / `--to-year`: 2–4 s between requests, at most 400 requests per run — re-run to continue —, listings and PDFs of that range only, stops at the first HTTP 403 / 429) |
 | `parse` | Cached PDFs → SQLite (`bouts`, `athletes_raw`, identity evidence). Offline. `--force` re-parses everything |
 | `clean` | Identity resolution → `data/processed/*.parquet` |
 | `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (rating change per bout). `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |

@@ -35,6 +35,10 @@ SUPPLEMENT: dict[str, str] = {
     "basellandschaftlich": "Kantonal",
 }
 
+# The sixth Bernese Gau festival, in all spellings of schlussgang ("Bern-Jurassisches",
+# "Berner Jurassisches" 2001 / 2007, "Bern-Jurasisches" 2006).
+_BERN_JURA_RE = re.compile(r"bern(?:er)?[- ]juras+isch", re.I)
+
 _GENERIC = {"schwinget", "schwingfest", "schwingertag", "kantonal", "kantonales",
             "kantonalschwingfest", "und", "schwing", ""}
 _ENDING_RE = re.compile(r"(isches|ischer|isch|es|er)$")
@@ -85,6 +89,8 @@ def reference_stems() -> dict[str, str]:
 
 def reference_category(name: str) -> str | None:
     """Expected category of a Kranzfest name per the reference, None if unknown."""
+    if _BERN_JURA_RE.search(name):  # "Berner Jurassisches" would stem to "bern" (Kantonal)
+        return "Gauverband"
     ref = reference_stems()
     for s in stems(name):
         if s in ref:

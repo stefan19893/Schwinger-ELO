@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import pypdfium2 as pdfium
 
 from src.db import Festival
-from src.scraper.client import CacheMiss, FetchError, FetchResult, HttpClient
+from src.scraper.client import Blocked, CacheMiss, FetchError, FetchResult, HttpClient
 
 log = logging.getLogger("schwingen.pdfs")
 
@@ -96,6 +96,8 @@ def download_statistic_pdfs(client: HttpClient, festivals: Iterable[Festival], *
         except CacheMiss:
             rep.missing.append(f.fest_id)
             continue
+        except Blocked:
+            raise  # refused (backfill: 403 / 429): the caller ends the run
         except FetchError as exc:
             rep.failed.append((f.fest_id, str(exc)))
             if exc.status is not None:

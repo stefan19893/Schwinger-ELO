@@ -149,7 +149,7 @@ Schwinger-ELO/
 
 ### 4.1 Data Scraping & Normalization
 - **Source Target:** schlussgang.ch only (user decision 2026-09-29; esv.ch is not crawled — its terms forbid it). Festival index: the JSON:API `backend-api.schlussgang.ch/jsonapi/node/event`. Bouts: the per-festival "Statistische Tabelle" PDFs linked from each event (one line per athlete and Gang: `+` win / `-` gestellt / `o` loss, opponent, grade); every bout appears twice and is built by pairing both entries.
-- **Politeness:** respect robots.txt/terms, 0.5–1.0 s delay between requests, descriptive User-Agent, retries with backoff, every response cached in `data/raw/` and never re-fetched unless `--refresh` is given.
+- **Politeness:** respect robots.txt/terms, 0.5–1.0 s delay between requests, descriptive User-Agent, retries with backoff, every response cached in `data/raw/` and never re-fetched unless `--refresh` is given. A one-time download of old seasons (`crawl --backfill`) runs slower still: 2–4 s between requests, at most 400 requests per run, no retry on HTTP 403 / 429 (the run stops), one retry on other errors and a stop after three failed files in a row.
 - **Data Entity Schema:**
   - `Festival`: `fest_id`, `name`, `date`, `category` (ESAF, Bergkranz, Teilverband, Kantonal, Gauverband, Regional), `location`.
     - Category `ESAF` is the tier of all festivals with eidgenössischem Charakter (eidgenössischer Kranz): the ESAF itself, Kilchberger Schwinget, Unspunnen-Schwinget and ESV Jubiläumsschwingfeste. The column `eidg_type` (`ESAF`, `Kilchberg`, `Unspunnen`, `Jubilaeum`) tells them apart. `Bergkranz` = the six Bergkranzfeste (Brünig, Rigi, Schwägalp, Schwarzsee, Stoos, Weissenstein); Berg festivals without a Kranz are `Regional`.
@@ -227,7 +227,7 @@ Every stage is idempotent and incremental: re-running only processes what is new
 
 | Command | Does |
 |---|---|
-| `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`) |
+| `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`, `--backfill`) |
 | `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse), then the identity evidence: `ranking_entries`, `portraits`, `clubs`, `athlete_evidence` |
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
 | `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |

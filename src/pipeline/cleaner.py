@@ -232,8 +232,13 @@ class CleanInputs:
 
 
 def load_inputs(conn: sqlite3.Connection,
-                extra_raw: Iterable[pd.DataFrame] = ()) -> CleanInputs:
+                extra_raw: Iterable[pd.DataFrame] = (),
+                from_year: int | None = None) -> CleanInputs:
     """Read everything ``clean`` needs in one read transaction.
+
+    ``from_year``: the first season of the data set (``Config.from_year``). Festivals
+    of earlier seasons stay in the staging database (crawled and parsed, nothing is
+    deleted) but are not part of the outputs - neither their rows nor their bouts.
 
     ``extra_raw``: frames keyed on ``athlete_raw_id`` carrying any of
     :data:`OPTIONAL_RAW_COLUMNS` (e.g. club / portrait sources); left-joined,
@@ -257,6 +262,10 @@ def load_inputs(conn: sqlite3.Connection,
                                      "ORDER BY portrait_id")
     finally:
         conn.rollback()
+    if from_year is not None:
+        fests = fests[fests["date"].str[:4].astype(int) >= from_year].reset_index(drop=True)
+        raw = raw[raw["fest_id"].isin(fests["fest_id"])].reset_index(drop=True)
+        bouts = bouts[bouts["fest_id"].isin(fests["fest_id"])].reset_index(drop=True)
     fests = fests.merge(parse, on="fest_id", how="left")
     fj = fests[["fest_id", *FESTIVAL_JOIN]].rename(columns=FESTIVAL_JOIN)
     raw = raw.merge(fj, on="fest_id", how="left", validate="many_to_one")
@@ -438,8 +447,10 @@ def assemble(inputs: CleanInputs, resolution: Resolution, resolver_name: str) ->
 
 
 def run_clean(db_path: Path, out_dir: Path, resolver: Resolver | None = None,
-              extra_raw: Sequence[pd.DataFrame] = ()) -> CleanResult:
-    """Read the staging DB (read-only), resolve identities, write Parquet outputs."""
+              extra_raw: Sequence[pd.DataFrame] = (),
+              from_year: int | None = None) -> CleanResult:
+    """Read the staging DB (read-only), resolve identities, write Parquet outputs.
+    ``from_year``: see :func:`load_inputs`."""
     from src.pipeline.export import write_outputs
 
     resolver = resolver or default_resolver()
@@ -447,11 +458,13 @@ def run_clean(db_path: Path, out_dir: Path, resolver: Resolver | None = None,
     try:
         evidence = load_evidence(conn)
         # caller-supplied frames first: the stored evidence only fills their gaps
-        inputs = load_inputs(conn, [*extra_raw, *([] if evidence is None else [evidence])])
+        inputs = load_inputs(conn, [*extra_raw, *([] if evidence is None else [evidence])],
+                             from_year=from_year)
     finally:
         conn.close()
-    log.info("clean: %d raw athletes, %d bouts, %d festivals from %s",
-             len(inputs.raw), len(inputs.bouts), len(inputs.festivals), db_path)
+    log.info("clean: %d raw athletes, %d bouts, %d festivals from %s%s",
+             len(inputs.raw), len(inputs.bouts), len(inputs.festivals), db_path,
+             f" (seasons from {from_year} on)" if from_year is not None else "")
     if evidence is None:
         log.warning("clean: no athlete_evidence in %s (run `parse`) - club, Teilverband, "
                     "residence and portrait stay empty", db_path)

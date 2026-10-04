@@ -58,7 +58,8 @@ EIDG_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 # tid 14: the Bernese Gauverbands-Schwingfeste; everything else is cantonal.
 GAU_RE = re.compile(
-    r"mittelländisch|oberländisch|seeländisch|bern-jurassisch|oberaargauisch|emmentalisch",
+    r"mittelländisch|oberländisch|seeländisch|bern(?:er)?[- ]juras+isch|oberaargauisch"
+    r"|emmentalisch",
     re.I)
 KANTONAL_RE = re.compile(r"kantonal|cantonal", re.I)
 

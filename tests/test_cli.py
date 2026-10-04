@@ -565,3 +565,103 @@ def test_parse_real_mode_is_offline(tmp_path: Path) -> None:
 def test_parse_force_flag() -> None:
     assert cli.build_parser().parse_args(["parse", "--force"]).force is True
     assert cli.build_parser().parse_args(["crawl", "--no-pdfs"]).no_pdfs is True
+
+
+# ------------------------------------------------------------------ crawl --backfill
+class _BackfillSite:
+    """Listings from the FakeApi fixtures (2011: six Bergkranz festivals, five with
+    PDFs on www.schlussgang.ch) plus the files themselves; ``refuse`` = status for PDFs."""
+
+    def __init__(self, refuse: int | None = None) -> None:
+        from tests.test_fests_crawler import FakeApi
+
+        self.api = FakeApi()
+        self.files: list[str] = []
+        self.refuse = refuse
+
+    def __call__(self, req: "httpx.Request") -> "httpx.Response":
+        import httpx
+
+        if req.url.host == "backend-api.schlussgang.ch":
+            return self.api(req)
+        assert req.url.host == "www.schlussgang.ch"  # never esv.ch
+        self.files.append(str(req.url))
+        if self.refuse is not None:
+            return httpx.Response(self.refuse)
+        return httpx.Response(200, content=b"%PDF-1.4 test")
+
+
+def _backfill_cfg(tmp_path: Path, **kw: object) -> Config:
+    return _crawl_cfg(tmp_path, crawl_pdfs=True, backfill=True, **kw)
+
+
+def test_backfill_option_parses() -> None:
+    args = cli.build_parser().parse_args(
+        ["crawl", "--backfill", "--from-year", "2001", "--to-year", "2010"])
+    cfg = cli.config_from_args(args)
+    assert cfg.backfill and (cfg.from_year, cfg.to_year) == (2001, 2010)
+    assert not cli.config_from_args(cli.build_parser().parse_args(["crawl"])).backfill
+
+
+def test_backfill_downloads_slowly_and_only_once(tmp_path: Path,
+                                                 no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _backfill_cfg(tmp_path)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert len(site.api.requests) == 5           # listings; no portrait query in a backfill
+    assert len(site.files) == len(set(site.files)) >= 6  # statistic + ranking PDFs
+    assert len(no_sleep) == 5 + len(site.files) - 1
+    assert min(no_sleep) > 1.9 and max(no_sleep) <= 4.0   # 2-4 s, minus the elapsed time
+    n = len(site.files)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert len(site.api.requests) == 5 and len(site.files) == n  # nothing fetched twice
+
+
+def test_backfill_cap_covers_listings_and_pdfs_and_resumes(tmp_path: Path,
+                                                           no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _backfill_cfg(tmp_path, backfill_max_requests=7)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 1
+    assert len(site.api.requests) + len(site.files) == 7
+    rc = 1
+    for _ in range(10):  # re-running the same command continues where it stopped
+        if rc == 0:
+            break
+        rc = cli.cmd_crawl(cfg, transport=httpx.MockTransport(site))
+    assert rc == 0 and len(site.files) == len(set(site.files))
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_backfill_stops_at_the_first_refusal(tmp_path: Path, no_sleep: list[float],
+                                             status: int) -> None:
+    import httpx
+
+    site = _BackfillSite(refuse=status)
+    assert cli.cmd_crawl(_backfill_cfg(tmp_path), transport=httpx.MockTransport(site)) == 1
+    assert len(site.files) == 1  # one refused request: no retry, no next file
+
+
+def test_backfill_stops_after_repeated_errors(tmp_path: Path, no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite(refuse=500)
+    cfg = _backfill_cfg(tmp_path, backfill_max_errors=2)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 1
+    assert len(set(site.files)) == 2 and len(site.files) == 4  # 2 files x 2 attempts, then stop
+
+
+def test_backfill_leaves_other_seasons_alone(tmp_path: Path, no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path), transport=httpx.MockTransport(site),
+                         portraits=False) == 0           # 2011 festivals in the db, no PDFs
+    cfg = _backfill_cfg(tmp_path, from_year=2010, to_year=2010)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert site.files == []                               # the 2011 PDFs are not this range
+    with pytest.raises(ValueError):
+        cli.cmd_crawl(cfg, transport=httpx.MockTransport(site), portraits_only=True)

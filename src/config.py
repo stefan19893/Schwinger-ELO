@@ -92,6 +92,17 @@ class Config:
     # Parse (Phase 2): sheets where fewer than this share of entries pair into
     # bouts are treated as structurally unreliable (no bouts imported).
     parse_min_pair_rate: float = 0.5
+    # Backfill of old seasons (`crawl --backfill`, Phase 10): a one-time bulk of old files
+    # nobody is waiting for, so it runs clearly slower than the normal crawl - a random
+    # 2-4 s between requests (~20 requests a minute at most) - with its own, smaller cap
+    # per run (listings + statistic + ranking PDFs together), and it gives up instead of
+    # insisting: HTTP 403 / 429 stop the run at once (no retry), other errors are retried
+    # once and the run stops after backfill_max_errors failed files in a row.
+    backfill: bool = False
+    backfill_delay_min: float = 2.0
+    backfill_delay_max: float = 4.0
+    backfill_max_requests: int = 400
+    backfill_max_errors: int = 3
     # Upper bound for honouring a server's Retry-After header (seconds).
     retry_after_max: float = 300.0
     user_agent: str = (
@@ -268,6 +279,17 @@ def load_config(
     if not MIN_REQUEST_DELAY <= cfg.request_delay_min <= cfg.request_delay_max:
         raise ValueError(f"require {MIN_REQUEST_DELAY} <= request_delay_min <= "
                          f"request_delay_max (politeness floor)")
+    if not MIN_REQUEST_DELAY <= cfg.backfill_delay_min <= cfg.backfill_delay_max:
+        raise ValueError(f"require {MIN_REQUEST_DELAY} <= backfill_delay_min <= "
+                         f"backfill_delay_max (politeness floor)")
+    if cfg.backfill_delay_min < cfg.request_delay_min:
+        raise ValueError("backfill_delay_min must not be below request_delay_min "
+                         "(the backfill is the slower crawl)")
+    if cfg.backfill_max_requests < 0 or cfg.backfill_max_errors < 1:
+        raise ValueError("backfill_max_requests must be >= 0, backfill_max_errors >= 1")
+    if cfg.backfill and cfg.refresh:
+        raise ValueError("--backfill and --refresh are mutually exclusive "
+                         "(a backfill never fetches a file twice)")
     if cfg.offline and cfg.refresh:
         raise ValueError("--offline and --refresh are mutually exclusive")
     if cfg.listing_final_grace_days < 0 or cfg.listing_max_age_hours <= 0:
