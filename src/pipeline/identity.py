@@ -33,10 +33,11 @@ Teilverband, residence, birth year, schlussgang portrait). The cascade:
    two spellings appear at the same festival or date (proven distinct names such as
    Stucki Simon / Timon), and not when the small side has two possible targets.
 6. **Ids** (:func:`_athlete_ids`): ``<name-slug>-p<portrait_id>`` for anchored
-   identities, else ``<name-slug>-<fest_id>-<idx>`` of the identity's earliest row.
-   Both parts are facts of the source, so later festivals do not reshuffle ids; an id
-   changes only when its earliest row moves to another identity or a portrait gets
-   attached / detached.
+   identities, else ``<name-slug>-<fest_id>-<idx>`` of the identity's earliest row from
+   2011 on (:data:`ID_ANCHOR_FROM`; its earliest row if it has none). Both parts are
+   facts of the source, so later festivals do not reshuffle ids, and seasons before 2011
+   added later (Phase 10) do not rename anyone; an id changes only when its id row moves
+   to another identity or a portrait gets attached / detached.
 
 The statistic sheets have no profile slug (spec §4.1 "slug first"): the portrait link
 (2023+) and the portrait registry take that role, then name + club and the other
@@ -320,6 +321,28 @@ def anchor_supported(a: Cluster, b: Cluster, why: list[str]) -> bool:
     return bool(ANCHOR_EVIDENCE & set(why))
 
 
+#: Seasons before 2011 (Phase 10) carry little beyond the name - no portraits, hardly a
+#: birth year, a residence on a part of the rows, name-only rows for opponents a sheet
+#: does not print - and no Regional festivals, so careers have holes. A career that lies
+#: entirely before 2011 is therefore joined to a later one across this many seasons
+#: without a festival only on evidence beyond the name (club, residence, birth year,
+#: namesake number): the name alone would join two generations of a family, and would
+#: move a newcomer's first season back by a decade (the publication rule for athletes of
+#: unknown age looks at the first season).
+HISTORY_BEFORE = 2011
+HISTORY_GAP_SEASONS = 5
+BRIDGE_EVIDENCE = frozenset({"club", "birth_year", "residence", "ordinal"})
+
+
+def history_gap(a: Cluster, b: Cluster, why: list[str]) -> bool:
+    """True if joining ``a`` and ``b`` would bridge a long gap between a career that
+    ended before 2011 and a later one on the name alone (see HISTORY_GAP_SEASONS)."""
+    if not a.years or not b.years or BRIDGE_EVIDENCE & set(why):
+        return False
+    lo, hi = (a, b) if min(a.years) <= min(b.years) else (b, a)
+    return max(lo.years) < HISTORY_BEFORE and min(hi.years) - max(lo.years) - 1 >= HISTORY_GAP_SEASONS
+
+
 def link_score(a: Cluster, b: Cluster, relaxed: bool = False) -> float | None:
     """Score of a permitted merge, or None.
 
@@ -329,7 +352,7 @@ def link_score(a: Cluster, b: Cluster, relaxed: bool = False) -> float | None:
     if cannot_link(a, b) is not None:
         return None
     s, why = pair_score(a, b)
-    if not anchor_supported(a, b, why):
+    if not anchor_supported(a, b, why) or history_gap(a, b, why):
         return None
     if s > 0:
         return s
@@ -715,7 +738,7 @@ class EvidenceResolver:
         for c in real:
             c.key = min(c.keys, key=lambda k: (-c.keys[k], k))
         per_key = Counter(c.key for c in real)
-        ids = _athlete_ids(real, rid, keys, registry)
+        ids = _athlete_ids(real, rid, keys, registry, date)
         long_careers: dict[str, list[tuple[int, int]]] = defaultdict(list)
         for c in real:
             if len(c.rows) >= FRAGMENT_NEXT_TO:
@@ -842,9 +865,17 @@ class EvidenceResolver:
         for c in clusters:
             by_key[c.key].append(c)
         key_dates = {k: {date[i] for i in rows} for k, rows in blocks.items()}
+        # "established" name tokens (used by several keys): two spellings that both occur
+        # from 2011 on are judged on the names of those seasons, as before the history
+        # was added (more seasons mean more keys per token, which would silently undo
+        # merges of published athletes); any other pair on all names, the stricter count
         tokens: Counter[str] = Counter()
+        tokens_recent: Counter[str] = Counter()
+        recent = {k for k, d in key_dates.items() if max(d, default="") >= ID_ANCHOR_FROM}
         for k in blocks:
             tokens.update(set(k.split()))
+            if k in recent:
+                tokens_recent.update(set(k.split()))
         index = names.NameIndex(blocks)
         pairs: list[tuple[float, str, str]] = []
         for k in sorted(blocks):
@@ -855,10 +886,11 @@ class EvidenceResolver:
             if not (a.rows or b.rows) or cannot_link(a, b) is not None:
                 return None
             diff = _differing_tokens(k, k2)
+            count = tokens_recent if k in recent and k2 in recent else tokens
             established = diff is not None and all(
-                tokens[t] >= ESTABLISHED_TOKEN_KEYS for t in diff)
+                count[t] >= ESTABLISHED_TOKEN_KEYS for t in diff)
             s, why = pair_score(a, b)
-            if not anchor_supported(a, b, why):
+            if not anchor_supported(a, b, why) or history_gap(a, b, why):
                 return None
             ok = _variant_allowed(variant_kind(k, k2), a, b, s, why,
                                   not key_dates[k].isdisjoint(key_dates[k2]), established)
@@ -1000,16 +1032,26 @@ def _latest_mode(values: list[str]) -> str | None:
     return next(v for v in reversed(values) if counts[v] == best)
 
 
+#: Ids were first published for the data from 2011 on. Seasons added before that (Phase
+#: 10) must not rename an athlete, so the id row is the earliest row *from this date on*;
+#: only an athlete who has no such row takes his earliest row.
+ID_ANCHOR_FROM = "2011-01-01"
+
+
 def _athlete_ids(clusters: list[Cluster], rid: list[str], keys: list[str],
-                 registry: dict[int, dict]) -> list[str]:
+                 registry: dict[int, dict], date: list[str] | None = None) -> list[str]:
     """Stable ids: ``<name-slug>-p<portrait_id>`` when a portrait is attached (slug of
     the registry name), else ``<name-slug>-<athlete_raw_id>`` of the identity's earliest
-    row (``<fest_id>-<idx>``, slug of that row's name). Later festivals never change
-    either part; the display name (majority spelling) is not part of the id."""
+    row on or after :data:`ID_ANCHOR_FROM`, or of its earliest row if it has none
+    (``<fest_id>-<idx>``, slug of that row's name). Later festivals never change
+    either part, nor do earlier seasons added afterwards; the display name (majority
+    spelling) is not part of the id."""
     out = []
     for c in clusters:
         portrait = next(iter(sorted(c.portraits)), c.anchor)
         first = min(c.rows)
+        if date is not None:
+            first = min((i for i in c.rows if date[i] >= ID_ANCHOR_FROM), default=first)
         if portrait is not None:
             name = registry[portrait]["key"] if portrait in registry else keys[first]
             out.append(f"{slugify(name)}-p{portrait}")
