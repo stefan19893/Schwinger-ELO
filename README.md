@@ -148,7 +148,7 @@ Three workflows:
 |---|---|---|---|
 | `ci.yml` | push to `main`, pull requests | install (Python 3.11: `requirements.txt`; 3.14: the hashed `requirements-lock.txt`), `pytest` (incl. the browser smoke test), sample build, `check-site --sample`. No request to schlussgang.ch, publishes nothing | no |
 | `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, deploy to Pages. No crawl | **yes** |
-| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site-crawl-locally) | **yes** |
+| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site) | **yes** |
 
 "Opt-in" is the repository variable `PUBLISH_ENABLED`. Unless it is exactly `true`, every
 job of the two publishing workflows is skipped: no crawl, no build, no deployment — also
@@ -320,11 +320,31 @@ This first run is also the first real test of the workflows — they were valida
       schlussgang.ch answered the runner.
 - [ ] Consider pinning the actions to commit SHAs (Dependabot can maintain them).
 
-### Updating the site (crawl locally)
+### Updating the site
 
-GitHub does not crawl: new festivals are fetched on your machine, the state is uploaded
-and the deploy workflow rebuilds the site from it (no request to schlussgang.ch from a
-runner).
+Nothing reaches the public site by itself: a merge to `main` does not deploy and GitHub
+never crawls. The site changes only when "Deploy to GitHub Pages" is started by hand
+(with `PUBLISH_ENABLED` = `true`). There are two kinds of update.
+
+**A. New code or page changes (no new data)** — for example a merged pull request.
+
+1. Merge the pull request into `main` and wait for the green CI run on `main`.
+2. Start the deployment, either
+   - in the browser (also on a phone): open
+     `https://github.com/<user>/Schwinger-ELO/actions/workflows/deploy_pages.yml` →
+     **Run workflow** → branch `main` → leave `accept_changes` off, or
+   - in a terminal: `gh workflow run deploy_pages.yml && gh run watch`.
+3. When the run is green (about ten minutes), reload the site; a browser may show the
+   old scripts until its cache is refreshed.
+
+The run rebuilds the site from the state bundle on the draft release with the code of
+`main`; it makes no request to schlussgang.ch. If the change makes the site smaller or
+publishes more athletes on purpose (for example another `publish_min_age`), the deploy
+guard stops the run: start it once more with `accept_changes` ticked.
+
+**B. New festival results (crawl locally)** — needs your machine, on an up-to-date
+`main` (`git switch main && git pull`). New festivals are fetched here, the state is
+uploaded and the same deploy workflow rebuilds the site from it.
 
 ```bash
 python -m src.cli all                                # incremental crawl + rebuild
@@ -339,9 +359,14 @@ rm -r ~/schwingen-state
 gh workflow run deploy_pages.yml && gh run watch
 ```
 
-The new bundle is uploaded before the old one is removed, so a failed upload leaves the
-previous state in place. Should two bundles ever be on the release, the deploy run
-imports the newer one (by its creation time) and removes both after its own upload.
+(`./scripts/deploy_local.sh --no-serve` does the first line including the virtual
+environment.) The upload is the whole state, about 500 MB. The new bundle is uploaded
+before the old one is removed, so a failed upload leaves the previous state in place.
+Should two bundles ever be on the release, the deploy run imports the newer one (by its
+creation time) and removes both after its own upload. If `check-site` fails locally,
+read its numbers before anything is uploaded — see "Afterwards".
+
+**After either:** `gh release view pipeline-state --json isDraft` must still say `true`.
 
 **Afterwards**
 
