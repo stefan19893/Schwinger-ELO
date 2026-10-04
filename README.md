@@ -148,11 +148,12 @@ Three workflows:
 |---|---|---|---|
 | `ci.yml` | push to `main`, pull requests | install (Python 3.11: `requirements.txt`; 3.14: the hashed `requirements-lock.txt`), `pytest` (incl. the browser smoke test), sample build, `check-site --sample`. No request to schlussgang.ch, publishes nothing | no |
 | `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, deploy to Pages. No crawl | **yes** |
-| `scrape_and_update.yml` | Tuesdays 03:17 UTC from March to October, the 1st of the month from November to February, or by hand | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy | **yes** |
+| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site-crawl-locally) | **yes** |
 
 "Opt-in" is the repository variable `PUBLISH_ENABLED`. Unless it is exactly `true`, every
 job of the two publishing workflows is skipped: no crawl, no build, no deployment — also
-when the schedule fires or someone presses "Run workflow".
+when someone presses "Run workflow". Nothing runs on a schedule: GitHub never crawls
+schlussgang.ch on its own.
 
 **The state between runs** (HTTP cache, database, Parquet files, guard baseline; about
 500 MB) is one bundle file attached to a **draft** release named `pipeline-state`. A draft
@@ -282,7 +283,7 @@ This publishes nothing by itself.
 
 **6. Opt in:** Settings → Secrets and variables → Actions → Variables → New repository
 variable `PUBLISH_ENABLED` = `true` (or `gh variable set PUBLISH_ENABLED --body true`).
-From now on the next scheduled run crawls and deploys.
+This alone starts nothing: no workflow has a schedule.
 
 **7. First deployment by hand:** Actions → "Deploy to GitHub Pages" → Run workflow
 (branch `main`), or `gh workflow run deploy_pages.yml`. Leave `accept_changes` off if you
@@ -307,17 +308,40 @@ This first run is also the first real test of the workflows — they were valida
       lock on Linux x86_64 / Python 3.14 (`scripts/make_lock.py`, or
       `pip-compile --generate-hashes`) before opting in.
 - [ ] With `PUBLISH_ENABLED` unset, "Run workflow" on `deploy_pages.yml` gives a run
-      whose jobs are **skipped**, and so does the first cron tick of
-      `scrape_and_update.yml`.
+      whose jobs are **skipped**, and so does one on `scrape_and_update.yml`.
 - [ ] After step 4: `gh release view pipeline-state --json isDraft` says `true`, and the
       release is not listed for a signed-out browser (`…/releases` shows nothing).
 - [ ] After step 7: the local action `./.github/actions/pipeline-state` found the draft
       with the workflow token (steps "Download the pipeline state" and "Upload the new
       state" green), `upload-pages-artifact@v4` / `deploy-pages@v4` resolved, the site
       is served under `/Schwinger-ELO/`, and the run's log shows no athlete name.
-- [ ] After the first scheduled run: the "Incremental crawl" step reports on the order of
-      100–350 network requests (not thousands), and schlussgang.ch answered the runner.
+- [ ] Only if you ever start `scrape_and_update.yml` by hand: the "Incremental crawl"
+      step reports on the order of 100–350 network requests (not thousands), and
+      schlussgang.ch answered the runner.
 - [ ] Consider pinning the actions to commit SHAs (Dependabot can maintain them).
+
+### Updating the site (crawl locally)
+
+GitHub does not crawl: new festivals are fetched on your machine, the state is uploaded
+and the deploy workflow rebuilds the site from it (no request to schlussgang.ch from a
+runner).
+
+```bash
+python -m src.cli all                                # incremental crawl + rebuild
+python -m src.cli serve                              # look at it
+python -m src.cli check-site --record                # deploy guard, new baseline
+old="$(gh release view pipeline-state --json assets --jq '.assets[].name')"
+python -m src.cli state-export ~/schwingen-state
+gh release upload pipeline-state ~/schwingen-state/schwingen-state-*.tar.gz
+for a in $old; do gh release delete-asset pipeline-state "$a" --yes; done
+gh release view pipeline-state --json isDraft,assets # still a draft, exactly one asset
+rm -r ~/schwingen-state
+gh workflow run deploy_pages.yml && gh run watch
+```
+
+The new bundle is uploaded before the old one is removed, so a failed upload leaves the
+previous state in place. Should two bundles ever be on the release, the deploy run
+imports the newer one (by its creation time) and removes both after its own upload.
 
 **Afterwards**
 
@@ -330,8 +354,6 @@ This first run is also the first real test of the workflows — they were valida
   became 18 needs no override.
 - If the state is lost or damaged, repeat step 4 from your machine (delete the old asset
   first). The next run catches up on what is missing, within the request caps.
-- GitHub pauses scheduled workflows after 60 days without repository activity and sends
-  a mail; re-enable it under Actions.
 - The state bundle grows by roughly 60 MB a season; a release asset may be 2 GB.
 
 **Turning it off**
