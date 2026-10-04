@@ -206,6 +206,7 @@ def pages(browser: str, site: Path, base_url: str,
             [r[1] for r in ranked[:8]] + ["%3Cb%3Ex", "A..B"]),
         # the other axes of the career chart, and a value of x that is none of them
         "compare-bouts": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=gaenge",
+        "compare-bouts-one": base_url + f"compare.html?ids={ranked[0][1]}&x=gaenge",
         "compare-age": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=alter",
         "compare-season": base_url + f"compare.html?ids={ranked[0][1]}&x=saison",
         "compare-axis-invalid": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}"
@@ -230,7 +231,8 @@ def test_dom_helper_detects_broken_pages() -> None:
 @pytest.mark.parametrize("name", ["index", "seasons", "peaks", "athlete", "athlete-unknown",
                                   "fests", "fest", "compare-empty", "compare-one",
                                   "compare-pair", "compare-unknown", "compare-limit",
-                                  "compare-bouts", "compare-age", "compare-season",
+                                  "compare-bouts", "compare-bouts-one", "compare-age",
+                                  "compare-season",
                                   "compare-axis-invalid"])
 def test_page_renders_without_error(pages: dict[str, str], name: str) -> None:
     assert page_problems(pages[name]) == [], name
@@ -342,6 +344,17 @@ def test_comparison_axes(pages: dict[str, str], site: Path) -> None:
     if min(totals) < max(totals):
         assert f"Gemeinsamer Bereich bis Gang {min(totals)}" in bouts.text["se-view"]
     assert "&amp;x=gaenge" in pages["compare-bouts"].split("data-remove=")[0]   # links keep the axis
+    # the Gänge of every festival, drawn from the bouts files - also for a single athlete,
+    # where no direct bouts are shown - and said to be a breakdown of the festival
+    for name in ("compare-bouts", "compare-bouts-one"):
+        view = Dom(pages[name]).text["se-view"]
+        assert "Die Wertung wird pro Fest berechnet, nicht pro Gang" in view, name
+        assert "keine Wertung, gegen die der nächste Gegner gerechnet wurde" in view, name
+        assert "konnten nicht geladen werden" not in view, name
+        assert "canvas" in Dom(pages[name]).tags, name
+    assert "Die Wertung wird pro Fest berechnet" not in Dom(pages["compare-pair"]).text["se-view"]
+    if max(totals) > 60:
+        assert "Erste 60 Gänge" in bouts.text["se-view"]
     # age: only athletes with a birth year are drawn, the others are named in a note
     age = Dom(pages["compare-age"])
     assert _active_axis(pages["compare-age"]) == ["age"]

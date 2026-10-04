@@ -117,7 +117,7 @@ def test_scripts_only_fetch_files_the_builder_writes() -> None:
     assert f"B_UNRATED = {sb.B_UNRATED}" in compare
     # compare.js reads the bout rows by position
     assert sb.BOUT_SIDE_COLS == ["gang", "opp", "res", "g", "go", "flags", "d"]
-    assert "row = [gang, opp, res, g, go, flags]" in compare
+    assert "row = [gang, opp, res, g, go, flags, d]" in compare
     assert sb.OTHER_FEST_COLS == ["id", "name", "date", "cat"]
     # the column names the scripts read exist in the contracts
     cols = set(sb.RANKING_COLS + sb.SEARCH_COLS + sb.ALLTIME_COLS + sb.SEASON_COLS
@@ -306,7 +306,7 @@ def test_comparison_axis_rules() -> None:
     eras = js[js.index("function eras"):js.index("function axisNotes")]
     assert "e.rows[0].date < SCALE_SETTLED" in eras and "scaleNoted ?" in eras
     assert eras.index("heisst nicht gleiche Zeit'") < eras.index("!old ? '.'")
-    assert js.count("scaleNoted = true;") == 1 and js.count("' + eras(shown) + '") == 3
+    assert js.count("scaleNoted = true;") == 1 and js.count("' + eras(shown) + '") == 4
     # F2: who gets the "not the start of his career" note - the thin first seasons of the
     # data or a first festival at an adult age; worded as likely, not as known
     rule = js[js.index("function likelyTruncated"):js.index("function startText")]
@@ -333,4 +333,55 @@ def test_comparison_axis_rules() -> None:
     about = (WEB / "about.html").read_text(encoding="utf-8")
     for needle in ("nach Gängen, nach Alter oder nach Karrieresaison", "nur der Jahrgang bekannt",
                    "ab dem ersten erfassten Fest"):
+        assert needle in about, needle
+
+
+def test_comparison_gang_rules() -> None:
+    """Static checks for the Gänge of the bout axis (Phase 9): what the page draws from the
+    contribution per bout, and what it says about it."""
+    js = (WEB / "js" / "compare.js").read_text(encoding="utf-8")
+    # the bouts file is loaded for a single athlete only on the bout axis
+    load = js[js.index("function loadBouts"):js.index("// ------------------------------------------------------------------ small helpers")]
+    assert "if (list.length < 2 && ui.x !== 'bouts') { return; }" in load
+    # an older cached bouts file has no contributions: the axis falls back to festivals
+    assert "e.bouts.cols.indexOf('d') === 6" in js
+    assert "x === 'gang' ? gangSeries(e) : x === 'bouts' ? boutSeries(e)" in js
+    series = js[js.index("function gangSeries"):js.index("function hasBirthYear")]
+    # a breakdown of the festival: before + contributions in the order of the file; the
+    # festival point and the reversion step are the ones of the festival view
+    assert "r.before + sum" in series and "sum += g[6];" in series
+    assert "reversion.push([c, prev.after], [c, r.before], [c, null]);" in series
+    assert "points.push({ value: [end, r.after], row: r, from: c + 1, to: end" in series
+    # hidden bouts: only their number and their sum, both from the history row, drawn at
+    # the end of the festival
+    assert "var hidden = r.n - list.length" in series
+    assert "restInfo = { n: hidden, d: r.after - r.before - sum };" in series
+    assert "rest.push([c + list.length, v], [end, r.after], [end, null]);" in series
+    # uncertain order: the flag of the file or a Gang number used twice
+    assert "(g[5] & B_GANG_UNCERTAIN) || seen[g[0]]" in series
+    # nothing but the page's own files: no expected score, no K factor
+    for word in ("expected", "mov", "lambda", ".k)"):
+        assert word not in series, word
+    # the model is said in visible text, next to the chart
+    notes = js[js.index("function axisNotes"):js.index("function chartSection")]
+    for needle in ("Die Wertung wird pro Fest berechnet, nicht pro Gang:",
+                   "zählen gegen die Wertungen vor dem Fest",
+                   "keine Wertung, gegen die der nächste Gegner gerechnet wurde",
+                   "nicht mit Namen veröffentlicht werden – nur zusammengefasst und am Ende des Fests",
+                   "Reihenfolge der Gänge nicht überall gesichert",
+                   "hängt nicht von der Reihenfolge ab", "auf eine Dezimale gerundet",
+                   "konnten nicht geladen werden: dort ein Punkt pro Fest"):
+        assert needle in notes, needle
+    assert "(Aufteilung des Fests, keine eigene Wertung)" in js           # Gang tooltip
+    assert "var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';" in js
+    assert "gegen einen nicht veröffentlichten Gegner" in js
+    # opponents are named from the file's own list, escaped, with the identity marker
+    text = js[js.index("function gangText"):js.index("function restText")]
+    assert "SE.esc(e.bouts.names[it.opp]" in text and "e.bouts.unc" in text and "' ?'" in text
+    # density: the single Gänge get points only while there is room for them
+    assert "var DOT_PX = 3;" in js and "var FIRST_BOUTS = 60;" in js
+    assert "chart.on('datazoom'" in js and "<= dotLimit()" in js
+    assert "zoomTo === 'common' || zoomTo === 'first' ? zoomTo : 'all'" in js
+    about = (WEB / "about.html").read_text(encoding="utf-8")
+    for needle in ("pro Fest berechnet", "Beitrag jedes Gangs"):
         assert needle in about, needle

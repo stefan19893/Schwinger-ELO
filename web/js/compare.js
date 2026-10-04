@@ -17,6 +17,8 @@
   var IDLE_WARN_DAYS = 180;
   var SCALE_SETTLED = '2016-01-01';
   var B_SCHLUSSGANG = 1, B_EXTRA = 2, B_GANG_UNCERTAIN = 8, B_UNRATED = 16;
+  var FIRST_BOUTS = 60;        // the zoom button "Erste 60 Gänge"
+  var DOT_PX = 3;              // single Gänge get a point when each has this many pixels
 
   var view = SE.$('se-view'), picked = SE.$('se-picked'), slots = SE.$('se-slots');
   var input = SE.$('se-add'), panel = SE.$('se-add-results'), hint = SE.$('se-add-hint');
@@ -132,10 +134,11 @@
     render();
   }
 
-  /* The bouts files are only needed for a comparison, i.e. from two athletes on. */
+  /* The bouts files are needed for a comparison, i.e. from two athletes on, and for the
+   * Gänge of the bout axis, there also for a single athlete. */
   function loadBouts() {
     var list = ok();
-    if (list.length < 2) { return; }
+    if (list.length < 2 && ui.x !== 'bouts') { return; }
     list.forEach(function (e) {
       if (e.bouts || e.boutsPending || e.boutsError) { return; }
       e.boutsPending = true;
@@ -144,7 +147,16 @@
         e.bouts = b;
       }).catch(function (err) {
         e.boutsError = err;
-      }).then(function () { e.boutsPending = false; renderDuels(); renderCommon(); });
+      }).then(function () {
+        e.boutsPending = false;
+        /* the bout axis draws the Gänge from these files: once, when the last one is in */
+        if (ui.x === 'bouts' && !ok().some(function (o) { return o.boutsPending; })) {
+          renderLoaded();
+        } else {
+          renderDuels();
+          renderCommon();
+        }
+      });
     });
   }
 
@@ -483,6 +495,70 @@
     return { line: line, reversion: reversion, points: points, tail: [], lo: 0, hi: c };
   }
 
+  /* The bouts file carries the contribution per bout (older cached copies do not). */
+  function gangReady(e) {
+    return !!(e.bouts && e.bouts.cols && e.bouts.cols.indexOf('d') === 6 && e.bouts.names);
+  }
+
+  /* Bout axis with the Gänge of every festival. The engine rates a festival as a whole:
+   * every bout counts against the ratings *before* the festival, and only the sum becomes
+   * the new rating. So there is no rating "after Gang 3"; what exists is each bout's
+   * contribution (d of the bouts file). Inside a festival the line is
+   * before + contributions in Gang order - a breakdown of the festival's change.
+   *
+   * Bouts against athletes who are not published have no row in the bouts file. Their
+   * number and their combined contribution follow from the history row
+   * (n - listed bouts, after - before - listed contributions); they are drawn as one
+   * dotted stretch at the end of the festival, wherever they really took place.
+   * The festival points are the ones of boutSeries (same x, same y). */
+  function gangSeries(e) {
+    var line = [], reversion = [], rest = [], points = [], gangs = [], c = 0, prev = null, unsure = 0;
+    var byFest = {};
+    e.bouts.fests.forEach(function (f) {
+      byFest[f[0]] = f[1].filter(function (g) { return g[6] !== null && g[6] !== undefined; });
+    });
+    e.rows.forEach(function (r) {
+      var gap = prev !== null && Math.abs(r.before - prev.after) > 1e-9;
+      if (gap) {
+        line.push([c, null]);
+        reversion.push([c, prev.after], [c, r.before], [c, null]);
+      }
+      if (gap || prev === null) { line.push([c, r.before]); }
+      var list = byFest[r.fest_id] || [];
+      if (list.length > r.n) { list = []; }          // files of different builds: festival only
+      var hidden = r.n - list.length, v = r.before, sum = 0, seen = {}, doubt = false;
+      list.forEach(function (g) {
+        if ((g[5] & B_GANG_UNCERTAIN) || seen[g[0]]) { doubt = true; }
+        seen[g[0]] = true;
+      });
+      if (doubt) { unsure++; }
+      var items = list.map(function (g, i) {
+        sum += g[6];
+        /* without hidden bouts the last Gang ends at the festival's rating (the single
+         * contributions are rounded) */
+        v = (hidden === 0 && i === list.length - 1) ? r.after : r.before + sum;
+        var item = { gang: g[0], opp: g[1], res: g[2], g: g[3], go: g[4], flags: g[5], d: g[6], v: v };
+        var x = c + i + 1;
+        line.push([x, v]);
+        if (hidden > 0 || i < list.length - 1) {      // the last one is the festival point
+          gangs.push({ value: [x, v], item: item, row: r, doubt: doubt });
+        }
+        return item;
+      });
+      var end = c + r.n, restInfo = null;
+      if (hidden > 0) {
+        restInfo = { n: hidden, d: r.after - r.before - sum };
+        line.push([c + list.length, null]);
+        rest.push([c + list.length, v], [end, r.after], [end, null]);
+        line.push([end, r.after]);
+      }
+      points.push({ value: [end, r.after], row: r, from: c + 1, to: end, items: items, rest: restInfo, doubt: doubt });
+      c = end;
+      prev = r;
+    });
+    return { line: line, reversion: reversion, rest: rest, points: points, gangs: gangs, tail: [], lo: 0, hi: c, unsure: unsure, perGang: true };
+  }
+
   function hasBirthYear(e) { return typeof e.h.by === 'number' && e.h.by > 1800; }
 
   /* ISO date -> calendar year plus the elapsed share of that year. */
@@ -531,7 +607,10 @@
     var x = ui.x;
     if (x === 'time') { return e.series || (e.series = SE.careerSeries(e.h)); }
     if (!e.alt) { e.alt = {}; }
-    if (!e.alt[x]) { e.alt[x] = x === 'bouts' ? boutSeries(e) : x === 'age' ? ageSeries(e) : seasonSeries(e); }
+    if (x === 'bouts' && gangReady(e)) { x = 'gang'; }
+    if (!e.alt[x]) {
+      e.alt[x] = x === 'gang' ? gangSeries(e) : x === 'bouts' ? boutSeries(e) : x === 'age' ? ageSeries(e) : seasonSeries(e);
+    }
     return e.alt[x];
   }
 
@@ -563,6 +642,51 @@
   }
 
   var MIN_SEASONS = 5;
+
+  /* The Gang points of the chart on the page (series id and data) and whether they are
+   * shown at the moment. */
+  var gangPoints = [], gangDots = false;
+
+  /* How many bouts the visible range may span for single Gänge to get their own point. */
+  function dotLimit() {
+    var el = SE.$('se-chart'), w = el ? el.clientWidth - 58 : 300;
+    return Math.max(40, Math.floor(w / DOT_PX));
+  }
+
+  /* FIRST_BOUTS when the button "Erste n Gänge" makes sense: Gänge are drawn and somebody
+   * has more bouts than that. */
+  function firstBouts(list) {
+    if (ui.x !== 'bouts') { return 0; }
+    var any = false, top = 0;
+    list.forEach(function (e) {
+      var s = seriesOf(e);
+      any = any || !!s.perGang;
+      top = Math.max(top, s.hi);
+    });
+    return any && top > FIRST_BOUTS ? FIRST_BOUTS : 0;
+  }
+
+  /* "+12.7" / "−3.4": a contribution in rating points, one decimal as exported. */
+  function points1(d) {
+    var r = Math.round(d * 10) / 10;
+    return (r > 0 ? '+' : r < 0 ? '−' : '±') + SE.esc(Math.abs(r).toFixed(1));
+  }
+
+  var RESULT = { 0: 'Gestellt gegen', 1: 'Sieg gegen', 2: 'Niederlage gegen' };
+
+  /* "Sieg gegen Muster Hans ?" - the opponent is a published athlete (the bouts file
+   * holds no others), named from the file's own list. */
+  function gangText(e, it) {
+    var unc = e.bouts.unc && e.bouts.unc.indexOf(it.opp) !== -1;
+    return (RESULT[it.res] || 'Gegen') + ' ' + SE.esc(e.bouts.names[it.opp] || 'Gegner') + (unc ? ' ?' : '') +
+      ((it.flags & B_SCHLUSSGANG) ? ' (Schlussgang)' : '');
+  }
+
+  function restText(rest) {
+    return SE.num(rest.n) + (rest.n === 1 ? ' Gang gegen einen nicht veröffentlichten Gegner: ' : ' Gänge gegen nicht veröffentlichte Gegner: zusammen ') + points1(rest.d);
+  }
+
+  var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';
 
   function seasonLabel(k) { return SE.esc(k) + '. erfasste Saison'; }
 
@@ -604,6 +728,14 @@
         });
         owners.push(e);
       }
+      if (s.rest && s.rest.length) {
+        /* bouts against athletes who are not published: combined, dotted */
+        series.push({
+          name: e.id + ' Rest', type: 'line', data: s.rest, showSymbol: false, silent: true, z: z, connectNulls: false,
+          lineStyle: { color: col, width: 1.2, type: 'dotted', opacity: op }, itemStyle: { color: col }
+        });
+        owners.push(e);
+      }
       /* career seasons: a season without a place in the season ranking is a hollow point */
       var data = mode !== 'season' ? s.points : s.points.map(function (p) {
         return p.season.pos !== null ? p
@@ -612,6 +744,22 @@
       series.push({
         name: e.id + ' Feste', type: 'scatter', data: data, symbol: SYMBOLS[e.slot], symbolSize: size, z: z + 1,
         silent: dim, itemStyle: { color: col, opacity: op }, emphasis: { scale: 2.5 }
+      });
+      owners.push(e);
+    });
+    /* the single Gänge: small points, only while there is room for them (drawChart
+     * switches them with the zoom); the festival points lie on top */
+    gangPoints = [];
+    list.forEach(function (e) {
+      var s = seriesOf(e);
+      if (!s.perGang) { return; }
+      var dim = focus !== null && focus !== e.id;
+      gangPoints.push({ id: 'gang-' + e.slot, data: s.gangs });
+      series.push({
+        id: 'gang-' + e.slot, name: e.id + ' Gänge', type: 'scatter', data: [], symbol: 'circle', symbolSize: 5,
+        z: dim ? 1 : 4, silent: dim, emphasis: { scale: 2 },
+        /* hollow, so that the filled festival points stay recognisable */
+        itemStyle: { color: c.bg, borderColor: colour(e), borderWidth: 1.2, opacity: dim ? 0.16 : 1 }
       });
       owners.push(e);
     });
@@ -625,6 +773,20 @@
     if (ui.zoom === 'common' && shared) {
       zoom.startValue = shared.from;
       zoom.endValue = shared.to;
+    }
+    if (ui.zoom === 'first' && firstBouts(list)) {
+      zoom.startValue = 0;
+      zoom.endValue = FIRST_BOUTS;
+    }
+    if (gangPoints.length) {
+      var top = 0;
+      list.forEach(function (e) { top = Math.max(top, seriesOf(e).hi); });
+      gangDots = (zoom.endValue === undefined ? top : zoom.endValue - zoom.startValue) <= dotLimit();
+      if (gangDots) {
+        series.forEach(function (s) {
+          gangPoints.forEach(function (g) { if (s.id === g.id) { s.data = g.data; } });
+        });
+      }
     }
     var xAxis = {
       type: 'time', axisLine: { lineStyle: { color: c.border } },
@@ -651,6 +813,15 @@
         formatter: function (p) {
           var r = p.data && p.data.row, e = owners[p.seriesIndex], s = p.data && p.data.season;
           if (!e || (!r && !s)) { return ''; }
+          var it = p.data.item;
+          if (it) {
+            /* one Gang: what it contributed, and the running sum - said to be that */
+            return '<strong>' + SE.esc(plainName(e)) + (e.h.unc ? ' ?' : '') + '</strong>' +
+              (e.h.unc ? ' <span>(Identität unsicher)</span>' : '') + '<br>' + SE.esc(r.fest) + '<br>' +
+              SE.esc(SE.date(r.date)) + ' · ' + SE.esc(it.gang) + '. Gang<br>' + gangText(e, it) + '<br>Beitrag <strong>' + points1(it.d) +
+              '</strong> · Zwischenstand ' + SE.rating(it.v) + '<br><span>(Aufteilung des Fests, keine eigene Wertung)</span>' +
+              (p.data.doubt ? '<br>' + DOUBT : '');
+          }
           var who = '<strong>' + SE.esc(plainName(e)) + (e.h.unc ? ' ?' : '') + '</strong>' +
             (e.h.unc ? ' <span>(Identität unsicher)</span>' : '') + '<br>';
           if (s) {
@@ -664,10 +835,20 @@
           } else if (mode === 'age') {
             extra = '<br>Im Jahr seines ' + SE.esc(p.data.age) + '. Geburtstags (Jahrgang ' + SE.esc(e.h.by) + ')';
           }
+          /* the festival point of the bout axis lists its Gänge (a finger hits the big
+           * point more easily than the small ones) */
+          var parts = '';
+          if (p.data.items) {
+            p.data.items.forEach(function (g) {
+              parts += '<br>' + SE.esc(g.gang) + '. ' + gangText(e, g) + ': ' + points1(g.d);
+            });
+            if (p.data.rest) { parts += '<br>' + restText(p.data.rest); }
+            if (p.data.doubt) { parts += '<br>' + DOUBT; }
+          }
           return who + SE.esc(r.fest) + '<br>' +
             SE.esc(SE.date(r.date)) + ' · ' + SE.esc(SE.category(r.cat)) + extra + '<br>Wertung ' + SE.rating(r.before) + ' → <strong>' +
             SE.rating(r.after) + '</strong> (' + SE.signed(r.after - r.before) + ')<br>' + SE.num(r.score, 1) + ' Punkte aus ' +
-            SE.esc(r.n) + ' Gängen, erwartet ' + SE.num(r.exp, 1);
+            SE.esc(r.n) + ' Gängen, erwartet ' + SE.num(r.exp, 1) + parts;
         }
       },
       xAxis: xAxis,
@@ -739,11 +920,39 @@
     /* what is known, and what is only likely */
     var begin = (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
       early.map(startText).join(', ') + ': ';
-    if (ui.x === 'bouts') {
+    if (ui.x === 'bouts' && shown.some(function (e) { return seriesOf(e).perGang; })) {
+      var unsure = 0, hidden = false;
+      var without = shown.filter(function (e) {
+        var s = seriesOf(e);
+        unsure += s.unsure || 0;
+        hidden = hidden || !!(s.rest && s.rest.length);
+        return !s.perGang;
+      });
+      html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
+        '<strong>Die Wertung wird pro Fest berechnet, nicht pro Gang:</strong> Alle Gänge eines Fests zählen gegen die Wertungen vor dem Fest, und erst nach dem Fest gilt die neue Wertung. ' +
+        'Die Linie innerhalb eines Fests zeigt, wie sich dessen Änderung auf die Gänge verteilt (Wertung vor dem Fest plus die Beiträge der Gänge der Reihe nach) – ' +
+        'ein Zwischenstand dieser Aufteilung, keine Wertung, gegen die der nächste Gegner gerechnet wurde. ' +
+        'Grosser Punkt = Wertung nach einem Fest (antippen: alle Gänge des Fests mit Gegner, Ausgang und Beitrag). ' +
+        'Kleine hohle Punkte = einzelne Gänge; sie erscheinen, sobald der Bereich unten eng genug gewählt ist' + (firstBouts(shown) ? ' (z.B. «Erste ' + FIRST_BOUTS + ' Gänge»)' : '') + '. ' +
+        (hidden ? 'Gepunktet: Gänge gegen Schwinger, die nicht mit Namen veröffentlicht werden – nur zusammengefasst und am Ende des Fests eingetragen, unabhängig davon, wann sie stattfanden. ' : '') +
+        'Gestrichelt senkrecht: Rückführung Richtung 1500 am Saisonwechsel (1. April) zwischen zwei Festen, gehört zu keinem Fest. ' +
+        'Beiträge sind auf eine Dezimale gerundet. Alle beginnen beim Startwert 1500. ' + eras(shown) + '</p>';
+      if (unsure) {
+        html += '<div class="mt-2">' + SE.note('<strong>Reihenfolge der Gänge nicht überall gesichert.</strong> Bei ' + SE.num(unsure) +
+          (unsure === 1 ? ' Fest' : ' Festen') + ' der Auswahl ist die Nummer eines Gangs in der Quelle unsicher oder doppelt vergeben. ' +
+          'Der Verlauf innerhalb dieser Feste kann anders gewesen sein (im Hinweis zum Fest vermerkt); die Wertung nach dem Fest hängt nicht von der Reihenfolge ab.', 'info') + '</div>';
+      }
+      if (without.length) {
+        html += '<div class="mt-2">' + SE.note('Die Gänge von ' + names(without) + ' konnten nicht geladen werden: dort ein Punkt pro Fest. Bitte die Seite neu laden.') + '</div>';
+      }
+    }
+    if (ui.x === 'bouts' && !html) {
       html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
         'Punkt = Wertung nach einem Fest, eingetragen bei seinem letzten Gang (antippen für Details); die Wertung ändert sich nur von Fest zu Fest, die Linie verbindet die Punkte. ' +
         'Gestrichelt senkrecht: Rückführung Richtung 1500 am Saisonwechsel (1. April) zwischen zwei Festen, gehört zu keinem Fest. ' +
         'Alle beginnen beim Startwert 1500. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
+    }
+    if (ui.x === 'bouts') {
       if (early.length) {
         html += '<div class="mt-2">' + SE.note('<strong>«Gang 1» ist der erste erfasste Gang, nicht zwingend der erste der Laufbahn.</strong> ' + begin +
           'Wahrscheinlich ' + (one ? 'hatte er' : 'hatten sie') + ' schon Gänge davor, die nicht erfasst sind – sicher ist das nicht. ' +
@@ -799,11 +1008,14 @@
       html += '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">Tipp: Einen Namen antippen hebt diese Laufbahn im Diagramm hervor, nochmals antippen zeigt wieder alle gleich.</p>';
     }
     html += axisSwitch();
-    if (shared) {
-      html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="' + shared.aria + '">' +
-        '<button type="button" class="se-chip' + (ui.zoom === 'all' ? ' se-chip-on' : '') + '" data-zoom="all" aria-pressed="' + (ui.zoom === 'all') + '">' + shared.all + '</button>' +
-        '<button type="button" class="se-chip' + (ui.zoom === 'common' ? ' se-chip-on' : '') + '" data-zoom="common" aria-pressed="' + (ui.zoom === 'common') +
-        '">' + shared.label + '</button></div>';
+    var first = firstBouts(shown);
+    if (shared || first) {
+      html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="' + (shared ? shared.aria : 'Bereich der Gänge') + '">' +
+        '<button type="button" class="se-chip' + (ui.zoom === 'all' ? ' se-chip-on' : '') + '" data-zoom="all" aria-pressed="' + (ui.zoom === 'all') + '">' + (shared ? shared.all : 'Alle Gänge') + '</button>' +
+        (shared ? '<button type="button" class="se-chip' + (ui.zoom === 'common' ? ' se-chip-on' : '') + '" data-zoom="common" aria-pressed="' + (ui.zoom === 'common') +
+          '">' + shared.label + '</button>' : '') +
+        (first ? '<button type="button" class="se-chip' + (ui.zoom === 'first' ? ' se-chip-on' : '') + '" data-zoom="first" aria-pressed="' + (ui.zoom === 'first') +
+          '">Erste ' + first + ' Gänge</button>' : '') + '</div>';
     }
     if (list.length > 1 && both) {
       html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Zeitraum">' +
@@ -840,6 +1052,16 @@
       if (!window.echarts) { throw new Error('ECharts nicht geladen'); }
       chart = window.echarts.init(el, null, { renderer: 'canvas' });
       chart.setOption(chartOption(drawable(list)), true);
+      /* the single Gänge come and go with the visible range (slider) */
+      var mine = chart;
+      chart.on('datazoom', function () {
+        if (!gangPoints.length || mine !== chart) { return; }
+        var z = mine.getOption().dataZoom[0];
+        var show = (z.endValue - z.startValue) <= dotLimit();
+        if (show === gangDots) { return; }
+        gangDots = show;
+        mine.setOption({ series: gangPoints.map(function (g) { return { id: g.id, data: show ? g.data : [] }; }) });
+      });
     } catch (err) {
       chart = null;
       el.innerHTML = SE.note('Das Diagramm konnte nicht gezeichnet werden; die Werte stehen in den Tabellen und in den Profilen.');
@@ -887,7 +1109,7 @@
     SE.table(src.bouts.other).forEach(function (o) { fest[o.id] = o; });
     src.bouts.fests.forEach(function (f) {
       f[1].forEach(function (r) {
-        /* row = [gang, opp, res, g, go, flags] (BOUT_SIDE_COLS of the exporter) */
+        /* row = [gang, opp, res, g, go, flags, d] (BOUT_SIDE_COLS of the exporter) */
         if (r[1] !== oi) { return; }
         var res = r[2], info = fest[f[0]] || { name: 'Fest', date: null, cat: null };
         out.push({
@@ -1122,7 +1344,8 @@
       ui.focus = ui.focus === id ? null : id;
       render();
     } else if (el.hasAttribute('data-zoom')) {
-      ui.zoom = el.getAttribute('data-zoom') === 'common' ? 'common' : 'all';
+      var zoomTo = el.getAttribute('data-zoom');
+      ui.zoom = zoomTo === 'common' || zoomTo === 'first' ? zoomTo : 'all';
       render();
     } else if (el.hasAttribute('data-common')) {
       ui.common = el.getAttribute('data-common') === 'two' ? 'two' : 'all';
