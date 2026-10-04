@@ -204,6 +204,12 @@ def pages(browser: str, site: Path, base_url: str,
                                       + ranked[1][1].rsplit("-", 1)[0] + "-p0",
         "compare-limit": base_url + "compare.html?ids=" + ",".join(
             [r[1] for r in ranked[:8]] + ["%3Cb%3Ex", "A..B"]),
+        # the other axes of the career chart, and a value of x that is none of them
+        "compare-bouts": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=gaenge",
+        "compare-age": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=alter",
+        "compare-season": base_url + f"compare.html?ids={ranked[0][1]}&x=saison",
+        "compare-axis-invalid": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}"
+                                           "&x=%3Cb%3Ey",
     }
     return _load_all(browser, urls, tmp_path_factory.mktemp("profiles"))
 
@@ -223,7 +229,9 @@ def test_dom_helper_detects_broken_pages() -> None:
 
 @pytest.mark.parametrize("name", ["index", "seasons", "peaks", "athlete", "athlete-unknown",
                                   "fests", "fest", "compare-empty", "compare-one",
-                                  "compare-pair", "compare-unknown", "compare-limit"])
+                                  "compare-pair", "compare-unknown", "compare-limit",
+                                  "compare-bouts", "compare-age", "compare-season",
+                                  "compare-axis-invalid"])
 def test_page_renders_without_error(pages: dict[str, str], name: str) -> None:
     assert page_problems(pages[name]) == [], name
 
@@ -304,6 +312,50 @@ def test_comparison_page(pages: dict[str, str], site: Path) -> None:
     assert "<b>x" not in pages["compare-limit"]                         # nothing injected
     for name in ("compare-empty", "compare-pair"):
         assert '<meta name="robots" content="noindex">' in pages[name]
+
+
+def _active_axis(html: str) -> list[str]:
+    """The axis links marked as current, by their data-x value."""
+    return [part.split('"', 1)[0] for part in html.split('data-x="')[1:]
+            if part.split(">", 1)[0].endswith('aria-current="true"')]
+
+
+def test_comparison_axes(pages: dict[str, str], site: Path) -> None:
+    """The career chart by bouts, by age and by career season; time by default."""
+    data = site / SUBPATH / "data"
+    ranked = json.loads((data / "rankings_latest.json").read_text(encoding="utf-8"))["rows"]
+    heads = [json.loads((data / "history" / f"history_{r[1]}.json").read_text(encoding="utf-8"))
+             for r in ranked[:2]]
+    # time: the default, also for a value that is not one of the three; nothing injected
+    for name in ("compare-pair", "compare-axis-invalid"):
+        assert _active_axis(pages[name]) == ["time"], name
+        assert pages[name].count("data-x=") == 4, name
+        assert "Zeit ohne Kampf bis zum Datenstand" in Dom(pages[name]).text["se-view"], name
+        assert "x=" not in pages[name].split('data-x="time"')[0].rsplit("href=", 1)[1], name
+    assert "<b>y" not in pages["compare-axis-invalid"]
+    # bouts
+    bouts = Dom(pages["compare-bouts"])
+    assert _active_axis(pages["compare-bouts"]) == ["bouts"] and "canvas" in bouts.tags
+    assert "Anzahl gewerteter Gänge" in bouts.text["se-view"]
+    totals = [h["bouts"] for h in heads]
+    assert all(sum(r[6] for r in h["history"]["rows"]) == h["bouts"] for h in heads)
+    if min(totals) < max(totals):
+        assert f"Gemeinsamer Bereich bis Gang {min(totals)}" in bouts.text["se-view"]
+    assert "&amp;x=gaenge" in pages["compare-bouts"].split("data-remove=")[0]   # links keep the axis
+    # age: only athletes with a birth year are drawn, the others are named in a note
+    age = Dom(pages["compare-age"])
+    assert _active_axis(pages["compare-age"]) == ["age"]
+    known = sum(1 for h in heads if h["by"] is not None)
+    assert age.text["se-view"].count("Jahrgang unbekannt:") == 2 - known
+    if known:
+        assert "canvas" in age.tags and "nicht der Geburtstag" in age.text["se-view"]
+    else:
+        assert "canvas" not in age.tags and "kein Diagramm zeichnen" in age.text["se-view"]
+    # career season, one athlete
+    season = Dom(pages["compare-season"])
+    assert _active_axis(pages["compare-season"]) == ["season"] and "canvas" in season.tags
+    assert "Wertung am Saisonende" in season.text["se-view"]
+    assert "Erst ein Schwinger ausgewählt" in season.text["se-view"]
 
 
 def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_url: str,

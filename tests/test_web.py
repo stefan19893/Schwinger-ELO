@@ -251,3 +251,53 @@ def test_comparison_page_rules() -> None:
     assert "<strong>Vergleich.</strong>" in about and "einmal gezählt" in about
     for ident in ("se-picked", "se-add", "se-add-results", "se-add-hint", "se-slots", "se-view"):
         assert f'id="{ident}"' in html, ident
+
+
+def test_comparison_axis_rules() -> None:
+    """Static checks for the axis switch of the comparison chart (time, bouts, age, career
+    season); that the four axes draw is covered by the browser smoke test."""
+    js = (WEB / "js" / "compare.js").read_text(encoding="utf-8")
+    # the URL value is compared with three constants and nothing else; it is read only
+    # through parseX, so it can never reach the page or a file path
+    assert "var X_PARAM = { bouts: 'gaenge', age: 'alter', season: 'saison' };" in js
+    parse = js[js.index("function parseX"):js.index("function compareUrl")]
+    assert parse.count("raw ===") == 3 and ": 'time';" in parse
+    for forbidden in ("SE.esc(raw", "+ raw", "indexOf", "toLowerCase", "["):
+        assert forbidden not in parse, forbidden
+    assert js.count("SE.param('x')") == 2 and js.count("parseX(SE.param('x'))") == 2
+    assert js.count("SE.param(") == 4                      # ids and x: first load and popstate
+    # time is the default and leaves the address alone: x is appended for the three only
+    url = js[js.index("function compareUrl"):js.index("function ids()")]
+    assert "mode === 'bouts' || mode === 'age' || mode === 'season' ? X_PARAM[mode] : ''" in url
+    assert "(v ? (ids.length ? '&' : '?') + 'x=' + v : '')" in url
+    # the switch: four real links with German labels, a click switches in place and is in
+    # the browser history
+    assert ("var AXES = [['time', 'Zeit'], ['bouts', 'Gänge'], ['age', 'Alter'], "
+            "['season', 'Karrieresaison']];") in js
+    switch = js[js.index("function axisSwitch"):js.index("function names")]
+    assert "SE.esc(compareUrl(ids(), a[0]))" in switch and "aria-current" in switch
+    click = js[js.index("if (el.hasAttribute('data-x'))"):js.index("var y = window.scrollY;")]
+    assert "parseX(X_PARAM[el.getAttribute('data-x')])" in click and "pushState" in click
+    assert "ev.metaKey || ev.ctrlKey" in click
+    # bout axis: cumulative n of the history rows; the reversion is its own dashed step
+    bouts = js[js.index("function boutSeries"):js.index("function hasBirthYear")]
+    assert "c += r.n;" in bouts and "reversion.push([c, prev.after], [c, r.before], [c, null]);" in bouts
+    assert "tail: []" in bouts
+    # age axis: the time series moved by the birth year; no birth year, no curve
+    age = js[js.index("function ageSeries"):js.index("function seasonSeries")]
+    assert "SE.careerSeries(e.h)" in age and "yearPos(p[0]) - by" in age
+    assert "ui.x === 'age' ? list.filter(hasBirthYear) : list" in js
+    # career seasons: the exporter's season rows, nothing re-derived from the festivals
+    season = js[js.index("function seasonSeries"):js.index("function seriesOf")]
+    assert "SE.table(e.h.seasons)" in season and "s.rating" in season and "e.rows" not in season
+    assert "p.season.pos !== null ? p" in js               # no place = hollow point
+    # caveats in visible text, each only when it applies to the selection
+    notes = js[js.index("function axisNotes"):js.index("function chartSection")]
+    assert notes.count("if (early.length)") == 3 and "SE.esc(firstSeason)" in notes
+    for needle in ("nicht zwingend der erste der Laufbahn", "nicht zwingend die erste der Laufbahn",
+                   "Bekannt ist nur der Jahrgang, nicht der Geburtstag", "bis zu einem Jahr darunter",
+                   "gehört zu keinem Fest", "wie in der Tabelle «Saisons»", "hohler Punkt"):
+        assert needle in notes, needle
+    assert "vor etwa 2016" in js and "Jahrgang unbekannt:" in js
+    assert "Von keinem der ausgewählten Schwinger ist der Jahrgang bekannt" in js
+    assert "Im Jahr seines ' + SE.esc(p.data.age) + '. Geburtstags" in js   # no fractional age
