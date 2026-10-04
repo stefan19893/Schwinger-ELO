@@ -49,11 +49,12 @@ Schwinger-ELO/
 │   │   ├── bout_rejects.parquet    # Bouts not kept (unmapped side, self-bout) with a reason
 │   │   ├── ratings.parquet         # Full rating history (one row per athlete and festival)
 │   │   ├── athlete_ratings.parquet # Current rating, peak, provisional / identity flags, rank
-│   │   └── season_ratings.parquet  # Season-end rating and rank per athlete and year
+│   │   ├── season_ratings.parquet  # Season-end rating and rank per athlete and year
+│   │   └── bout_ratings.parquet    # Rating change per bout and side (internal, never published as it is)
 │   └── schwingen.db                # SQLite staging database
 ├── src/
 │   ├── __init__.py
-│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | check-site | all | serve | state-export | state-import
+│   ├── cli.py                      # Single entry point: crawl | parse | clean | elo | build | check-site | pack-site | all | serve | state-export | state-import
 │   ├── config.py                   # Paths, year range, rate limits, ELO params, publication switches (defaults + env overrides)
 │   ├── state_bundle.py             # Pipeline state as one verified bundle; cold-start check (--require-state)
 │   ├── scraper/
@@ -84,11 +85,12 @@ Schwinger-ELO/
 │   └── exporter/
 │       ├── __init__.py
 │       ├── static_builder.py       # Copies web/ and writes JSON slices into dist/data/; age filter, noindex
-│       └── deploy_guard.py         # check-site: empty / shrunken site against the last accepted meta.json
+│       ├── deploy_guard.py         # check-site: empty / shrunken site against the last accepted meta.json
+│       └── pages_artifact.py       # pack-site: dist/ as the Pages tar, no file name logged
 ├── web/                            # Frontend source (static pages, German UI; copied to dist/ as is)
 │   ├── index.html                  # Current ranking, season lists, highest ratings, search
 │   ├── athlete.html                # Athlete profile & career chart (?id=<athlete_id>)
-│   ├── compare.html                # Comparison of up to six athletes (?ids=<athlete_id>,<athlete_id>,...)
+│   ├── compare.html                # Comparison of up to six athletes (?ids=<athlete_id>,<athlete_id>,...[&x=gaenge|alter|saison])
 │   ├── fests.html                  # Festival list and one festival (?id=<fest_id>)
 │   ├── about.html                  # Method, source, limitations, how to report errors
 │   ├── js/
@@ -96,7 +98,7 @@ Schwinger-ELO/
 │   │   ├── index.js                # Start page views (#aktuell, #saison-YYYY, #bestwerte)
 │   │   ├── athlete.js              # Profile page
 │   │   ├── charts.js               # ECharts career chart (incl. the 1 April reversion steps)
-│   │   ├── compare.js              # Comparison page: selection in the URL, figures, chart, seasons, direct bouts, common festivals
+│   │   ├── compare.js              # Comparison page: selection in the URL, figures, chart (x axis: time, bouts, age or career season), seasons, direct bouts, common festivals
 │   │   ├── fests.js                # Festival list / festival detail
 │   │   └── about.js                # Fills the methodology page with numbers from meta.json
 │   ├── css/
@@ -126,7 +128,7 @@ Schwinger-ELO/
 │   ├── index.html, athlete.html, compare.html, fests.html, about.html, css/, js/, vendor/, .nojekyll
 │   ├── robots.txt                  # only with site_noindex
 │   └── data/
-│       ├── meta.json               # as_of (last rated festival), counts, model parameters, `empty`
+│       ├── meta.json               # as_of (last rated festival), `build` (stamp of the build), counts, model parameters, `empty`
 │       ├── rankings_latest.json    # Every ranked athlete (the only data file the start page needs)
 │       ├── athletes.json           # Search index, loaded on first use of the search
 │       ├── alltime_top200.json     # 200 highest peak ratings
@@ -134,7 +136,7 @@ Schwinger-ELO/
 │       ├── festivals.json          # Festival index
 │       ├── fests/fest_<fest_id>.json           # One festival: participants and bouts (on demand)
 │       ├── history/history_<athlete_id>.json   # One athlete: profile, seasons, rating history (on demand)
-│       └── bouts/bouts_<athlete_id>.json       # One athlete: his bouts against published opponents (comparison page, on demand)
+│       └── bouts/bouts_<athlete_id>.json       # One athlete: his bouts against published opponents with the rating contribution per bout (comparison page, on demand)
 ├── pyproject.toml                  # Project metadata + pytest config
 ├── requirements.txt
 ├── requirements-lock.txt            # exact versions + wheel hashes for the publishing workflows (scripts/make_lock.py)
@@ -199,6 +201,23 @@ All model parameters live in `src/config.py` so they can be tuned without code c
 - **Provisional:** fewer than 24 rated career bouts (`few_bouts`) or no bout for more than 1.5 seasons (`inactive`). Provisional athletes, `not_a_name` rows and athletes without bouts are rated but not ranked; 2011 is a burn-in season (rated, not ranked).
 - **Identity uncertainty:** every bout is rated; `athlete_ratings.parquet` marks athletes whose history rests on low-confidence identity rows (`identity_uncertain`).
 - `ratings.parquet`: `athlete_id, date, fest_id, rating_before, rating_after` + `season, category, n_bouts, score, expected, bouts_before, days_inactive, provisional, provisional_reason`; `rating_before` includes the April reversion.
+- `bout_ratings.parquet` (Phase 9): what each rated bout contributed to the ratings — **two rows per rated bout, one per side**, sorted by `(date, fest_id, gang_nr, bout_id, side)` (the engine's processing order, A before B). Columns, all non-nullable:
+- Published form of `bout_ratings.parquet` (Phase 9, exporter): only inside `dist/data/bouts/bouts_<athlete_id>.json`, as the 7th value `d` of a bout row (`cols` = `gang, opp, res, g, go, flags, d`) — the athlete's `delta` rounded to one decimal, `null` for a bout at a festival that does not count. The file also holds `names` (the opponents' names, parallel to `opps`) and `unc` (indices of identity-uncertain opponents). **Privacy rule:** rows exist only for bouts between two published athletes; for a bout against a withheld athlete nothing is exported — no contribution, no count, no Gang, and never `expected`, `k` or `mov_lambda` of any bout. (This keeps the files free of statements about withheld athletes; it does not make their ratings unknowable — see the publication switches in §7: they follow from the history files.) The comparison page derives the combined remainder of a festival from the history file (`n` − listed bouts; `after` − `before` − Σ `d`) and draws it as one stretch at the end of the festival. The page presents the Gang values as a breakdown of the festival's change (`before` + running sum in the order Gang, opponent id), states that the rating is calculated per festival, and marks festivals whose Gang order is uncertain (flag or repeated Gang number). `build` requires `bout_ratings.parquet` and refuses one that lacks rated bouts of `bouts.parquet`. **Build stamp:** `meta.json`, every history file and every bouts file carry `build`, 12 hex digits that are the same in all files of one build — a digest of the input Parquet files, the contract version and the model / publication settings, not a time, so the export stays deterministic. The comparison page combines an athlete's history file and bouts file only when their stamps are equal (and the bouts file lists no more rated bouts per festival than the history counts); otherwise — typically a browser holding one of the two from an earlier build — it draws that athlete with one point per festival and says so, instead of describing the bouts of a festival the older file lacks as bouts against unpublished opponents. `as_of` could not serve: the bouts file had no date, and a rebuild after a correction keeps the data date. `check-site` refuses (no override) a bouts file that is not exactly this contract — key set, seven values per row, `opp` a valid index into `opps`, `names` the search index's names of those ids, `d` exactly at the rated rows, no more rated rows per festival than the history file's `n` — and any history or bouts file whose stamp is not `meta.json`'s.
+
+  | Column | Type | Meaning |
+  |---|---|---|
+  | `bout_id` | string | key into `bouts.parquet` (grades, `schlussgang`, `flags` such as `gang_uncertain:x/y`, `gang_inferred:x/y`, `gang_collision`, `extra_bout`) |
+  | `fest_id`, `date` | int64, date | the festival; with `athlete_id` the key into `ratings.parquet` |
+  | `gang_nr` | int8 | Gang number as in `bouts.parquet`; not unique per athlete and festival (collisions), `bout_id` breaks ties |
+  | `side` | string | `A` or `B`: the athlete's column in `bouts.parquet` |
+  | `athlete_id`, `opponent_id` | string | the row's athlete and the other side |
+  | `score` | float64 | the athlete's result: 1 / 0.5 / 0 |
+  | `expected` | float64 | the athlete's expected score as the update used it |
+  | `k` | float64 | effective K-factor of the festival (category K × `elo_k_scale`) |
+  | `mov_lambda` | float64 | margin-of-victory multiplier $\lambda$ of the bout (1 for a gestellter Gang or a missing grade); the same on both sides |
+  | `delta` | float64 | the bout's contribution to the athlete's rating, in rating points |
+
+  Contract: `delta` is the value the engine added to the rating (kept from the update itself, `EloResult.bouts.delta_a`, not recomputed), stored unrounded. Per bout the two `delta` are exact negatives and `score`, `expected` each sum to 1; `delta = k · mov_lambda · (score − expected)`; **per athlete and festival the `delta` sum to `rating_after − rating_before` of `ratings.parquet` within $10^{-9}$ rating points** (float addition only; measured maximum on the full data $1.4 \cdot 10^{-12}$), the row count equals `n_bouts`, and `score` / `expected` sum to the columns of the same name. Only rated bouts appear (`elo_eligible`): festivals excluded from the rating and rejected bouts have no rows, and the April reversion is not a bout (it sits between one festival's `rating_after` and the next `rating_before`). In the default `festival` mode every `expected` comes from the pre-festival ratings, so `rating_before + running sum of delta` in Gang order is a **breakdown** of the festival change, not a rating any later opponent was scored against; in `sequential` (and per block in `gang` / `phase`) `expected` comes from the ratings at that point of the festival and the running sum in file order is the engine's rating after that bout. The file holds every athlete, including those the site withholds: it is internal pipeline state (part of the state bundle, regenerated by every `elo` run) and is never published as it is.
 
 ---
 
@@ -211,9 +230,10 @@ Every stage is idempotent and incremental: re-running only processes what is new
 | `python -m src.cli crawl` | Discover festivals and download their statistic PDFs, Schlussranglisten and the athlete portraits (options: `--from-year`, `--to-year`, `--refresh`, `--offline`, `--no-pdfs`, `--no-portraits`, `--portraits-only`) |
 | `python -m src.cli parse` | Parse cached statistic PDFs (offline) into SQLite `bouts` / `athletes_raw` / `parse_rejects` (`--force` to re-parse), then the identity evidence: `ranking_entries`, `portraits`, `clubs`, `athlete_evidence` |
 | `python -m src.cli clean` | Identity resolution (uses `athlete_evidence`) → `data/processed/*.parquet` |
-| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
+| `python -m src.cli elo` | Compute ratings → `data/processed/ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (`--evaluate` also prints the calibration / evaluation report: update modes, MoV grid, K scale × δ grid, calibration, drift, identity sensitivity; read-only, one to two minutes on the full data) |
 | `python -m src.cli build` | Write the static site to `dist/`. Exits 1 and writes nothing when the rating data are missing or empty (a deployment must never publish an empty site); `--allow-empty` writes the pages with empty data files instead (`meta.empty = true`). With `--sample` the sample pipeline is run first if its data are missing |
-| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced); a filter that withholds nobody is fatal; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
+| `python -m src.cli check-site` | Deploy guard: exit 1 on an empty, incomplete or shrunken site in `dist/` compared with the last accepted `meta.json` (`data/published_meta.json`); also on a site that publishes more athletes / withholds fewer than the accepted one or whose birth-year input fell (a year change releases exactly the cohort the baseline announced); a filter that withholds nobody is fatal; also fatal, without override: a data file that names an athlete id outside the search index, per-athlete files that do not match it one to one, a `data/bouts` file that is not exactly its contract (key set, seven values per row, valid `opp` index, the search index's names, `d` exactly at rated rows, rated rows per festival ≤ the history file's `n`) and history / bouts files whose `build` stamp differs from `meta.json`'s; `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change (or a missing baseline) pass once |
+| `python -m src.cli pack-site OUT` | Pack `dist/` into the tar file GitHub Pages deploys: uncompressed GNU tar, members `./…` in sorted order, hidden entries (names starting with a dot, at any depth) left out, modes 0644 / 0755, owner 0:0, file mtimes kept — the same tree gives the same bytes. Logs counts and sizes, never a file name (the files are named after athletes). Exit 1, nothing written: no site or no `index.html`, a symbolic link or special file in the site, an archive ≥ 1 GB, `OUT` inside `dist/`. No option names another source directory |
 | `python -m src.cli all` | `crawl → parse → clean → elo → build` |
 | `python -m src.cli state-export OUT` / `state-import SRC` | Bundle / restore the pipeline state (`data/raw`, database, Parquet files, guard baseline) as one verified `.tar.gz`; not for publication |
 | `python -m src.cli serve` | Serve `dist/` at `http://localhost:8000` (`--port`) |
@@ -278,10 +298,10 @@ Since GitHub Pages serves static files only:
 
 **As implemented (Phase 6, decisions of 2026-10-03 in `docs/progress/STATE.md`; owner checklist in `README.md`):**
 - **Nothing is published without the owner's opt-in:** every job of `deploy_pages.yml` and `scrape_and_update.yml` runs only when the repository variable `PUBLISH_ENABLED` is `true` (and the ref is `main`). `ci.yml` (tests, sample build) is not gated; it neither crawls nor deploys.
-- **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name and their festival rows carry no rating; ranks are re-numbered among the published), `publish_unknown_recent_seasons = 3` (the same for athletes without a birth year whose first season is within the last three of the data year), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
+- **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name, have no profile, search entry or rank, and no rating is displayed for them — their festival rows carry none; ranks are re-numbered among the published. The filter withholds the display, not the information: these ratings are calculated from public results and follow from the published athletes' histories — measured 2026-10-04: median error 0.7 points for all 722 withheld athletes who met a published one — and from re-running the public pipeline; accepted by the owner on 2026-10-04, and the about page says so), `publish_unknown_recent_seasons = 3` (the same for athletes without a birth year whose first season is within the last three of the data year), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
 - **State between runs:** one bundle (`state-export` / `state-import`) as an asset of a *draft* release `pipeline-state` — durable, not publicly downloadable, seeded from the owner's machine. Runs upload a new generation and delete the older ones afterwards. A missing state fails the run before any request (`--require-state`).
 - **No schedule (decision 2026-10-04):** the owner crawls locally and uploads the state; `scrape_and_update.yml` starts by hand only.
-- **Sequence of the crawl run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → Pages artifact → `actions/deploy-pages@v4`. The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
+- **Sequence of the crawl run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → `pack-site "$RUNNER_TEMP/artifact.tar"` → `actions/upload-artifact` (v4.6.2 by commit; that one file, artifact name `github-pages`, retention 1 day, `if-no-files-found: error`) → `actions/deploy-pages@v4`. The two steps before the deployment are what `actions/upload-pages-artifact@v4` consists of, with its verbose `tar` replaced by the CLI: that `tar` printed every file name of the site — athlete ids — into the public log. No other upload step is allowed in these workflows (`tests/test_workflows.py`). The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
 - **Deploy guard:** see `check-site` in §5; the baseline travels inside the state bundle.
 
 ---

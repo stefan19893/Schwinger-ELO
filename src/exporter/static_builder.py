@@ -23,8 +23,25 @@ values, dates ``YYYY-MM-DD``, tables as ``{"cols": [...], "rows": [[...], ...]}`
 ``bouts/bouts_<athlete_id>.json``
     One athlete: his bouts against *published* opponents, from his side, grouped by
     festival (read by the comparison page only, one file per selected athlete). ``opp`` is
-    an index into the file's own ``opps`` list of athlete ids. Bouts against anyone who is
-    not exportable are not written at all, so the file cannot name a withheld athlete.
+    an index into the file's own ``opps`` list of athlete ids; ``names`` holds their names
+    in the same order and ``unc`` the indices of the identity-uncertain ones. ``d`` is the
+    bout's contribution to this athlete's rating (``bout_ratings.parquet``, one decimal;
+    null at a festival that does not count). The engine rates a festival as a whole against
+    the pre-festival ratings, so the contributions of a festival are a breakdown of its
+    change, not ratings after each Gang. Bouts against anyone who is not exportable are not
+    written at all, so the file cannot name a withheld athlete - and it carries nothing
+    about those bouts either: no contribution, no count, no Gang. What they add up to is
+    what the history file already implies (``after`` - ``before`` minus the listed bouts).
+
+``build`` (in ``meta.json``, every history file and every bouts file)
+    The stamp of the build: the same short digest in all files written by one ``build``
+    run. It is derived from the input Parquet files and the settings the files depend on
+    (:func:`build_stamp`), not from the clock, so the same inputs give the same bytes. The
+    comparison page reads an athlete's history file and his bouts file separately; a
+    browser can hold one of them from an older build. With different stamps the page does
+    not combine the two (it would call the bouts of a festival the older file lacks
+    "against unpublished opponents"). ``as_of`` cannot do this: the bouts file had no
+    date, and a rebuild after a correction keeps the data date.
 
 An athlete is *exportable* when he has rated bouts, is not a ``not_a_name`` row and is
 not *withheld*. Only name, club, Teilverband and birth year are published (no residence,
@@ -39,7 +56,10 @@ Publication switches (``src/config.py``):
     <= the age) is *withheld*: he counts in the ratings, but has no history file, no
     search entry and no rank, appears in no list, and a festival shows him without id,
     name, club, Teilverband and without any rating value (column ``anon`` = 1; record and
-    grade sum stay, they are the festival's bouts).
+    grade sum stay, they are the festival's bouts). This withholds the display, not the
+    information: his rating is calculated from public results and follows, to within a
+    point or so, from the published athletes' ``before`` / ``after`` (owner's decision of
+    2026-10-04: accepted, and said on the about page).
     Ranks are the places among the published athletes (see :func:`_published_ranks`).
 ``publish_unknown_recent_seasons``
     An athlete without a known birth year is withheld in the same way when his first
@@ -60,6 +80,7 @@ timestamps; "as of" is the date of the last rated festival).
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import logging
 import math
@@ -95,7 +116,8 @@ THIN_SEASON_FESTIVALS = 20
 SAMPLE_THIN_SEASON_FESTIVALS = 1
 
 NOT_A_NAME = "not_a_name"
-INPUTS = ("athletes", "athlete_ratings", "bouts", "festivals", "ratings", "season_ratings")
+INPUTS = ("athletes", "athlete_ratings", "bout_ratings", "bouts", "festivals", "ratings",
+          "season_ratings")
 
 # athletes.json / alltime flags
 F_RANKED, F_FEW_BOUTS, F_INACTIVE, F_UNCERTAIN = 1, 2, 4, 8
@@ -120,7 +142,7 @@ FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags"]
 HISTORY_COLS = ["date", "fest_id", "fest", "cat", "before", "after", "n", "score", "exp",
                 "flags"]
 ATHLETE_SEASON_COLS = ["season", "rating", "peak", "bouts", "pos"]
-BOUT_SIDE_COLS = ["gang", "opp", "res", "g", "go", "flags"]
+BOUT_SIDE_COLS = ["gang", "opp", "res", "g", "go", "flags", "d"]
 OTHER_FEST_COLS = ["id", "name", "date", "cat"]
 
 ROBOTS_META = '<meta name="robots" content="noindex">'
@@ -222,10 +244,12 @@ def _flag_set(v: Any, seps: str = ",") -> set[str]:
 class Inputs:
     athletes: pd.DataFrame
     athlete_ratings: pd.DataFrame
+    bout_ratings: pd.DataFrame
     bouts: pd.DataFrame
     festivals: pd.DataFrame
     ratings: pd.DataFrame
     season_ratings: pd.DataFrame
+    digest: str = ""        # sha256 over the Parquet files read (load_inputs)
 
 
 class EmptyBuildError(ValueError):
@@ -250,7 +274,23 @@ def load_inputs(processed_dir: Path, allow_empty: bool = False) -> Inputs | None
     else:
         inp = Inputs(**{name: pd.read_parquet(processed_dir / f"{name}.parquet")
                         for name in INPUTS})
+        h = hashlib.sha256()
+        for name in INPUTS:
+            h.update(name.encode("utf-8"))
+            h.update(hashlib.sha256(
+                (processed_dir / f"{name}.parquet").read_bytes()).digest())
+        inp.digest = h.hexdigest()
         if not inp.ratings.empty:
+            # every rated bout has its contribution: otherwise bout_ratings.parquet is from
+            # another run than bouts.parquet (an old state, `clean` without `elo`). That is
+            # not "no data", so `allow_empty` does not turn it into an empty site.
+            rated = inp.bouts.loc[inp.bouts["elo_eligible"].astype(bool), "bout_id"]
+            n_missing = int((~rated.isin(inp.bout_ratings["bout_id"])).sum())
+            if n_missing:
+                raise EmptyBuildError(
+                    f"bout_ratings.parquet in {processed_dir} lacks {n_missing} of "
+                    f"{len(rated)} rated bouts: it does not belong to this bouts.parquet - "
+                    f"run `python -m src.cli elo` first")
             return inp
         reason = f"ratings.parquet in {processed_dir} has no rows"
     if not allow_empty:
@@ -542,7 +582,7 @@ def _write_fests(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
 def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[int, str],
                      listed: pd.DataFrame, placed_seasons: set[int], cfg: Config,
                      as_of: str | None, ranks: dict[str, int],
-                     out_dir: Path) -> tuple[int, int, int]:
+                     out_dir: Path, stamp: str = "") -> tuple[int, int, int]:
     """One file per exportable athlete; returns (files, bytes, history rows)."""
     ar = inp.athlete_ratings.set_index("athlete_id")
     record = _outcome_counts(inp.bouts[inp.bouts["elo_eligible"].astype(bool)])
@@ -595,7 +635,7 @@ def _write_histories(inp: Inputs, people: dict[str, _Person], fest_names: dict[i
                 if q.id != p.id],
             "rev": [cfg.season_reversion_delta, cfg.season_reversion_mean,
                     cfg.season_start_month],
-            "as_of": as_of,
+            "as_of": as_of, "build": stamp,
             "seasons": {"cols": ATHLETE_SEASON_COLS, "rows": seasons.get(aid, [])},
             "history": {"cols": HISTORY_COLS, "rows": rows},
         }
@@ -609,12 +649,16 @@ _RES_OTHER_SIDE = {0: 0, 1: 2, 2: 1}
 
 
 def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
-                 out_dir: Path) -> tuple[int, int, int]:
+                 out_dir: Path, stamp: str = "") -> tuple[int, int, int]:
     """One file per exportable athlete with his bouts against exportable opponents;
     returns (files, bytes, bouts written - each bout once).
 
     A bout is written into both athletes' files, each from its own side (``res`` 1 won,
-    0 gestellt, 2 lost; ``g`` own grade, ``go`` the opponent's). Bouts with a withheld,
+    0 gestellt, 2 lost; ``g`` own grade, ``go`` the opponent's; ``d`` what the bout
+    contributed to the athlete's rating, null when the festival does not count). ``d`` is
+    the engine's own per-bout change (``bout_ratings.parquet``), never recomputed here; a
+    rated bout without one means the Parquet files are from different runs and fails the
+    build. Bouts with a withheld,
     unnamed or unrated athlete on either side are skipped: the comparison page is the only
     reader and it compares published athletes. Every exportable athlete gets a file, also
     without rows, so that a selectable athlete never ends in a 404."""
@@ -624,7 +668,11 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
     for aid, fid in zip(inp.ratings["athlete_id"], inp.ratings["fest_id"]):
         in_history.setdefault(aid, set()).add(int(fid))
     exportable = {a for a, p in people.items() if p.exportable}
-    # athlete -> fest -> rows [gang, opponent id, res, g, go, flags]
+    # contribution of every rated bout to side A (side B: its negative, by construction)
+    br = inp.bout_ratings
+    side_a = br["side"] == "A"
+    delta_a = dict(zip(br.loc[side_a, "bout_id"], br.loc[side_a, "delta"].astype(float)))
+    # athlete -> fest -> rows [gang, opponent id, res, g, go, flags, d]
     sides: dict[str, dict[int, list[list[Any]]]] = {a: {} for a in exportable}
     n_bouts = 0
     b = inp.bouts
@@ -634,9 +682,9 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
     grade = {g: _r2(g) for g in pd.unique(pd.concat([b["grade_a"], b["grade_b"]]).dropna())}
     grade_a = b["grade_a"].astype(object).where(b["grade_a"].notna(), None)
     grade_b = b["grade_b"].astype(object).where(b["grade_b"].notna(), None)
-    for fid, gang, a, c, o, ga, gb, fl, sg, ok in zip(
-            b["fest_id"], b["gang_nr"], b["athlete_a_id"], b["athlete_b_id"], b["outcome"],
-            grade_a, grade_b, b["flags"], b["schlussgang"], b["elo_eligible"]):
+    for bid, fid, gang, a, c, o, ga, gb, fl, sg, ok in zip(
+            b["bout_id"], b["fest_id"], b["gang_nr"], b["athlete_a_id"], b["athlete_b_id"],
+            b["outcome"], grade_a, grade_b, b["flags"], b["schlussgang"], b["elo_eligible"]):
         fid = int(fid)
         if a not in exportable or c not in exportable or fid not in meta:
             continue
@@ -645,11 +693,22 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         flags = flag_cache.get(key)
         if flags is None:
             flags = flag_cache[key] = _bout_flags(fl, sg)
+        da = db = None
         if not ok:
             flags |= B_UNRATED
+        else:
+            d = delta_a.get(bid)
+            if d is None or not math.isfinite(d):
+                raise ValueError(
+                    "bout_ratings.parquet has no contribution for a rated bout of "
+                    f"festival {fid}: it does not belong to this bouts.parquet - run "
+                    "`python -m src.cli elo` again")
+            # `+ 0.0`: never "-0.0" in the file
+            da, db = round(d, 1) + 0.0, round(-d, 1) + 0.0
         ga, gb = grade.get(ga, ga), grade.get(gb, gb)
-        sides[a].setdefault(fid, []).append([int(gang), c, res, ga, gb, flags])
-        sides[c].setdefault(fid, []).append([int(gang), a, _RES_OTHER_SIDE[res], gb, ga, flags])
+        sides[a].setdefault(fid, []).append([int(gang), c, res, ga, gb, flags, da])
+        sides[c].setdefault(fid, []).append([int(gang), a, _RES_OTHER_SIDE[res], gb, ga, flags,
+                                             db])
         n_bouts += 1
     n_files = n_bytes = 0
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -660,11 +719,15 @@ def _write_bouts(inp: Inputs, people: dict[str, _Person], fests: pd.DataFrame,
         fest_rows = []
         for fid in sorted(by_fest, key=lambda f: (meta[f][0], f)):
             rows = sorted(by_fest[fid], key=lambda r: (r[0], r[1]))
-            fest_rows.append([fid, [[r[0], index[r[1]], r[2], r[3], r[4], r[5]] for r in rows]])
+            fest_rows.append([fid, [[r[0], index[r[1]], r[2], r[3], r[4], r[5], r[6]]
+                                    for r in rows]])
         known = in_history.get(aid, set())
         other = [[fid, meta[fid][1], meta[fid][0] or None, meta[fid][2]]
                  for fid, _ in fest_rows if fid not in known]
-        obj = {"id": aid, "opps": opps, "cols": BOUT_SIDE_COLS, "fests": fest_rows,
+        # the opponents are exportable by construction: their names are published
+        obj = {"id": aid, "build": stamp, "opps": opps, "names": [people[o].name for o in opps],
+               "unc": [i for i, o in enumerate(opps) if people[o].unc],
+               "cols": BOUT_SIDE_COLS, "fests": fest_rows,
                "other": {"cols": OTHER_FEST_COLS, "rows": other}}
         # plain Python values only (built above): skip the recursive `_clean` pass, which
         # costs more than everything else here; `allow_nan=False` still guards the output
@@ -702,6 +765,17 @@ def _model(cfg: Config, min_bouts: int, thin: int) -> dict[str, Any]:
     }
 
 
+def build_stamp(inp: Inputs, cfg: Config, model: dict[str, Any],
+                publish: dict[str, Any]) -> str:
+    """The value of ``build`` in the data files: 12 hex digits that are equal exactly for
+    files of the same build. Deterministic - a digest of the inputs (the Parquet files as
+    read) and of what else decides the files' content (contract version, sample switch,
+    model and publication settings), never the time of the build."""
+    text = json.dumps([SCHEMA_VERSION, bool(cfg.sample), inp.digest, model, publish],
+                      sort_keys=True, ensure_ascii=True, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
 def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     """Write ``dist/data/**``; returns a summary (file counts and bytes per slice).
     ``inp`` None writes the data files of a site without content (``meta.empty``)."""
@@ -737,6 +811,7 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
     withhold_from = min_birth_year_withheld(as_of, cfg.publish_min_age)
     withhold_first_from = min_first_season_withheld(as_of, cfg.publish_min_age,
                                                     cfg.publish_unknown_recent_seasons)
+    stamp = build_stamp(inp, cfg, model, _publish(cfg, withhold_from, withhold_first_from))
     people = _people(inp, withhold_from, withhold_first_from)
     ranks = _published_ranks(inp, people)
     fest_rows, fests = _festival_index(inp)
@@ -775,11 +850,12 @@ def write_data(cfg: Config, dist: Path, inp: Inputs | None) -> dict[str, Any]:
                                           {"cols": FESTIVAL_COLS, "rows": fest_rows})
     fest_files, fest_bytes = _write_fests(inp, people, fests, data / "fests")
     hist_files, hist_bytes, hist_rows = _write_histories(
-        inp, people, fest_names, listed, placed, cfg, as_of, ranks, data / "history")
-    bout_files, bout_bytes, bout_pairs = _write_bouts(inp, people, fests, data / "bouts")
+        inp, people, fest_names, listed, placed, cfg, as_of, ranks, data / "history", stamp)
+    bout_files, bout_bytes, bout_pairs = _write_bouts(inp, people, fests, data / "bouts",
+                                                      stamp)
     all_seasons = [s["season"] for s in seasons]
     meta = {"schema": SCHEMA_VERSION, "sample": cfg.sample, "empty": False, "as_of": as_of,
-            "first_season": min(all_seasons), "last_season": max(all_seasons),
+            "build": stamp, "first_season": min(all_seasons), "last_season": max(all_seasons),
             "counts": {"athletes": len(search), "ranked": len(rankings),
                        "festivals": sum(1 for r in fest_rows if r[8] != "none"),
                        "festivals_partial": sum(1 for r in fest_rows if r[8] == "partial"),

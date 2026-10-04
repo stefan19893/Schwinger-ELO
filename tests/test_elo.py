@@ -415,6 +415,141 @@ def test_run_reports_lambda_per_bout() -> None:
 
 
 # =========================================================================== task 3: seasons
+
+# --------------------------------------------------------------------------- per bout
+def contributions(df: pd.DataFrame, **kw: object) -> tuple[pd.DataFrame, ee.EloResult]:
+    result = SchwingElo(params(**kw)).run(df)
+    return ee.bout_contributions(result), result
+
+
+#: tolerance of "the contributions sum to the festival change", in rating points: both
+#: sides add the same float terms, the rating on top of a value near 1500 and in another
+#: order, so they differ by rounding of the additions only (~1e-12)
+SUM_TOL = 1e-9
+
+
+@pytest.mark.parametrize("mode", ee.UPDATE_MODES)
+def test_bout_contributions_sum_to_the_festival_change(mode: str) -> None:
+    c, result = contributions(random_bouts(), update_mode=mode, mov_alpha=1.0,
+                              mov_baseline_diff=1.36, k_scale=2.0)
+    assert list(c.columns) == list(ee.CONTRIBUTION_COLUMNS)
+    assert len(c) == 2 * len(result.bouts) > 0
+    per = c.groupby(["athlete_id", "fest_id"]).agg(
+        delta=("delta", "sum"), n=("delta", "size"), score=("score", "sum"),
+        expected=("expected", "sum")).reset_index()
+    h = result.history.merge(per, on=["athlete_id", "fest_id"], how="outer", indicator=True)
+    assert (h["_merge"] == "both").all()         # the same athlete / festival rows
+    assert np.abs(h["delta"] - (h["rating_after"] - h["rating_before"])).max() < SUM_TOL
+    assert (h["n"] == h["n_bouts"]).all()
+    assert np.allclose(h["score_x"], h["score_y"], atol=1e-12)
+    assert np.allclose(h["expected_x"], h["expected_y"], atol=1e-12)
+
+
+@pytest.mark.parametrize("mode", ee.UPDATE_MODES)
+def test_bout_contributions_two_sides_mirror(mode: str) -> None:
+    df = random_bouts()
+    c, _ = contributions(df, update_mode=mode, mov_alpha=1.0, mov_baseline_diff=1.36)
+    a, b = c.iloc[0::2].reset_index(drop=True), c.iloc[1::2].reset_index(drop=True)
+    assert (a["side"] == "A").all() and (b["side"] == "B").all()
+    for col in ("bout_id", "fest_id", "date", "gang_nr", "k", "mov_lambda"):
+        assert (a[col] == b[col]).all(), col
+    assert (a["athlete_id"] == b["opponent_id"]).all()
+    assert (a["opponent_id"] == b["athlete_id"]).all()
+    assert (a["delta"] == -b["delta"]).all()     # zero-sum per bout, exactly
+    assert (a["score"] + b["score"] == 1.0).all()
+    assert np.allclose(a["expected"] + b["expected"], 1.0, atol=1e-15)
+    # the sides are those of the bout table
+    src = df.set_index("bout_id").loc[a["bout_id"]]
+    assert (a["athlete_id"].to_numpy() == src["athlete_a_id"].to_numpy()).all()
+    assert (a["score"].to_numpy() == src["outcome"].map(ee.OUTCOME_SCORE).to_numpy()).all()
+    assert (a["gang_nr"].to_numpy() == src["gang_nr"].to_numpy()).all()
+    # ... and every row explains itself: delta = K * lambda * (score - expected)
+    assert np.abs(c["delta"] - c["k"] * c["mov_lambda"] * (c["score"] - c["expected"])).max() \
+        < 1e-12
+
+
+def test_bout_contribution_of_a_single_bout() -> None:
+    c, result = contributions(frame(bout("a", "b", cat="Kantonal", gang=3, ga=10.0, gb=8.5)),
+                              mov_alpha=1.0, mov_baseline_diff=1.36, k_scale=2.0)
+    row_a, row_b = c.iloc[0], c.iloc[1]
+    assert (row_a["athlete_id"], row_a["opponent_id"], row_a["side"]) == ("a", "b", "A")
+    assert (row_b["athlete_id"], row_b["opponent_id"], row_b["side"]) == ("b", "a", "B")
+    assert row_a["gang_nr"] == 3 and row_a["score"] == 1.0 and row_b["score"] == 0.0
+    assert row_a["expected"] == row_b["expected"] == 0.5
+    assert row_a["k"] == 2.0 * K["Kantonal"] and row_a["mov_lambda"] == pytest.approx(1.14)
+    assert row_a["delta"] == pytest.approx(2.0 * K["Kantonal"] * 1.14 * 0.5)
+    assert result.ratings["a"] == 1500.0 + row_a["delta"]
+    assert result.ratings["b"] == 1500.0 + row_b["delta"]
+
+
+def test_bout_contributions_come_from_the_update_itself() -> None:
+    """Not a second implementation: replaying the deltas reproduces the ratings."""
+    df = random_bouts(seed=11)
+    for mode in ee.UPDATE_MODES:
+        c, result = contributions(df, update_mode=mode, mov_alpha=1.0, mov_baseline_diff=1.36,
+                                  reversion_delta=0.0)
+        total = c.groupby("athlete_id")["delta"].sum()
+        assert max(abs(1500.0 + total[a] - r) for a, r in result.ratings.items()) < SUM_TOL
+    # sequential: the engine's bout-by-bout reference returns the same change per bout
+    c, _ = contributions(df, update_mode="sequential", mov_alpha=1.0, mov_baseline_diff=1.36,
+                         reversion_delta=0.0)
+    ref = SchwingElo(params(update_mode="sequential", mov_alpha=1.0, mov_baseline_diff=1.36))
+    rows = df.set_index("bout_id")
+    for r in c[c["side"] == "A"].itertuples(index=False):
+        b = rows.loc[r.bout_id]
+        expected = ref.expected(r.athlete_id, r.opponent_id)
+        d = ref.rate_bout(b["athlete_a_id"], b["athlete_b_id"], b["outcome"],
+                          b["grade_a"], b["grade_b"], b["category"])
+        assert d == pytest.approx(r.delta, abs=1e-9)
+        assert expected == pytest.approx(r.expected, abs=1e-12)
+
+
+def test_bout_contributions_expected_follows_the_update_mode() -> None:
+    df = frame(bout("a", "b", gang=1), bout("a", "c", gang=2), bout("b", "c", gang=2))
+    fest, _ = contributions(df, update_mode="festival")
+    assert (fest["expected"] == 0.5).all()       # everyone at 1500 before the festival
+    assert fest["delta"].abs().nunique() == 1    # so every bout moves the same amount
+    seq, _ = contributions(df, update_mode="sequential")
+    second = seq[(seq["athlete_id"] == "a") & (seq["gang_nr"] == 2)].iloc[0]
+    assert second["expected"] > 0.5              # a had won Gang 1 by then
+    assert second["delta"] < fest["delta"].max()
+
+
+def test_bout_contributions_leave_out_unrated_bouts_and_handle_no_bouts() -> None:
+    df = frame(bout("a", "b", fest=1), bout("a", "c", fest=1, eligible=False),
+               bout("c", "d", fest=2, date="2015-07-01", eligible=False))
+    c, _ = contributions(df)
+    assert len(c) == 2 and set(c["bout_id"]) == {df["bout_id"].iloc[0]}
+    assert set(c["fest_id"]) == {1} and set(c["athlete_id"]) == {"a", "b"}
+    empty, _ = contributions(frame(bout("a", "b", eligible=False)))
+    assert len(empty) == 0 and list(empty.columns) == list(ee.CONTRIBUTION_COLUMNS)
+    er._to_table(empty, er.BOUT_RATINGS_SCHEMA)  # an empty file can be written
+
+
+@pytest.mark.parametrize("mode", ee.UPDATE_MODES)
+def test_bout_contributions_are_deterministic(mode: str) -> None:
+    df = random_bouts(seed=5)
+    kw: dict[str, object] = dict(update_mode=mode, mov_alpha=1.0, mov_baseline_diff=1.36)
+    first, _ = contributions(df, **kw)
+    again, _ = contributions(df.sample(frac=1.0, random_state=3), **kw)
+    pd.testing.assert_frame_equal(first, again)  # exactly, whatever the input row order
+    order = first.sort_values(["date", "fest_id", "gang_nr", "bout_id", "side"],
+                              kind="mergesort")
+    assert order.index.equals(first.index)       # processing order, A before B
+
+
+def test_bout_contributions_do_not_depend_on_the_sheet_side() -> None:
+    df = random_bouts(seed=9)
+    key = ["bout_id", "athlete_id"]
+    cols = [c for c in ee.CONTRIBUTION_COLUMNS if c != "side"]
+    one = contributions(df, mov_alpha=1.0, mov_baseline_diff=1.36)[0].sort_values(key)
+    two = contributions(mirrored(df), mov_alpha=1.0, mov_baseline_diff=1.36)[0].sort_values(key)
+    pd.testing.assert_frame_equal(one[cols].reset_index(drop=True),
+                                  two[cols].reset_index(drop=True), check_exact=False,
+                                  atol=1e-9, rtol=0)
+    assert (one["side"].to_numpy() != two["side"].to_numpy()).all()
+
+
 def test_revert_to_mean_formula() -> None:
     assert ee.revert_to_mean(1700.0, 0.10, 1500.0) == pytest.approx(1680.0)
     assert ee.revert_to_mean(1300.0, 0.10, 1500.0) == pytest.approx(1320.0)
@@ -681,8 +816,35 @@ def test_cli_elo_sample_athlete_and_season_tables(sample_run: Path) -> None:
     assert "Stucki Christian" in names
 
 
+def test_cli_elo_sample_writes_bout_ratings(sample_run: Path) -> None:
+    path = sample_run / "bout_ratings.parquet"
+    assert pq.read_schema(path).equals(er.BOUT_RATINGS_SCHEMA)
+    assert pq.read_schema(path).metadata is None  # no pandas metadata: deterministic bytes
+    c = pd.read_parquet(path)
+    bouts = pd.read_parquet(sample_run / "bouts.parquet")
+    rated, unrated = bouts[bouts["elo_eligible"]], bouts[~bouts["elo_eligible"]]
+    assert len(c) == 2 * len(rated) > 0 and not c.duplicated(["bout_id", "side"]).any()
+    assert set(c["bout_id"]) == set(rated["bout_id"])
+    assert not set(c["bout_id"]) & set(unrated["bout_id"])
+    assert not set(c["fest_id"]) - set(rated["fest_id"])
+    ratings = pd.read_parquet(sample_run / "ratings.parquet")
+    per = c.groupby(["athlete_id", "fest_id"]).agg(delta=("delta", "sum"), n=("delta", "size"))
+    h = ratings.set_index(["athlete_id", "fest_id"]).join(per, how="outer")
+    assert len(h) == len(ratings) and bool(h[["delta", "rating_after"]].notna().to_numpy().all())
+    assert np.abs(h["delta"] - (h["rating_after"] - h["rating_before"])).max() < SUM_TOL
+    assert (h["n"] == h["n_bouts"]).all()
+    a, b = c[c["side"] == "A"], c[c["side"] == "B"]
+    assert (a["delta"].to_numpy() == -b["delta"].to_numpy()).all()
+    assert (a["bout_id"].to_numpy() == b["bout_id"].to_numpy()).all()
+    src = rated.set_index("bout_id").loc[a["bout_id"]]
+    assert (a["athlete_id"].to_numpy() == src["athlete_a_id"].to_numpy()).all()
+    assert (a["opponent_id"].to_numpy() == src["athlete_b_id"].to_numpy()).all()
+    assert (a["gang_nr"].to_numpy() == src["gang_nr"].to_numpy()).all()
+
+
 def test_cli_elo_is_byte_identical_on_rerun(sample_run: Path) -> None:
-    names = ["ratings.parquet", "athlete_ratings.parquet", "season_ratings.parquet"]
+    names = ["ratings.parquet", "athlete_ratings.parquet", "season_ratings.parquet",
+             "bout_ratings.parquet"]
     before = {n: (sample_run / n).read_bytes() for n in names}
     assert cli.main(["elo", "--sample", "--data-dir", str(sample_run.parent)]) == 0
     assert {n: (sample_run / n).read_bytes() for n in names} == before
@@ -1022,6 +1184,30 @@ def test_real_model_is_symmetric_and_deterministic(real: Real) -> None:
     pd.testing.assert_frame_equal(again.history, real.result.history)
     swapped = SchwingElo(real.result.params).run(mirrored(real.bouts)).ratings
     assert max(abs(swapped[a] - r) for a, r in real.result.ratings.items()) < 1e-6
+
+
+def test_real_bout_contributions_sum_to_the_festival_change(real: Real) -> None:
+    c = ee.bout_contributions(real.result)
+    rated = real.bouts[real.bouts["elo_eligible"]]
+    assert len(c) == 2 * len(rated) and set(c["bout_id"]) == set(rated["bout_id"])
+    per = c.groupby(["athlete_id", "fest_id"]).agg(delta=("delta", "sum"), n=("delta", "size"))
+    h = real.result.history.set_index(["athlete_id", "fest_id"]).join(per, how="outer")
+    assert len(h) == len(real.result.history) and h["delta"].notna().all()
+    assert np.abs(h["delta"] - (h["rating_after"] - h["rating_before"])).max() < SUM_TOL
+    assert (h["n"] == h["n_bouts"]).all()
+    assert (c["delta"].to_numpy()[0::2] == -c["delta"].to_numpy()[1::2]).all()
+    # festival mode: every bout is scored against the pre-festival ratings
+    assert real.result.params.update_mode == "festival"
+    before = real.result.history.set_index(["athlete_id", "fest_id"])["rating_before"]
+    own = before.reindex(pd.MultiIndex.from_frame(c[["athlete_id", "fest_id"]])).to_numpy()
+    opp = before.reindex(pd.MultiIndex.from_frame(c[["opponent_id", "fest_id"]])).to_numpy()
+    assert np.abs(c["expected"] - ee.expected_score(own, opp, real.result.params.scale)).max() \
+        < 1e-12
+    # written file = the engine's table (when `elo` ran on this data)
+    path = real.cfg.processed_dir / "bout_ratings.parquet"
+    if path.is_file() and (real.cfg.processed_dir / "ratings.parquet").stat().st_mtime \
+            >= (real.cfg.processed_dir / "bouts.parquet").stat().st_mtime:
+        assert pq.read_table(path).equals(er._to_table(c, er.BOUT_RATINGS_SCHEMA))
 
 
 def test_real_k_scale_decision(real: Real) -> None:

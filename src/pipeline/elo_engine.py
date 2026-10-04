@@ -38,6 +38,9 @@ Order of operations (:meth:`SchwingElo.run`):
 
 4. One history row per athlete and festival: ``rating_before`` (after any mean
    reversion) and ``rating_after``.
+5. Every bout's signed change (``delta`` above) is kept as it was applied
+   (``EloResult.bouts.delta_a``); :func:`bout_contributions` lists it once per side. Per
+   athlete and festival these changes sum to ``rating_after - rating_before``.
 
 The engine knows nothing about files; ``src/pipeline/elo_runner.py`` loads the
 Parquet inputs, adds the ranking tables and writes the outputs.
@@ -63,6 +66,10 @@ DAYS_PER_SEASON = 365.25
 BOUT_COLUMNS: tuple[str, ...] = (
     "bout_id", "fest_id", "gang_nr", "athlete_a_id", "athlete_b_id", "outcome",
     "grade_a", "grade_b", "date", "category")
+
+CONTRIBUTION_COLUMNS: tuple[str, ...] = (
+    "bout_id", "fest_id", "date", "gang_nr", "side", "athlete_id", "opponent_id", "score",
+    "expected", "k", "mov_lambda", "delta")
 
 HISTORY_COLUMNS: tuple[str, ...] = (
     "athlete_id", "date", "fest_id", "rating_before", "rating_after", "season", "category",
@@ -198,7 +205,9 @@ class EloResult:
                  update used (``expected_a``), the one from the pre-festival ratings
                  (``expected_a_prefest``), ``score_a``, ``k`` (effective, i.e. including
                  ``k_scale``), ``mov_lambda``, both
-                 pre-festival ratings and career bout counts (for evaluation).
+                 pre-festival ratings and career bout counts (for evaluation), and
+                 ``delta_a``: the rating change the bout applied to A (B got ``-delta_a``),
+                 the very value the update added, not a recomputation.
     ``ratings``  final rating per athlete id (after the reversions due up to the last
                  festival).
     ``as_of``    date of the last rated festival.
@@ -285,6 +294,7 @@ class SchwingElo:
 
         exp_used = np.empty(n)
         exp_pre = np.empty(n)
+        delta = np.empty(n)  # per bout: the change applied to A (and, negated, to B)
         r_a_pre, r_b_pre = np.empty(n), np.empty(n)
         nb_a, nb_b = np.empty(n, np.int64), np.empty(n, np.int64)
         rows: list[dict[str, np.ndarray]] = []
@@ -308,7 +318,7 @@ class SchwingElo:
 
             if p.update_mode == "sequential":
                 _update_sequential(rating, a, b, score[lo:hi], weight[lo:hi], p.scale,
-                                   exp_used[lo:hi])
+                                   exp_used[lo:hi], delta[lo:hi])
             else:
                 for s, e in _blocks(gang[lo:hi], p):
                     ea = expected_score(rating[a[s:e]], rating[b[s:e]], p.scale)
@@ -316,6 +326,7 @@ class SchwingElo:
                     d = weight[lo + s:lo + e] * (score[lo + s:lo + e] - ea)
                     np.add.at(rating, a[s:e], d)
                     np.add.at(rating, b[s:e], -d)
+                    delta[lo + s:lo + e] = d
 
             m = len(athletes)
             la, lb = local[:hi - lo], local[hi - lo:]
@@ -336,16 +347,60 @@ class SchwingElo:
         self.ratings = {str(i): float(r) for i, r in zip(ids[seen], rating[seen])}
         history = _history_frame(rows, ids, p)
         detail = pd.DataFrame({
-            "bout_id": df["bout_id"].to_numpy(), "fest_id": fest, "date": dates,
-            "season": season, "category": cats,
+            "bout_id": df["bout_id"].to_numpy(), "fest_id": fest, "gang_nr": gang,
+            "date": dates, "season": season, "category": cats,
             "athlete_a_id": df["athlete_a_id"].to_numpy(),
             "athlete_b_id": df["athlete_b_id"].to_numpy(),
             "score_a": score, "expected_a": exp_used, "expected_a_prefest": exp_pre,
             "k": k, "mov_lambda": lam, "rating_a_prefest": r_a_pre, "rating_b_prefest": r_b_pre,
-            "bouts_before_a": nb_a, "bouts_before_b": nb_b})
+            "bouts_before_a": nb_a, "bouts_before_b": nb_b, "delta_a": delta})
         as_of = pd.Timestamp(dates[-1]) if n else None
         return EloResult(history=history, bouts=detail, ratings=dict(self.ratings),
                          as_of=as_of, params=p)
+
+
+# --------------------------------------------------------------------------- per bout
+def bout_contributions(result: EloResult) -> pd.DataFrame:
+    """What every rated bout contributed to each of its two athletes' ratings: two rows
+    per bout (:data:`CONTRIBUTION_COLUMNS`), in processing order
+    ``(date, fest_id, gang_nr, bout_id)``, side A before side B.
+
+    ``delta`` is the change the engine applied (``EloResult.bouts.delta_a`` and its
+    negative), ``score`` / ``expected`` are the athlete's own (they sum to 1 over the two
+    sides), ``k`` is the effective K-factor and ``mov_lambda`` the margin multiplier, so
+    ``delta = k * mov_lambda * (score - expected)``. Per athlete and festival the
+    ``delta`` sum to ``rating_after - rating_before`` of the history (up to float
+    addition), in every update mode. ``expected`` is the value the update used: from the
+    pre-festival ratings in ``festival`` mode, from the ratings at that point of the
+    festival in the other modes - only there is the running sum of ``delta`` in this
+    order a rating the engine actually held.
+    """
+    b = result.bouts
+    n = len(b)
+
+    def both(a: Any, other: Any) -> np.ndarray:
+        """Interleave: row 2i is side A of bout i, row 2i + 1 its side B."""
+        a, other = np.asarray(a), np.asarray(other)
+        out = np.empty(2 * n, dtype=a.dtype)
+        out[0::2], out[1::2] = a, other
+        return out
+
+    def same(col: str) -> np.ndarray:
+        return np.repeat(b[col].to_numpy(), 2)
+
+    ida = b["athlete_a_id"].to_numpy(dtype=object)
+    idb = b["athlete_b_id"].to_numpy(dtype=object)
+    score = b["score_a"].to_numpy(dtype=float)
+    exp = b["expected_a"].to_numpy(dtype=float)
+    d = b["delta_a"].to_numpy(dtype=float)
+    return pd.DataFrame({
+        "bout_id": same("bout_id"), "fest_id": same("fest_id"), "date": same("date"),
+        "gang_nr": same("gang_nr"),
+        "side": np.tile(np.array(["A", "B"], dtype=object), n),
+        "athlete_id": both(ida, idb), "opponent_id": both(idb, ida),
+        "score": both(score, 1.0 - score), "expected": both(exp, 1.0 - exp),
+        "k": same("k"), "mov_lambda": same("mov_lambda"),
+        "delta": both(d, -d)})[list(CONTRIBUTION_COLUMNS)]
 
 
 # --------------------------------------------------------------------------- helpers
@@ -386,7 +441,8 @@ def _blocks(gang: np.ndarray, p: EloParams) -> list[tuple[int, int]]:
 
 
 def _update_sequential(rating: np.ndarray, a: np.ndarray, b: np.ndarray, score: np.ndarray,
-                       weight: np.ndarray, scale: float, exp_out: np.ndarray) -> None:
+                       weight: np.ndarray, scale: float, exp_out: np.ndarray,
+                       delta_out: np.ndarray) -> None:
     """Bout-by-bout update in the given order (plain Python: clearer than fast)."""
     for j, (x, y, s, w) in enumerate(zip(a.tolist(), b.tolist(), score.tolist(),
                                          weight.tolist())):
@@ -395,6 +451,7 @@ def _update_sequential(rating: np.ndarray, a: np.ndarray, b: np.ndarray, score: 
         rating[x] += d
         rating[y] -= d
         exp_out[j] = ea
+        delta_out[j] = d
 
 
 def _history_frame(rows: list[dict[str, np.ndarray]], ids: np.ndarray,

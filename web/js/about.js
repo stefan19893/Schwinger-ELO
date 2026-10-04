@@ -34,13 +34,20 @@
         'Das betrifft ' + SE.num(c.withheld) + ' Schwinger' +
         (c.withheld_unknown ? ' (' + SE.num(c.withheld_unknown) + ' davon ohne Jahrgang)' : '') +
         ', von denen ' + SE.num(c.withheld_ranked) + ' sonst einen Rang hätten; die Ränge zählen deshalb nur die veröffentlichten Schwinger.');
-      set('se-minors2', 'Was von diesen Schwingern trotzdem zu sehen ist: Ihre Gänge zählen für die Wertung und stehen beim Fest, ' +
-        'weil sie auch die Gänge ihrer Gegner sind. Die Zeile heisst «Jungschwinger, Name nicht veröffentlicht» und zeigt nur ' +
-        'gewonnen – gestellt – verloren, die Notensumme und die einzelnen Gänge. Nicht veröffentlicht werden Name, Klub, Teilverband, ' +
-        'Jahrgang, Profil, Rang und jede Wertungszahl (weder vor noch nach dem Fest). Grenzen: Wer die verlinkte Resultatliste der ' +
-        'Quelle daneben legt, kann die Zeile anhand der Gänge einer Person zuordnen – dort stehen die Namen ohnehin. Und aus der ' +
-        'Wertungsänderung der namentlich aufgeführten Gegner lässt sich die Wertung eines nicht genannten Schwingers ungefähr ' +
-        'zurückrechnen; das liesse sich nur verhindern, indem auch die Wertungen der Gegner weggelassen würden.');
+      /* Says what the withholding does and what it does not (owner's decision of
+       * 2026-10-04): no name, no profile, no rating shown - but the ratings are
+       * calculated from public results and can be worked out from them. */
+      set('se-minors2', 'Was das heisst: Diese Schwinger werden nicht mit Namen aufgeführt, haben kein Profil, keinen Eintrag in der Suche ' +
+        'und keinen Rang, und für sie wird keine Wertung angezeigt. Ihre Gänge zählen aber für die Wertung und stehen beim Fest, ' +
+        'weil sie auch die Gänge ihrer Gegner sind: Die Zeile heisst «Jungschwinger, Name nicht veröffentlicht» und zeigt ' +
+        'gewonnen – gestellt – verloren, die Notensumme und die einzelnen Gänge, ohne Klub, Teilverband und Jahrgang.');
+      set('se-minors3', 'Was das nicht heisst: Verborgen sind diese Schwinger damit nicht. Wer die verlinkte Resultatliste der Quelle ' +
+        'daneben legt, kann eine solche Zeile einer Person zuordnen – dort stehen die Namen ohnehin. Auch ihre Wertungen werden ' +
+        'aus den öffentlichen Resultaten berechnet, wie alle anderen. Sie werden hier nicht angezeigt, lassen sich aber ausrechnen: ' +
+        'aus den Wertungen ihrer namentlich aufgeführten Gegner vor und nach einem Fest ziemlich genau, und mit dem öffentlichen ' +
+        'Programm dieser Auswertung und den öffentlichen Resultatlisten vollständig. Im Vergleich steht zudem pro Fest, wie viel die ' +
+        'Gänge gegen nicht genannte Schwinger zusammen zur Wertung eines aufgeführten Schwingers beigetragen haben.');
+      show('se-minors3');
       show('se-minors2');
       show('se-minors');
     }

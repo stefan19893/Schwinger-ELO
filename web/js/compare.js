@@ -4,7 +4,11 @@
  * festivals) and, from two athletes on, his bouts file (direct bouts). Nothing else is
  * loaded up front; the search index only when the picker is used or a link is outdated.
  * The ids come from the URL and are untrusted: they are validated before they become
- * part of a file path, and everything shown goes through SE.esc. */
+ * part of a file path, and everything shown goes through SE.esc.
+ *
+ * The career chart has four horizontal axes: calendar time (default), the number of
+ * bouts (?x=gaenge), age (?x=alter) and the season of the career (?x=saison). The
+ * parameter is compared with the known values and never shown. */
 (function () {
   'use strict';
   var SE = window.SE;
@@ -13,6 +17,8 @@
   var IDLE_WARN_DAYS = 180;
   var SCALE_SETTLED = '2016-01-01';
   var B_SCHLUSSGANG = 1, B_EXTRA = 2, B_GANG_UNCERTAIN = 8, B_UNRATED = 16;
+  var FIRST_BOUTS = 60;        // the zoom button "Erste 60 Gänge"
+  var DOT_PX = 3;              // single Gänge get a point when each has this many pixels
 
   var view = SE.$('se-view'), picked = SE.$('se-picked'), slots = SE.$('se-slots');
   var input = SE.$('se-add'), panel = SE.$('se-add-results'), hint = SE.$('se-add-hint');
@@ -21,7 +27,14 @@
    * status: loading | ok | missing (no such profile) | error (could not be loaded) */
   var entries = [];
   var dropped = { invalid: 0, over: 0 };
-  var ui = { focus: null, common: 'all', commonShown: PAGE, zoom: 'all' };
+  var ui = { focus: null, common: 'all', commonShown: PAGE, zoom: 'all', x: 'time' };
+  /* ?x= value per axis; time has none. Only these fixed values are ever accepted. */
+  var X_PARAM = { bouts: 'gaenge', age: 'alter', season: 'saison' };
+  var firstSeason = null;      // meta.first_season, for the caveats of the axes
+  var metaState = 'pending';   // pending | ok | missing (meta.json failed or names no first season)
+  var scaleNoted = false;      // the scale note of caveats() is on the page
+  var EARLY_SEASONS = 2;       // the first seasons of the data are thin: a debut there may be none
+  var ADULT_AGE = 20;          // first recorded in the year of this birthday or later: likely not a debut
   var chart = null;
 
   /* Colour-blind-safe set (after Okabe and Ito), one variant per colour scheme; every
@@ -62,8 +75,17 @@
     return out;
   }
 
-  function compareUrl(ids) {
-    return 'compare.html' + (ids.length ? '?ids=' + ids.map(encodeURIComponent).join(',') : '');
+  /* The axis of the chart: one of three known values, absent or anything else = time.
+   * The raw value is only compared, never shown or stored. */
+  function parseX(raw) {
+    return raw === X_PARAM.bouts ? 'bouts' : raw === X_PARAM.age ? 'age' : raw === X_PARAM.season ? 'season' : 'time';
+  }
+
+  /* Time is the default and leaves the address as it always was. */
+  function compareUrl(ids, x) {
+    var mode = x || ui.x, v = mode === 'bouts' || mode === 'age' || mode === 'season' ? X_PARAM[mode] : '';
+    return 'compare.html' + (ids.length ? '?ids=' + ids.map(encodeURIComponent).join(',') : '') +
+      (v ? (ids.length ? '&' : '?') + 'x=' + v : '');
   }
 
   function ids() { return entries.map(function (e) { return e.id; }); }
@@ -107,24 +129,35 @@
       }).catch(function (err) {
         e.status = err.status === 404 ? 'missing' : 'error';
         e.error = err;
-      }).then(function () { e.pending = false; render(); });
+      }).then(function () { e.pending = false; renderLoaded(); });
     });
     render();
   }
 
-  /* The bouts files are only needed for a comparison, i.e. from two athletes on. */
+  /* The bouts files are needed for a comparison, i.e. from two athletes on, and for the
+   * Gänge of the bout axis, there also for a single athlete. */
   function loadBouts() {
     var list = ok();
-    if (list.length < 2) { return; }
+    if (list.length < 2 && ui.x !== 'bouts') { return; }
     list.forEach(function (e) {
       if (e.bouts || e.boutsPending || e.boutsError) { return; }
       e.boutsPending = true;
       var id = e.id;
       SE.getJSON('data/bouts/bouts_' + id + '.json').then(function (b) {
         e.bouts = b;
+        e.sameBuild = undefined;
       }).catch(function (err) {
         e.boutsError = err;
-      }).then(function () { e.boutsPending = false; renderDuels(); renderCommon(); });
+      }).then(function () {
+        e.boutsPending = false;
+        /* the bout axis draws the Gänge from these files: once, when the last one is in */
+        if (ui.x === 'bouts' && !ok().some(function (o) { return o.boutsPending; })) {
+          renderLoaded();
+        } else {
+          renderDuels();
+          renderCommon();
+        }
+      });
     });
   }
 
@@ -383,6 +416,7 @@
           ' Festen liess sich nicht sicher entscheiden, welcher Namensvetter angetreten ist. Verlauf, Bilanz und direkte Gänge können Gänge einer anderen Person enthalten.'));
       }
     });
+    scaleNoted = false;
     if (list.length < 2) { return out.join(''); }
     /* by season: two careers that touch in one year are not "apart" */
     var spans = list.map(function (e) {
@@ -411,6 +445,7 @@
     var ended = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date < SCALE_SETTLED; });
     var late = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date >= SCALE_SETTLED; });
     if (mixed || (ended && late)) {
+      scaleNoted = true;
       out.push(SE.note((mixed ? '<strong>Bestwerte aus verschiedenen Jahren sind nicht direkt vergleichbar.</strong> ' : '') +
         'Die Skala wächst bis etwa 2016 noch an: Wertungen aus den Jahren 2011 bis 2015 liegen systematisch tiefer als spätere, ' +
         'unabhängig davon, wer besser war. Verlässlich vergleichen lässt sich, wer zur selben Zeit höher stand. ' +
@@ -438,15 +473,262 @@
     return a && a < b ? [a, b] : null;
   }
 
+  /* Bout axis: x = number of rated bouts since the first recorded festival (the sum of
+   * the history rows' n), one point per festival at the count after its last bout. The
+   * rating is only known before and after a festival, so the points are joined by
+   * straight segments. Where the next festival starts from another rating than the last
+   * one ended with, the 1 April reversion lay in between: the line is broken there and
+   * the difference drawn as its own dashed vertical step, as in the time chart. */
+  function boutSeries(e) {
+    var line = [], reversion = [], points = [], c = 0, prev = null;
+    e.rows.forEach(function (r) {
+      var gap = prev !== null && Math.abs(r.before - prev.after) > 1e-9;
+      if (gap) {
+        line.push([c, null]);
+        reversion.push([c, prev.after], [c, r.before], [c, null]);
+      }
+      if (gap || prev === null) { line.push([c, r.before]); }
+      c += r.n;
+      line.push([c, r.after]);
+      points.push({ value: [c, r.after], row: r, from: c - r.n + 1, to: c });
+      prev = r;
+    });
+    return { line: line, reversion: reversion, points: points, tail: [], lo: 0, hi: c };
+  }
+
+  /* The bouts file carries the contribution per bout (older cached copies do not). */
+  function gangShape(e) {
+    return !!(e.bouts && e.bouts.cols && e.bouts.cols.indexOf('d') === 6 && e.bouts.names);
+  }
+
+  /* History file and bouts file are fetched separately, and a browser can hold one of
+   * them from an older build of the data. Both carry the stamp of their build; only with
+   * the same stamp may they be combined. Otherwise a festival the older bouts file lacks
+   * would be described as bouts "against unpublished opponents" - a false statement.
+   * Belt and braces: files with the same stamp that still contradict each other (more
+   * listed bouts than the festival has, or rated bouts at a festival the history does
+   * not have) are not combined either. */
+  function sameBuild(e) {
+    if (e.sameBuild === undefined) {
+      var okay = gangShape(e) && typeof e.bouts.build === 'string' && !!e.bouts.build && e.bouts.build === e.h.build;
+      if (okay) {
+        var n = {};
+        e.rows.forEach(function (r) { n[r.fest_id] = r.n; });
+        okay = e.bouts.fests.every(function (f) {
+          var rated = f[1].filter(function (g) { return g[6] !== null && g[6] !== undefined; }).length;
+          return rated <= (n[f[0]] || 0);
+        });
+      }
+      e.sameBuild = okay;
+    }
+    return e.sameBuild;
+  }
+
+  /* The Gänge of this athlete can be drawn. */
+  function gangReady(e) { return gangShape(e) && sameBuild(e); }
+
+  /* His bouts file is there but does not belong to his history file. */
+  function gangStale(e) { return !!e.bouts && !gangReady(e); }
+
+  /* Bout axis with the Gänge of every festival. The engine rates a festival as a whole:
+   * every bout counts against the ratings *before* the festival, and only the sum becomes
+   * the new rating. So there is no rating "after Gang 3"; what exists is each bout's
+   * contribution (d of the bouts file). Inside a festival the line is
+   * before + contributions in Gang order - a breakdown of the festival's change.
+   *
+   * Bouts against athletes who are not published have no row in the bouts file. Their
+   * number and their combined contribution follow from the history row
+   * (n - listed bouts, after - before - listed contributions); they are drawn as one
+   * dotted stretch at the end of the festival, wherever they really took place.
+   * The festival points are the ones of boutSeries (same x, same y). */
+  function gangSeries(e) {
+    var line = [], reversion = [], rest = [], points = [], gangs = [], c = 0, prev = null, unsure = 0;
+    var byFest = {};
+    e.bouts.fests.forEach(function (f) {
+      byFest[f[0]] = f[1].filter(function (g) { return g[6] !== null && g[6] !== undefined; });
+    });
+    e.rows.forEach(function (r) {
+      var gap = prev !== null && Math.abs(r.before - prev.after) > 1e-9;
+      if (gap) {
+        line.push([c, null]);
+        reversion.push([c, prev.after], [c, r.before], [c, null]);
+      }
+      if (gap || prev === null) { line.push([c, r.before]); }
+      var list = byFest[r.fest_id] || [];      // never more than r.n: sameBuild()
+      var hidden = r.n - list.length, v = r.before, sum = 0, seen = {}, doubt = false;
+      list.forEach(function (g) {
+        if ((g[5] & B_GANG_UNCERTAIN) || seen[g[0]]) { doubt = true; }
+        seen[g[0]] = true;
+      });
+      if (doubt) { unsure++; }
+      var items = list.map(function (g, i) {
+        sum += g[6];
+        /* without hidden bouts the last Gang ends at the festival's rating (the single
+         * contributions are rounded) */
+        v = (hidden === 0 && i === list.length - 1) ? r.after : r.before + sum;
+        var item = { gang: g[0], opp: g[1], res: g[2], g: g[3], go: g[4], flags: g[5], d: g[6], v: v };
+        var x = c + i + 1;
+        line.push([x, v]);
+        if (hidden > 0 || i < list.length - 1) {      // the last one is the festival point
+          gangs.push({ value: [x, v], item: item, row: r, doubt: doubt });
+        }
+        return item;
+      });
+      var end = c + r.n, restInfo = null;
+      if (hidden > 0) {
+        restInfo = { n: hidden, d: r.after - r.before - sum };
+        line.push([c + list.length, null]);
+        rest.push([c + list.length, v], [end, r.after], [end, null]);
+        line.push([end, r.after]);
+      }
+      points.push({ value: [end, r.after], row: r, from: c + 1, to: end, items: items, rest: restInfo, doubt: doubt });
+      c = end;
+      prev = r;
+    });
+    return { line: line, reversion: reversion, rest: rest, points: points, gangs: gangs, tail: [], lo: 0, hi: c, unsure: unsure, perGang: true };
+  }
+
+  function hasBirthYear(e) { return typeof e.h.by === 'number' && e.h.by > 1800; }
+
+  /* ISO date -> calendar year plus the elapsed share of that year. */
+  function yearPos(d) {
+    var y = Number(d.slice(0, 4)), a = Date.UTC(y, 0, 1);
+    return y + (Date.parse(d) - a) / (Date.UTC(y + 1, 0, 1) - a);
+  }
+
+  /* Age axis: the time chart moved by the birth year, nothing else. Only the year of
+   * birth is known, so x is "calendar year minus birth year" plus the position inside
+   * the calendar year: the stretch from 22 to 23 is the year in which he turns 22. */
+  function ageSeries(e) {
+    var s = e.series || (e.series = SE.careerSeries(e.h)), by = e.h.by;
+    function at(p) { return [yearPos(p[0]) - by, p[1]]; }
+    var points = s.points.map(function (p) {
+      return { value: at(p.value), row: p.row, age: Number(p.row.date.slice(0, 4)) - by };
+    });
+    return {
+      line: s.line.map(at), reversion: s.reversion.map(at), tail: s.tail.map(at), points: points,
+      lo: points.length ? points[0].value[0] : 0, hi: points.length ? points[points.length - 1].value[0] : 0
+    };
+  }
+
+  /* Career-season axis: x = 1 for the first recorded season, counted by calendar year
+   * (a season without a recorded festival has no point and no rating, as its field in
+   * the season table is empty, but it still counts as a year of the career); y = the
+   * season-end rating of the history file. The stretch over such a hole is its own
+   * dashed series. */
+  function seasonSeries(e) {
+    var rows = SE.table(e.h.seasons), line = [], gaps = [], points = [], prev = null;
+    var first = rows.length ? rows[0].season : 0;
+    rows.forEach(function (s) {
+      var x = s.season - first + 1;
+      if (prev && x - prev[0] > 1) {
+        line.push([prev[0], null]);
+        gaps.push(prev, [x, s.rating], [x, null]);
+      }
+      line.push([x, s.rating]);
+      points.push({ value: [x, s.rating], season: s, k: x });
+      prev = [x, s.rating];
+    });
+    return { line: line, reversion: gaps, points: points, tail: [], lo: 1, hi: prev ? prev[0] : 1 };
+  }
+
+  function seriesOf(e) {
+    var x = ui.x;
+    if (x === 'time') { return e.series || (e.series = SE.careerSeries(e.h)); }
+    if (!e.alt) { e.alt = {}; }
+    if (x === 'bouts' && gangReady(e)) { x = 'gang'; }
+    if (!e.alt[x]) {
+      e.alt[x] = x === 'gang' ? gangSeries(e) : x === 'bouts' ? boutSeries(e) : x === 'age' ? ageSeries(e) : seasonSeries(e);
+    }
+    return e.alt[x];
+  }
+
+  /* The athletes the chart can show: on the age axis only those with a birth year. */
+  function drawable(list) {
+    return ui.x === 'age' ? list.filter(hasBirthYear) : list;
+  }
+
+  /* The stretch of the axis every drawn athlete covers (bouts, age, career season), with
+   * the labels of the two zoom buttons; null when there is nothing to narrow down. */
+  function sharedRange(list) {
+    if (ui.x === 'time' || list.length < 2) { return null; }
+    var lo = -Infinity, hi = Infinity, top = -Infinity, low = Infinity;
+    list.forEach(function (e) {
+      var s = seriesOf(e);
+      lo = Math.max(lo, s.lo); hi = Math.min(hi, s.hi);
+      low = Math.min(low, s.lo); top = Math.max(top, s.hi);
+    });
+    if (!(lo < hi) || (lo === low && hi === top)) { return null; }
+    if (ui.x === 'bouts') {
+      return { from: lo, to: hi, all: 'Alle Gänge', label: 'Gemeinsamer Bereich bis Gang ' + SE.num(hi), aria: 'Bereich der Gänge' };
+    }
+    if (ui.x === 'season') {
+      return { from: lo, to: hi, all: 'Alle Saisons', label: 'Gemeinsame Saisons 1–' + SE.esc(hi), aria: 'Bereich der Saisons' };
+    }
+    /* whole years only; an overlap inside one calendar year is that one age, not "22–22" */
+    var a = Math.floor(lo), b = Math.floor(hi);
+    return { from: lo, to: hi, all: 'Ganzes Alter', label: 'Gemeinsames Alter ' + SE.esc(a) + (b > a ? '–' + SE.esc(b) : ''), aria: 'Bereich des Alters' };
+  }
+
+  var MIN_SEASONS = 5;
+
+  /* The Gang points of the chart on the page (series id and data) and whether they are
+   * shown at the moment. */
+  var gangPoints = [], gangDots = false;
+
+  /* How many bouts the visible range may span for single Gänge to get their own point. */
+  function dotLimit() {
+    var el = SE.$('se-chart'), w = el ? el.clientWidth - 58 : 300;
+    return Math.max(40, Math.floor(w / DOT_PX));
+  }
+
+  /* FIRST_BOUTS when the button "Erste n Gänge" makes sense: Gänge are drawn and somebody
+   * has more bouts than that. */
+  function firstBouts(list) {
+    if (ui.x !== 'bouts') { return 0; }
+    var any = false, top = 0;
+    list.forEach(function (e) {
+      var s = seriesOf(e);
+      any = any || !!s.perGang;
+      top = Math.max(top, s.hi);
+    });
+    return any && top > FIRST_BOUTS ? FIRST_BOUTS : 0;
+  }
+
+  /* "+12.7" / "−3.4": a contribution in rating points, one decimal as exported. */
+  function points1(d) {
+    var r = Math.round(d * 10) / 10;
+    return (r > 0 ? '+' : r < 0 ? '−' : '±') + SE.esc(Math.abs(r).toFixed(1));
+  }
+
+  var RESULT = { 0: 'Gestellt gegen', 1: 'Sieg gegen', 2: 'Niederlage gegen' };
+
+  /* "Sieg gegen Muster Hans ?" - the opponent is a published athlete (the bouts file
+   * holds no others), named from the file's own list. */
+  function gangText(e, it) {
+    var unc = e.bouts.unc && e.bouts.unc.indexOf(it.opp) !== -1;
+    return (RESULT[it.res] || 'Gegen') + ' ' + SE.esc(e.bouts.names[it.opp] || 'Gegner') + (unc ? ' ?' : '') +
+      ((it.flags & B_SCHLUSSGANG) ? ' (Schlussgang)' : '');
+  }
+
+  function restText(rest) {
+    return SE.num(rest.n) + (rest.n === 1 ? ' Gang gegen einen nicht veröffentlichten Gegner: ' : ' Gänge gegen nicht veröffentlichte Gegner: zusammen ') + points1(rest.d);
+  }
+
+  var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';
+
+  function seasonLabel(k) { return SE.esc(k) + '. erfasste Saison'; }
+
   function chartOption(list) {
-    var c = chartColours(), series = [], owners = [];
+    var c = chartColours(), series = [], owners = [], mode = ui.x;
     var total = 0;
-    list.forEach(function (e) { total += e.rows.length; });
-    var size = total > 400 ? 3 : total > 150 ? 4 : 6.5;
+    list.forEach(function (e) { total += seriesOf(e).points.length; });
+    var size = mode === 'season' ? (total > 60 ? 5 : 6.5) : total > 400 ? 3 : total > 150 ? 4 : 6.5;
+    /* a highlighted athlete who is not drawn on this axis dims nobody */
+    var focus = list.some(function (e) { return e.id === ui.focus; }) ? ui.focus : null;
     list.forEach(function (e, i) {
-      if (!e.series) { e.series = SE.careerSeries(e.h); }
-      var s = e.series, col = colour(e);
-      var dim = ui.focus !== null && ui.focus !== e.id, on = ui.focus === e.id;
+      var s = seriesOf(e), col = colour(e);
+      var dim = focus !== null && focus !== e.id, on = focus === e.id;
       var op = dim ? 0.16 : 1, z = dim ? 1 : on ? 6 : 3;
       /* As on the profile: a festival is a vertical step of the solid line; the 1 April
        * reversion is its own dashed step between two festivals and belongs to none. */
@@ -475,18 +757,80 @@
         });
         owners.push(e);
       }
+      if (s.rest && s.rest.length) {
+        /* bouts against athletes who are not published: combined, dotted */
+        series.push({
+          name: e.id + ' Rest', type: 'line', data: s.rest, showSymbol: false, silent: true, z: z, connectNulls: false,
+          lineStyle: { color: col, width: 1.2, type: 'dotted', opacity: op }, itemStyle: { color: col }
+        });
+        owners.push(e);
+      }
+      /* career seasons: a season without a place in the season ranking is a hollow point */
+      var data = mode !== 'season' ? s.points : s.points.map(function (p) {
+        return p.season.pos !== null ? p
+          : { value: p.value, season: p.season, k: p.k, itemStyle: { color: c.bg, borderColor: col, borderWidth: 1.5, opacity: op } };
+      });
       series.push({
-        name: e.id + ' Feste', type: 'scatter', data: s.points, symbol: SYMBOLS[e.slot], symbolSize: size, z: z + 1,
+        name: e.id + ' Feste', type: 'scatter', data: data, symbol: SYMBOLS[e.slot], symbolSize: size, z: z + 1,
         silent: dim, itemStyle: { color: col, opacity: op }, emphasis: { scale: 2.5 }
+      });
+      owners.push(e);
+    });
+    /* the single Gänge: small points, only while there is room for them (drawChart
+     * switches them with the zoom); the festival points lie on top */
+    gangPoints = [];
+    list.forEach(function (e) {
+      var s = seriesOf(e);
+      if (!s.perGang) { return; }
+      var dim = focus !== null && focus !== e.id;
+      gangPoints.push({ id: 'gang-' + e.slot, data: s.gangs });
+      series.push({
+        id: 'gang-' + e.slot, name: e.id + ' Gänge', type: 'scatter', data: [], symbol: 'circle', symbolSize: 5,
+        z: dim ? 1 : 4, silent: dim, emphasis: { scale: 2 },
+        /* hollow, so that the filled festival points stay recognisable */
+        itemStyle: { color: c.bg, borderColor: colour(e), borderWidth: 1.2, opacity: dim ? 0.16 : 1 }
       });
       owners.push(e);
     });
     var zoom = { type: 'slider', height: 20, bottom: 8, borderColor: c.border, textStyle: { color: c.muted },
       fillerColor: 'rgba(120,113,108,0.2)', brushSelect: false, showDataShadow: false };
-    var both = overlap(list);
+    var both = mode === 'time' ? overlap(list) : null, shared = sharedRange(list);
     if (ui.zoom === 'common' && both) {
       zoom.startValue = Date.parse(both[0]);
       zoom.endValue = Date.parse(both[1]);
+    }
+    if (ui.zoom === 'common' && shared) {
+      zoom.startValue = shared.from;
+      zoom.endValue = shared.to;
+    }
+    if (ui.zoom === 'first' && firstBouts(list)) {
+      zoom.startValue = 0;
+      zoom.endValue = FIRST_BOUTS;
+    }
+    if (gangPoints.length) {
+      var top = 0;
+      list.forEach(function (e) { top = Math.max(top, seriesOf(e).hi); });
+      gangDots = (zoom.endValue === undefined ? top : zoom.endValue - zoom.startValue) <= dotLimit();
+      if (gangDots) {
+        series.forEach(function (s) {
+          gangPoints.forEach(function (g) { if (s.id === g.id) { s.data = g.data; } });
+        });
+      }
+    }
+    var xAxis = {
+      type: 'time', axisLine: { lineStyle: { color: c.border } },
+      axisLabel: { color: c.muted, hideOverlap: true }, splitLine: { show: false }
+    };
+    if (mode !== 'time') {
+      xAxis.type = 'value';
+      xAxis.minInterval = 1;
+      /* career seasons: from 0 (no label: there is no season 0) over at least five seasons,
+       * so a first season is never on the border of the chart */
+      xAxis.min = mode === 'age' ? function (v) { return Math.floor(v.min); } : 0;
+      xAxis.max = mode === 'age' ? function (v) { return Math.ceil(v.max); }
+        : mode === 'season' ? function (v) { return Math.max(v.max, MIN_SEASONS); } : 'dataMax';
+      xAxis.axisLabel.formatter = function (v) { return mode !== 'season' ? String(v) : v < 1 ? '' : String(v) + '.'; };
+      zoom.labelFormatter = function (v) { return String(Math.round(v)); };
     }
     return {
       animation: false,
@@ -496,19 +840,47 @@
         trigger: 'item', confine: true, backgroundColor: c.bg, borderColor: c.border,
         textStyle: { color: c.text, fontSize: 12 },
         formatter: function (p) {
-          var r = p.data && p.data.row, e = owners[p.seriesIndex];
-          if (!r || !e) { return ''; }
-          return '<strong>' + SE.esc(plainName(e)) + (e.h.unc ? ' ?' : '') + '</strong>' +
-            (e.h.unc ? ' <span>(Identität unsicher)</span>' : '') + '<br>' + SE.esc(r.fest) + '<br>' +
-            SE.esc(SE.date(r.date)) + ' · ' + SE.esc(SE.category(r.cat)) + '<br>Wertung ' + SE.rating(r.before) + ' → <strong>' +
+          var r = p.data && p.data.row, e = owners[p.seriesIndex], s = p.data && p.data.season;
+          if (!e || (!r && !s)) { return ''; }
+          var it = p.data.item;
+          if (it) {
+            /* one Gang: what it contributed, and the running sum - said to be that */
+            return '<strong>' + SE.esc(plainName(e)) + (e.h.unc ? ' ?' : '') + '</strong>' +
+              (e.h.unc ? ' <span>(Identität unsicher)</span>' : '') + '<br>' + SE.esc(r.fest) + '<br>' +
+              SE.esc(SE.date(r.date)) + ' · ' + SE.esc(it.gang) + '. Gang<br>' + gangText(e, it) + '<br>Beitrag <strong>' + points1(it.d) +
+              '</strong> · Zwischenstand ' + SE.rating(it.v) + '<br><span>(Aufteilung des Fests, keine eigene Wertung)</span>' +
+              (p.data.doubt ? '<br>' + DOUBT : '');
+          }
+          var who = '<strong>' + SE.esc(plainName(e)) + (e.h.unc ? ' ?' : '') + '</strong>' +
+            (e.h.unc ? ' <span>(Identität unsicher)</span>' : '') + '<br>';
+          if (s) {
+            return who + seasonLabel(p.data.k) + ' (' + SE.esc(s.season) + ')<br>Wertung am Saisonende <strong>' + SE.rating(s.rating) +
+              '</strong><br>' + (s.pos === null ? 'ohne Platz' : 'Platz ' + SE.num(s.pos)) + ' · ' + SE.num(s.bouts) + (s.bouts === 1 ? ' Gang' : ' Gänge');
+          }
+          var extra = '';
+          if (mode === 'bouts') {
+            extra = '<br>' + (p.data.from < p.data.to ? 'Gang ' + SE.num(p.data.from) + '–' + SE.num(p.data.to) : 'Gang ' + SE.num(p.data.to)) +
+              ' seiner erfassten Gänge';
+          } else if (mode === 'age') {
+            extra = '<br>Im Jahr seines ' + SE.esc(p.data.age) + '. Geburtstags (Jahrgang ' + SE.esc(e.h.by) + ')';
+          }
+          /* the festival point of the bout axis lists its Gänge (a finger hits the big
+           * point more easily than the small ones) */
+          var parts = '';
+          if (p.data.items) {
+            p.data.items.forEach(function (g) {
+              parts += '<br>' + SE.esc(g.gang) + '. ' + gangText(e, g) + ': ' + points1(g.d);
+            });
+            if (p.data.rest) { parts += '<br>' + restText(p.data.rest); }
+            if (p.data.doubt) { parts += '<br>' + DOUBT; }
+          }
+          return who + SE.esc(r.fest) + '<br>' +
+            SE.esc(SE.date(r.date)) + ' · ' + SE.esc(SE.category(r.cat)) + extra + '<br>Wertung ' + SE.rating(r.before) + ' → <strong>' +
             SE.rating(r.after) + '</strong> (' + SE.signed(r.after - r.before) + ')<br>' + SE.num(r.score, 1) + ' Punkte aus ' +
-            SE.esc(r.n) + ' Gängen, erwartet ' + SE.num(r.exp, 1);
+            SE.esc(r.n) + ' Gängen, erwartet ' + SE.num(r.exp, 1) + parts;
         }
       },
-      xAxis: {
-        type: 'time', axisLine: { lineStyle: { color: c.border } },
-        axisLabel: { color: c.muted, hideOverlap: true }, splitLine: { show: false }
-      },
+      xAxis: xAxis,
       yAxis: {
         type: 'value', scale: true,
         axisLabel: { color: c.muted, formatter: function (v) { return String(v); } },
@@ -519,19 +891,167 @@
     };
   }
 
+  /* The axes as real links (shareable address); a plain click switches in place. */
+  var AXES = [['time', 'Zeit'], ['bouts', 'Gänge'], ['age', 'Alter'], ['season', 'Karrieresaison']];
+
+  function axisSwitch() {
+    var html = '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Waagrechte Achse des Diagramms">' +
+      '<span class="text-stone-500 dark:text-stone-400">Achse:</span>';
+    AXES.forEach(function (a) {
+      var on = ui.x === a[0];
+      html += '<a class="se-chip' + (on ? ' se-chip-on' : '') + '" href="' + SE.esc(compareUrl(ids(), a[0])) + '" data-x="' + a[0] + '"' +
+        (on ? ' aria-current="true"' : '') + '>' + a[1] + '</a>';
+    });
+    return html + '</div>';
+  }
+
+  function names(list) { return list.map(function (e) { return SE.esc(plainName(e)); }).join(', '); }
+
+  /* Year of the first history row: where every curve of the chart starts. */
+  function startYear(e) { return e.rows.length ? Number(e.rows[0].date.slice(0, 4)) : null; }
+
+  /* The athletes whose record probably does not begin with their career. Two signs, either
+   * is enough: the first festival lies in the first seasons of the data (they are thin, so
+   * a "debut" there is often only the first sheet that was found), or it lies in the year
+   * of his 20th birthday or later (active athletes usually start in their teens). Neither
+   * proves earlier bouts; the note says "likely". Without meta.json only the second sign
+   * can be read. */
+  function likelyTruncated(list) {
+    return list.filter(function (e) {
+      var y = startYear(e);
+      if (y === null) { return false; }
+      return (firstSeason !== null && y < firstSeason + EARLY_SEASONS) || (hasBirthYear(e) && y - e.h.by >= ADULT_AGE);
+    });
+  }
+
+  /* "Name (erstes erfasstes Fest 2013, im Jahr seines 24. Geburtstags)" */
+  function startText(e) {
+    var y = startYear(e);
+    return SE.esc(plainName(e)) + ' (erstes erfasstes Fest ' + SE.esc(y) +
+      (hasBirthYear(e) && y - e.h.by >= ADULT_AGE ? ', im Jahr seines ' + SE.esc(y - e.h.by) + '. Geburtstags' : '') + ')';
+  }
+
+  /* Always: the axis aligns different years. The scale caveat only when somebody drawn
+   * has a festival from the years of the growing scale, and not a second time when the
+   * scale note stands above the chart. */
+  function eras(shown) {
+    var old = shown.some(function (e) { return e.rows.length && e.rows[0].date < SCALE_SETTLED; });
+    return 'Gleiche Stelle auf der Achse heisst nicht gleiche Zeit' + (!old ? '.'
+      : scaleNoted ? ' (siehe den Hinweis zur Skala oben).'
+        : ': Wertungen aus den Jahren vor etwa 2016 liegen systematisch tiefer (<a class="se-link" href="about.html#grenzen">mehr dazu</a>).');
+  }
+
+  /* Caption and caveats of the three axes that are not calendar time; a caveat only
+   * when it applies to the selection. */
+  function axisNotes(list, shown) {
+    var p = '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">', early = likelyTruncated(shown), html = '';
+    var one = early.length === 1;
+    /* what is known, and what is only likely */
+    var begin = (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
+      early.map(startText).join(', ') + ': ';
+    if (ui.x === 'bouts' && shown.some(function (e) { return seriesOf(e).perGang; })) {
+      var unsure = 0, hidden = false;
+      shown.forEach(function (e) {
+        var s = seriesOf(e);
+        unsure += s.unsure || 0;
+        hidden = hidden || !!(s.rest && s.rest.length);
+      });
+      html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
+        '<strong>Die Wertung wird pro Fest berechnet, nicht pro Gang:</strong> Alle Gänge eines Fests zählen gegen die Wertungen vor dem Fest, und erst nach dem Fest gilt die neue Wertung. ' +
+        'Die Linie innerhalb eines Fests zeigt, wie sich dessen Änderung auf die Gänge verteilt (Wertung vor dem Fest plus die Beiträge der Gänge der Reihe nach) – ' +
+        'ein Zwischenstand dieser Aufteilung, keine Wertung, gegen die der nächste Gegner gerechnet wurde. ' +
+        'Grosser Punkt = Wertung nach einem Fest (antippen: alle Gänge des Fests mit Gegner, Ausgang und Beitrag). ' +
+        'Kleine hohle Punkte = einzelne Gänge; sie erscheinen, sobald der Bereich unten eng genug gewählt ist' + (firstBouts(shown) ? ' (z.B. «Erste ' + FIRST_BOUTS + ' Gänge»)' : '') + '. ' +
+        (hidden ? 'Gepunktet: Gänge gegen Schwinger, die nicht mit Namen veröffentlicht werden – nur zusammengefasst und am Ende des Fests eingetragen, unabhängig davon, wann sie stattfanden. ' : '') +
+        'Gestrichelt senkrecht: Rückführung Richtung 1500 am Saisonwechsel (1. April) zwischen zwei Festen, gehört zu keinem Fest. ' +
+        'Beiträge sind auf eine Dezimale gerundet. Alle beginnen beim Startwert 1500. ' + eras(shown) + '</p>';
+      if (unsure) {
+        html += '<div class="mt-2">' + SE.note('<strong>Reihenfolge der Gänge nicht überall gesichert.</strong> Bei ' + SE.num(unsure) +
+          (unsure === 1 ? ' Fest' : ' Festen') + ' der Auswahl ist die Nummer eines Gangs in der Quelle unsicher oder doppelt vergeben. ' +
+          'Der Verlauf innerhalb dieser Feste kann anders gewesen sein (im Hinweis zum Fest vermerkt); die Wertung nach dem Fest hängt nicht von der Reihenfolge ab.', 'info') + '</div>';
+      }
+    }
+    if (ui.x === 'bouts' && !html) {
+      html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
+        'Punkt = Wertung nach einem Fest, eingetragen bei seinem letzten Gang (antippen für Details); die Wertung ändert sich nur von Fest zu Fest, die Linie verbindet die Punkte. ' +
+        'Gestrichelt senkrecht: Rückführung Richtung 1500 am Saisonwechsel (1. April) zwischen zwei Festen, gehört zu keinem Fest. ' +
+        'Alle beginnen beim Startwert 1500. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
+    }
+    if (ui.x === 'bouts') {
+      /* who is drawn per festival only, and why - said also when that is everybody */
+      var failed = shown.filter(function (e) { return !!e.boutsError && !e.bouts; });
+      var stale = shown.filter(gangStale);
+      if (failed.length) {
+        html += '<div class="mt-2">' + SE.note('Die Gänge von ' + names(failed) + ' konnten nicht geladen werden: dort ein Punkt pro Fest. Bitte die Seite neu laden.') + '</div>';
+      }
+      if (stale.length) {
+        html += '<div class="mt-2">' + SE.note('<strong>Gänge nicht einzeln gezeigt:</strong> ' + names(stale) + '. Die Datei mit den Gängen und die Datei mit dem Verlauf stammen nicht vom selben Datenstand ' +
+          '(der Browser hat eine davon noch aus einem früheren Besuch gespeichert). Statt etwas Falsches zu zeigen, steht dort ein Punkt pro Fest. ' +
+          'Bitte die Seite neu laden; hilft das nicht, in einigen Minuten nochmals.') + '</div>';
+      }
+      if (early.length) {
+        html += '<div class="mt-2">' + SE.note('<strong>«Gang 1» ist der erste erfasste Gang, nicht zwingend der erste der Laufbahn.</strong> ' + begin +
+          'Wahrscheinlich ' + (one ? 'hatte er' : 'hatten sie') + ' schon Gänge davor, die nicht erfasst sind – sicher ist das nicht. ' +
+          'Zählung und Startwert 1500 beginnen in jedem Fall beim ersten erfassten Fest; die ersten Gänge im Diagramm zeigen dann nicht den Anfang der Laufbahn, ' +
+          'sondern wie die Wertung vom Startwert aus aufholt.', 'info') + '</div>';
+      }
+    } else if (ui.x === 'season') {
+      html = p + 'Waagrecht: die wievielte Saison seit dem ersten erfassten Fest (nach Kalenderjahren gezählt). Punkt = Wertung am Saisonende, wie in der Tabelle «Saisons» (antippen für Details); ' +
+        'hohler Punkt = Saison ohne Platz in der Saisonrangliste (zu wenige Gänge oder Saison ohne Rangierung). ' +
+        'Gestrichelt: Saisons ohne erfasstes Fest dazwischen – sie zählen als Jahr der Laufbahn, haben aber keinen Wert. ' +
+        'Der Verlauf innerhalb einer Saison fehlt in dieser Ansicht. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
+      if (early.length) {
+        html += '<div class="mt-2">' + SE.note('<strong>«1. Saison» ist die erste erfasste Saison, nicht zwingend die erste der Laufbahn.</strong> ' + begin +
+          'Wahrscheinlich ' + (one ? 'hat er' : 'haben sie') + ' davor schon Saisons bestritten, die nicht erfasst sind – sicher ist das nicht.', 'info') + '</div>';
+      }
+    } else {
+      html = p + 'Waagrecht: Alter als Kalenderjahr minus Jahrgang. Bekannt ist nur der Jahrgang, nicht der Geburtstag: der Abschnitt von 22 bis 23 ist das Kalenderjahr, ' +
+        'in dem ein Schwinger 22 wird – sein wirkliches Alter liegt bis zu einem Jahr darunter, und zwei Schwinger an derselben Stelle können fast ein Jahr auseinanderliegen. ' +
+        'Punkt = Wertung nach einem Fest (antippen für Details). Gestrichelt: Rückführung Richtung 1500 am Saisonwechsel (1. April), gehört zu keinem Fest. ' +
+        'Gepunktet: Zeit ohne Kampf bis zum Datenstand. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
+      if (early.length) {
+        /* the age the curve starts at: year of the first history row minus the birth year */
+        html += '<div class="mt-2">' + SE.note('<strong>Die Kurve beginnt nicht zwingend am Anfang der Laufbahn.</strong> ' +
+          (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
+          early.map(function (e) {
+            return SE.esc(plainName(e)) + ' (ab ' + SE.esc(startYear(e) - e.h.by) + ', erstes erfasstes Fest ' + SE.esc(startYear(e)) + ')';
+          }).join(', ') + ': Die Kurve beginnt im Jahr des ersten erfassten Fests und beim Startwert 1500. ' +
+          'Wahrscheinlich ' + (one ? 'schwang er' : 'schwangen sie') + ' schon in jüngeren Jahren, die nicht erfasst sind – sicher ist das nicht.', 'info') + '</div>';
+      }
+    }
+    if (metaState === 'missing') {
+      /* the first sign of likelyTruncated() cannot be read: say so instead of staying silent */
+      html += '<div class="mt-2">' + SE.note('Der Beginn der Daten konnte nicht gelesen werden. Wessen Laufbahn schon vor den erfassten Daten begann, ' +
+        'ist deshalb hier nur angegeben, wo es sich aus dem Jahrgang ergibt; bei den übrigen kann der erste erfasste Gang ebenfalls nicht der erste sein. ' +
+        'Bitte die Seite neu laden.') + '</div>';
+    }
+    return html;
+  }
+
   function chartSection(list) {
-    var both = overlap(list);
+    var mode = ui.x, shown = drawable(list);
+    var both = mode === 'time' ? overlap(list) : null, shared = sharedRange(shown);
     var html = '<h2 class="mt-8 text-lg font-bold">Verlauf der Wertung</h2>' +
       '<div class="mt-2 flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Legende; antippen hebt einen Schwinger hervor">';
-    list.forEach(function (e) {
+    shown.forEach(function (e) {
       var on = ui.focus === e.id;
       html += '<button type="button" class="se-chip flex items-center gap-1' + (on ? ' se-row-on font-semibold' : '') + '" data-focus="' + SE.esc(e.id) +
         '" aria-pressed="' + on + '" title="Im Diagramm hervorheben">' + swatch(e) + '<span>' + nameHtml(e) + '</span></button>';
     });
     html += '</div>';
-    if (list.length > 3) {
+    if (shown.length > 3) {
       /* many long careers overlap on a phone: say that one can be picked out */
       html += '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">Tipp: Einen Namen antippen hebt diese Laufbahn im Diagramm hervor, nochmals antippen zeigt wieder alle gleich.</p>';
+    }
+    html += axisSwitch();
+    var first = firstBouts(shown);
+    if (shared || first) {
+      html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="' + (shared ? shared.aria : 'Bereich der Gänge') + '">' +
+        '<button type="button" class="se-chip' + (ui.zoom === 'all' ? ' se-chip-on' : '') + '" data-zoom="all" aria-pressed="' + (ui.zoom === 'all') + '">' + (shared ? shared.all : 'Alle Gänge') + '</button>' +
+        (shared ? '<button type="button" class="se-chip' + (ui.zoom === 'common' ? ' se-chip-on' : '') + '" data-zoom="common" aria-pressed="' + (ui.zoom === 'common') +
+          '">' + shared.label + '</button>' : '') +
+        (first ? '<button type="button" class="se-chip' + (ui.zoom === 'first' ? ' se-chip-on' : '') + '" data-zoom="first" aria-pressed="' + (ui.zoom === 'first') +
+          '">Erste ' + first + ' Gänge</button>' : '') + '</div>';
     }
     if (list.length > 1 && both) {
       html += '<div class="mt-2 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Zeitraum">' +
@@ -539,12 +1059,38 @@
         '<button type="button" class="se-chip' + (ui.zoom === 'common' ? ' se-chip-on' : '') + '" data-zoom="common" aria-pressed="' + (ui.zoom === 'common') +
         '">Gemeinsame Zeit ' + SE.esc(both[0].slice(0, 4)) + '–' + SE.esc(both[1].slice(0, 4)) + '</button></div>';
     }
+    /* age axis: who cannot be drawn is named, one note per athlete */
+    list.forEach(function (e) {
+      if (shown.indexOf(e) === -1) {
+        html += '<div class="mt-2">' + SE.note('<strong>Jahrgang unbekannt:</strong> ' + SE.esc(plainName(e)) + ' fehlt in dieser Ansicht. ' +
+          'Sein Jahrgang steht nicht in den Quellen, sein Alter lässt sich deshalb nicht bestimmen. In den Ansichten «Zeit», «Gänge» und «Karrieresaison» ist er dabei.') + '</div>';
+      }
+    });
+    if (!shown.length) {
+      return html + '<div class="mt-2">' + SE.note(list.length === 1 ? 'Ohne Jahrgang lässt sich nach Alter kein Diagramm zeichnen.'
+        : 'Von keinem der ausgewählten Schwinger ist der Jahrgang bekannt: nach Alter lässt sich kein Diagramm zeichnen.', 'info') + '</div>';
+    }
+    var by = { time: '', bouts: ' nach Anzahl Gängen', age: ' nach Alter', season: ' nach Saison der Laufbahn' }[mode];
     html += '<div id="se-chart" class="mt-2 h-80 w-full sm:h-96" role="img" aria-label="Verlauf der ELO-Wertung von ' +
-      SE.esc(list.map(plainName).join(', ')) + '; die Werte stehen in den Tabellen darunter und in den Profilen"></div>' +
-      '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">Punkt = Wertung nach einem Fest (antippen für Details); jeder Schwinger hat eine eigene Farbe und Punktform. ' +
+      SE.esc(shown.map(plainName).join(', ')) + by + '; die Werte stehen in den Tabellen darunter und in den Profilen"></div>';
+    if (mode !== 'time') { return html + axisNotes(list, shown); }
+    html += '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">Punkt = Wertung nach einem Fest (antippen für Details); jeder Schwinger hat eine eigene Farbe und Punktform. ' +
       'Gestrichelt: Rückführung Richtung 1500 am Saisonwechsel (1. April), gehört zu keinem Fest. Gepunktet: Zeit ohne Kampf bis zum Datenstand. ' +
       'Unten lässt sich der Zeitraum eingrenzen.</p>';
     return html;
+  }
+
+  /* Show or hide the single Gänge according to the visible range and the width of the
+   * chart as it is now. Called when the range changes (slider) and when the width does
+   * (phone rotated, window resized): the same range has room for the points in landscape
+   * and not in portrait. */
+  function syncGangDots() {
+    if (!chart || !gangPoints.length) { return; }
+    var z = chart.getOption().dataZoom[0];
+    var show = (z.endValue - z.startValue) <= dotLimit();
+    if (show === gangDots) { return; }
+    gangDots = show;
+    chart.setOption({ series: gangPoints.map(function (g) { return { id: g.id, data: show ? g.data : [] }; }) });
   }
 
   function drawChart(list) {
@@ -554,7 +1100,10 @@
     try {
       if (!window.echarts) { throw new Error('ECharts nicht geladen'); }
       chart = window.echarts.init(el, null, { renderer: 'canvas' });
-      chart.setOption(chartOption(list), true);
+      chart.setOption(chartOption(drawable(list)), true);
+      /* the single Gänge come and go with the visible range (slider) */
+      var mine = chart;
+      chart.on('datazoom', function () { if (mine === chart) { syncGangDots(); } });
     } catch (err) {
       chart = null;
       el.innerHTML = SE.note('Das Diagramm konnte nicht gezeichnet werden; die Werte stehen in den Tabellen und in den Profilen.');
@@ -602,7 +1151,7 @@
     SE.table(src.bouts.other).forEach(function (o) { fest[o.id] = o; });
     src.bouts.fests.forEach(function (f) {
       f[1].forEach(function (r) {
-        /* row = [gang, opp, res, g, go, flags] (BOUT_SIDE_COLS of the exporter) */
+        /* row = [gang, opp, res, g, go, flags, d] (BOUT_SIDE_COLS of the exporter) */
         if (r[1] !== oi) { return; }
         var res = r[2], info = fest[f[0]] || { name: 'Fest', date: null, cat: null };
         out.push({
@@ -794,9 +1343,35 @@
     loadBouts();
   }
 
+  /* render() at the end of a download. Inside a promise an exception would vanish as an
+   * unhandled rejection; it is thrown again outside, where the page's error banner
+   * (app.js, window 'error') sees it. */
+  function renderLoaded() {
+    try {
+      render();
+    } catch (err) {
+      window.setTimeout(function () { throw err; }, 0);
+    }
+  }
+
   view.addEventListener('click', function (ev) {
-    var el = ev.target && ev.target.closest ? ev.target.closest('[data-focus],[data-zoom],[data-common],[data-more],#se-example') : null;
+    var el = ev.target && ev.target.closest ? ev.target.closest('[data-focus],[data-zoom],[data-common],[data-more],[data-x],#se-example') : null;
     if (!el) { return; }
+    if (el.hasAttribute('data-x')) {
+      /* a link: with a modifier key the browser opens its address, else switch in place */
+      if (ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey) { return; }
+      ev.preventDefault();
+      var x = parseX(X_PARAM[el.getAttribute('data-x')]);   // only the known axes; else time
+      if (x !== ui.x) {
+        var top = window.scrollY;
+        ui.x = x;
+        ui.zoom = 'all';
+        if (window.history && window.history.pushState) { window.history.pushState(null, '', compareUrl(ids())); }
+        render();
+        window.scrollTo(0, top);
+      }
+      return;
+    }
     if (el.id === 'se-example') {
       el.disabled = true;
       SE.getJSON('data/rankings_latest.json').then(function (t) {
@@ -811,7 +1386,8 @@
       ui.focus = ui.focus === id ? null : id;
       render();
     } else if (el.hasAttribute('data-zoom')) {
-      ui.zoom = el.getAttribute('data-zoom') === 'common' ? 'common' : 'all';
+      var zoomTo = el.getAttribute('data-zoom');
+      ui.zoom = zoomTo === 'common' || zoomTo === 'first' ? zoomTo : 'all';
       render();
     } else if (el.hasAttribute('data-common')) {
       ui.common = el.getAttribute('data-common') === 'two' ? 'two' : 'all';
@@ -824,12 +1400,33 @@
     window.scrollTo(0, y);
   });
 
-  window.addEventListener('resize', function () { if (chart) { chart.resize(); } });
-  window.addEventListener('popstate', function () { setIds(parseIds(SE.param('ids')), false); });
+  /* the new width decides anew whether the single Gänge have room */
+  window.addEventListener('resize', function () {
+    if (!chart) { return; }
+    chart.resize();
+    syncGangDots();
+  });
+  window.addEventListener('popstate', function () {
+    ui.x = parseX(SE.param('x'));
+    setIds(parseIds(SE.param('ids')), false);
+  });
   if (window.matchMedia) {
     var mq = window.matchMedia('(prefers-color-scheme: dark)');
     if (mq.addEventListener) { mq.addEventListener('change', render); }
   }
 
+  /* The first season of the data, for the caveats of the axes (meta.json is loaded by
+   * every page anyway). A failed download is a state of its own and is said on the page;
+   * an error of the redraw is not a download error (renderLoaded). */
+  SE.meta().then(function (meta) {
+    firstSeason = meta && typeof meta.first_season === 'number' ? meta.first_season : null;
+    metaState = firstSeason === null ? 'missing' : 'ok';
+  }, function () {
+    metaState = 'missing';
+  }).then(function () {
+    if (ui.x !== 'time') { renderLoaded(); }
+  });
+
+  ui.x = parseX(SE.param('x'));
   setIds(parseIds(SE.param('ids')), false);
 })();

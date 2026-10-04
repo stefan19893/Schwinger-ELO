@@ -18,6 +18,16 @@ Never acceptable (no override):
   festival files, the opponent lists of ``data/bouts`` and the namesakes of
   ``data/history``. The published athletes are exactly the search index; any other id is
   somebody the site must not name (withheld by the age rule, unnamed, unrated);
+* a file of ``data/bouts`` that holds more, or something else, than its contract: a key
+  beyond :data:`BOUT_KEYS`, a row that is not the seven values of :data:`BOUT_COLS`, an
+  ``opp`` that is no index into the file's ``opps``, an opponent name that is not the
+  search index's name of that id, a contribution at an unrated bout (or none at a rated
+  one), or more rated rows at a festival than the athlete's history file counts bouts
+  there. The file must say nothing about bouts against athletes who are not published; a
+  row or a key too many is how such a statement would look;
+* a history or bouts file whose ``build`` stamp is not the one of ``meta.json``: the site
+  was put together from different builds, and the comparison page would refuse to draw
+  the Gänge of those athletes;
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -51,6 +61,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -69,6 +80,13 @@ PER_ATHLETE_FILES = {"data/history": "history_", "data/bouts": "bouts_"}
 REQUIRED_FILES = ("index.html", "athlete.html", "compare.html", "fests.html", "about.html",
                   "data/meta.json", "data/rankings_latest.json", "data/athletes.json",
                   "data/festivals.json", "data/seasons.json", "data/alltime_top200.json")
+# the contract of data/bouts/bouts_<id>.json as the exporter writes it (static_builder:
+# BOUT_SIDE_COLS, OTHER_FEST_COLS, B_UNRATED; a test keeps the two in step). Kept here so
+# that the guard judges the files by its own list, not by whatever the build produced.
+BOUT_KEYS = frozenset({"id", "build", "opps", "names", "unc", "cols", "fests", "other"})
+BOUT_COLS = ["gang", "opp", "res", "g", "go", "flags", "d"]
+BOUT_OTHER_COLS = ["id", "name", "date", "cat"]
+BOUT_UNRATED = 16
 
 
 @dataclass
@@ -119,15 +137,30 @@ def db_inputs(cfg: Config) -> dict[str, int] | None:
     return {"portraits": int(n), "portraits_with_birthday": int(with_bd)}
 
 
-def _published_ids(dist: Path) -> set[str] | None:
-    """The athletes of the search index = everybody the site publishes; ``None`` when the
-    index is missing or unreadable (reported as a missing file)."""
+def _published(dist: Path) -> dict[str, Any] | None:
+    """The athletes of the search index = everybody the site publishes, id -> name;
+    ``None`` when the index is missing or unreadable (reported as a missing file)."""
     try:
         index = json.loads((dist / "data" / "athletes.json").read_bytes())
-        col = index["cols"].index("id")
-        return {str(r[col]) for r in index["rows"]}
+        col, name = index["cols"].index("id"), index["cols"].index("name")
+        return {str(r[col]): r[name] for r in index["rows"]}
     except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
         return None
+
+
+def _published_ids(dist: Path) -> set[str] | None:
+    """The ids of :func:`_published`."""
+    people = _published(dist)
+    return None if people is None else set(people)
+
+
+@dataclass
+class _Seen:
+    """What the readers of :data:`ATHLETE_REFERENCES` share: the published names, and per
+    athlete the rated bouts of each festival as his history file counts them."""
+    names: dict[str, Any]
+    build: Any = None       # meta.json's stamp; every history / bouts file carries it
+    fest_bouts: dict[str, dict[int, int]] = field(default_factory=dict)
 
 
 def _per_athlete_problem(dist: Path) -> str | None:
@@ -152,11 +185,11 @@ def _table_ids(table: dict[str, Any]) -> list[Any]:
     return [row[col] for row in table["rows"]]
 
 
-def _ranking_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+def _ranking_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     return _table_ids(obj)
 
 
-def _season_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+def _season_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     out: list[Any] = []
     for season in obj["seasons"]:
         out += _table_ids(season)
@@ -165,31 +198,101 @@ def _season_ids(obj: dict[str, Any], stem: str) -> list[Any]:
     return out
 
 
-def _fest_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+def _fest_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     return _table_ids(obj["athletes"])      # null = a row without profile, by design
 
 
-def _bout_file_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+def _is_int(v: Any) -> bool:
+    return type(v) is int
+
+
+def _is_grade(v: Any) -> bool:
+    return v is None or (type(v) in (int, float) and math.isfinite(v))
+
+
+def _bout_file_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
+    """The athlete ids of a bouts file - after the file has been held against its
+    contract. The file lists the athlete's bouts against *published* opponents and must
+    say nothing about any other bout, so everything beyond the contract is refused: it is
+    how a row or a remainder for a hidden bout would look."""
     if f"bouts_{obj['id']}" != stem:
         raise ValueError("the file holds another athlete's bouts")
-    return [obj["id"], *obj["opps"]]
+    if set(obj) != BOUT_KEYS:
+        raise ValueError("keys beyond or short of the contract")
+    if obj["build"] != seen.build:
+        raise ValueError("not the build of meta.json")
+    opps, names, unc = obj["opps"], obj["names"], obj["unc"]
+    # the opponents' names stand next to their ids: one name per id, nothing else (a
+    # name without an id could be anybody's and would escape the id check of the caller)
+    if len(names) != len(opps) or not all(isinstance(n, str) and n for n in names):
+        raise ValueError("names do not match the opponent list")
+    if not all(_is_int(i) and 0 <= i < len(names) for i in unc):
+        raise ValueError("unc is not a list of opponent indices")
+    # ... and it is the published name of that id (an unknown id is the caller's finding)
+    known = seen.names
+    for o, n in zip(opps, names):
+        if isinstance(o, str) and o in known and known[o] != n:
+            raise ValueError("an opponent's name is not the search index's name of his id")
+    if len(set(map(repr, opps))) != len(opps):
+        raise ValueError("an opponent is listed twice")
+    if obj["cols"] != BOUT_COLS:
+        raise ValueError("other row columns than the contract's")
+    other = obj["other"]
+    if set(other) != {"cols", "rows"} or other["cols"] != BOUT_OTHER_COLS \
+            or not all(type(r) is list and len(r) == len(BOUT_OTHER_COLS)
+                       for r in other["rows"]):
+        raise ValueError("the list of other festivals is not in the contract's shape")
+    n_opps, width = len(opps), len(BOUT_COLS)
+    history = seen.fest_bouts.get(obj["id"])
+    for fest in obj["fests"]:
+        if type(fest) is not list or len(fest) != 2 or not _is_int(fest[0]):
+            raise ValueError("a festival entry is not [fest_id, rows]")
+        rated = 0
+        for row in fest[1]:
+            if type(row) is not list or len(row) != width:
+                raise ValueError("a row is not the seven values of the contract")
+            gang, opp, res, g, go, flags, d = row
+            if not (_is_int(opp) and 0 <= opp < n_opps):
+                raise ValueError("opp is not an index into the opponent list")
+            if not (_is_int(gang) and res in (0, 1, 2) and _is_int(res) and _is_int(flags)
+                    and _is_grade(g) and _is_grade(go)):
+                raise ValueError("a row holds values of another kind than the contract's")
+            if flags & BOUT_UNRATED:
+                if d is not None:
+                    raise ValueError("a contribution at a bout that does not count")
+            elif type(d) not in (int, float) or not math.isfinite(d):
+                raise ValueError("a rated bout without a contribution")
+            else:
+                rated += 1
+        # the history file counts all rated bouts of the festival, hidden ones included:
+        # the listed ones can only be fewer or as many
+        if history is not None and rated > history.get(fest[0], 0):
+            raise ValueError("more rated rows at a festival than the history file has bouts")
+    return [obj["id"], *opps]
 
 
-def _history_ids(obj: dict[str, Any], stem: str) -> list[Any]:
+def _history_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     if f"history_{obj['id']}" != stem:
         raise ValueError("the file holds another athlete's history")
+    if obj["build"] != seen.build:
+        raise ValueError("not the build of meta.json")
+    cols = obj["history"]["cols"]
+    fest, n = cols.index("fest_id"), cols.index("n")
+    seen.fest_bouts[obj["id"]] = {r[fest]: r[n] for r in obj["history"]["rows"]
+                                  if _is_int(r[n])}
     return [obj["id"], *(n["id"] for n in obj["namesakes"])]
 
 
 # every data file that names athletes by id: (path or directory below data/, file pattern,
 # reader). A festival row may carry no id (null); every id that is there must be published.
+# The history files come before the bout files, which are held against them.
 ATHLETE_REFERENCES = (
     ("rankings_latest.json", None, _ranking_ids),
     ("alltime_top200.json", None, _ranking_ids),
     ("seasons.json", None, _season_ids),
     ("fests", "fest_*.json", _fest_ids),
-    ("bouts", "bouts_*.json", _bout_file_ids),
     ("history", "history_*.json", _history_ids),
+    ("bouts", "bouts_*.json", _bout_file_ids),
 )
 
 
@@ -197,9 +300,11 @@ def _reference_problems(dist: Path) -> tuple[list[str], int]:
     """Athlete ids in the data files that are not in the search index, as one line per
     group of files, and the number of files read. The lines carry counts only: an id is a
     name slug and the workflow log is public (the files are named at DEBUG)."""
-    ids = _published_ids(dist)
-    if ids is None:
+    people = _published(dist)
+    if people is None:
         return [], 0
+    stamp = (read_meta(dist / "data" / "meta.json") or {}).get("build")
+    ids, seen = set(people), _Seen(names=people, build=stamp)
     problems, n_read = [], 0
     for name, pattern, reader in ATHLETE_REFERENCES:
         path = dist / "data" / name
@@ -208,10 +313,13 @@ def _reference_problems(dist: Path) -> tuple[list[str], int]:
         n_bad_files = n_unreadable = 0
         for f in files:
             try:
-                found = reader(json.loads(f.read_bytes()), f.stem)
-            except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
+                found = reader(json.loads(f.read_bytes()), f.stem, seen)
+            except (OSError, ValueError, KeyError, TypeError, IndexError,
+                    AttributeError) as err:
                 n_unreadable += 1
-                log.debug("check-site: %s is unreadable or not in the expected shape", f)
+                # the reason names no athlete (the readers' messages carry no id or name)
+                log.debug("check-site: %s is unreadable or not in the expected shape (%s)",
+                          f, err if isinstance(err, ValueError) else type(err).__name__)
                 continue
             n_read += 1
             bad = {repr(i) for i in found

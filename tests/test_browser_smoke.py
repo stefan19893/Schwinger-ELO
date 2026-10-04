@@ -204,6 +204,13 @@ def pages(browser: str, site: Path, base_url: str,
                                       + ranked[1][1].rsplit("-", 1)[0] + "-p0",
         "compare-limit": base_url + "compare.html?ids=" + ",".join(
             [r[1] for r in ranked[:8]] + ["%3Cb%3Ex", "A..B"]),
+        # the other axes of the career chart, and a value of x that is none of them
+        "compare-bouts": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=gaenge",
+        "compare-bouts-one": base_url + f"compare.html?ids={ranked[0][1]}&x=gaenge",
+        "compare-age": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}&x=alter",
+        "compare-season": base_url + f"compare.html?ids={ranked[0][1]}&x=saison",
+        "compare-axis-invalid": base_url + f"compare.html?ids={ranked[0][1]},{ranked[1][1]}"
+                                           "&x=%3Cb%3Ey",
     }
     return _load_all(browser, urls, tmp_path_factory.mktemp("profiles"))
 
@@ -223,7 +230,10 @@ def test_dom_helper_detects_broken_pages() -> None:
 
 @pytest.mark.parametrize("name", ["index", "seasons", "peaks", "athlete", "athlete-unknown",
                                   "fests", "fest", "compare-empty", "compare-one",
-                                  "compare-pair", "compare-unknown", "compare-limit"])
+                                  "compare-pair", "compare-unknown", "compare-limit",
+                                  "compare-bouts", "compare-bouts-one", "compare-age",
+                                  "compare-season",
+                                  "compare-axis-invalid"])
 def test_page_renders_without_error(pages: dict[str, str], name: str) -> None:
     assert page_problems(pages[name]) == [], name
 
@@ -236,6 +246,10 @@ def test_about_page_is_filled_from_meta(pages: dict[str, str]) -> None:
     # the age rule is explained (the sample withholds a few athletes), no contact invented
     assert "hidden" not in dom.attrs["se-minors"].get("class", "")
     assert "nicht mit Namen veröffentlicht" in dom.text["se-minors"]
+    # what the withholding does not do is said as plainly as what it does
+    assert "für sie wird keine Wertung angezeigt" in dom.text["se-minors2"]
+    assert "hidden" not in dom.attrs["se-minors3"].get("class", "")
+    assert "lassen sich aber ausrechnen" in dom.text["se-minors3"]
     assert "hidden" in dom.attrs["se-contact"]["class"] and "mailto:" not in html
     assert '<meta name="robots" content="noindex">' in html
 
@@ -304,6 +318,172 @@ def test_comparison_page(pages: dict[str, str], site: Path) -> None:
     assert "<b>x" not in pages["compare-limit"]                         # nothing injected
     for name in ("compare-empty", "compare-pair"):
         assert '<meta name="robots" content="noindex">' in pages[name]
+
+
+def _active_axis(html: str) -> list[str]:
+    """The axis links marked as current, by their data-x value."""
+    return [part.split('"', 1)[0] for part in html.split('data-x="')[1:]
+            if part.split(">", 1)[0].endswith('aria-current="true"')]
+
+
+def test_comparison_axes(pages: dict[str, str], site: Path) -> None:
+    """The career chart by bouts, by age and by career season; time by default."""
+    data = site / SUBPATH / "data"
+    ranked = json.loads((data / "rankings_latest.json").read_text(encoding="utf-8"))["rows"]
+    heads = [json.loads((data / "history" / f"history_{r[1]}.json").read_text(encoding="utf-8"))
+             for r in ranked[:2]]
+    # time: the default, also for a value that is not one of the three; nothing injected
+    for name in ("compare-pair", "compare-axis-invalid"):
+        assert _active_axis(pages[name]) == ["time"], name
+        assert pages[name].count("data-x=") == 4, name
+        assert "Zeit ohne Kampf bis zum Datenstand" in Dom(pages[name]).text["se-view"], name
+        assert "x=" not in pages[name].split('data-x="time"')[0].rsplit("href=", 1)[1], name
+    assert "<b>y" not in pages["compare-axis-invalid"]
+    # bouts
+    bouts = Dom(pages["compare-bouts"])
+    assert _active_axis(pages["compare-bouts"]) == ["bouts"] and "canvas" in bouts.tags
+    assert "Anzahl gewerteter Gänge" in bouts.text["se-view"]
+    totals = [h["bouts"] for h in heads]
+    assert all(sum(r[6] for r in h["history"]["rows"]) == h["bouts"] for h in heads)
+    if min(totals) < max(totals):
+        assert f"Gemeinsamer Bereich bis Gang {min(totals)}" in bouts.text["se-view"]
+    assert "&amp;x=gaenge" in pages["compare-bouts"].split("data-remove=")[0]   # links keep the axis
+    # the Gänge of every festival, drawn from the bouts files - also for a single athlete,
+    # where no direct bouts are shown - and said to be a breakdown of the festival
+    for name in ("compare-bouts", "compare-bouts-one"):
+        view = Dom(pages[name]).text["se-view"]
+        assert "Die Wertung wird pro Fest berechnet, nicht pro Gang" in view, name
+        assert "keine Wertung, gegen die der nächste Gegner gerechnet wurde" in view, name
+        assert "konnten nicht geladen werden" not in view, name
+        assert "canvas" in Dom(pages[name]).tags, name
+    assert "Die Wertung wird pro Fest berechnet" not in Dom(pages["compare-pair"]).text["se-view"]
+    if max(totals) > 60:
+        assert "Erste 60 Gänge" in bouts.text["se-view"]
+    # age: only athletes with a birth year are drawn, the others are named in a note
+    age = Dom(pages["compare-age"])
+    assert _active_axis(pages["compare-age"]) == ["age"]
+    known = sum(1 for h in heads if h["by"] is not None)
+    assert age.text["se-view"].count("Jahrgang unbekannt:") == 2 - known
+    if known:
+        assert "canvas" in age.tags and "nicht der Geburtstag" in age.text["se-view"]
+    else:
+        assert "canvas" not in age.tags and "kein Diagramm zeichnen" in age.text["se-view"]
+    # career season, one athlete
+    season = Dom(pages["compare-season"])
+    assert _active_axis(pages["compare-season"]) == ["season"] and "canvas" in season.tags
+    assert "Wertung am Saisonende" in season.text["se-view"]
+    assert "Erst ein Schwinger ausgewählt" in season.text["se-view"]
+
+
+def _starts(rows: list[list]) -> int:
+    return int(rows[0][0][:4])
+
+
+def test_comparison_axis_caveats(browser: str, site: Path, base_url: str, tmp_path: Path) -> None:
+    """The caveats of the new axes follow the selection (review fixes): who gets the "not
+    the start of his career" note, the sentence on the years before 2016, a single season,
+    and a site whose meta.json names no first season."""
+    data = site / SUBPATH / "data"
+    meta = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+    heads = [json.loads(p.read_text(encoding="utf-8")) for p in sorted((data / "history").iterdir())]
+
+    def truncated(h: dict) -> bool:          # the rule of compare.js, written out again
+        y = _starts(h["history"]["rows"])
+        return y < meta["first_season"] + 2 or (h["by"] is not None and y - h["by"] >= 20)
+
+    noted = next((h for h in heads if truncated(h)), None)
+    plain = next((h for h in heads if not truncated(h)
+                  and h["history"]["rows"][0][0] >= "2016-01-01"), None)
+    single = next((h for h in heads if len(h["seasons"]["rows"]) == 1), None)
+    urls = {}
+    if noted:
+        urls["noted"] = base_url + f"compare.html?ids={noted['id']}&x=gaenge"
+    if plain:
+        urls["plain"] = base_url + f"compare.html?ids={plain['id']}&x=gaenge"
+    if single:
+        urls["single"] = base_url + f"compare.html?ids={single['id']}&x=saison"
+    # the same site with a meta.json that names no first season
+    other = tmp_path / "site" / SUBPATH
+    shutil.copytree(site / SUBPATH, other)
+    meta.pop("first_season")
+    (other / "data" / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    httpd, url = _serve(tmp_path / "site")
+    try:
+        some = (noted or heads[0])["id"]
+        urls["no-first"] = url + f"compare.html?ids={some}&x=gaenge"
+        urls["no-first-time"] = url + f"compare.html?ids={some}"
+        got = _load_all(browser, urls, tmp_path / "profiles")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    for name, html in got.items():
+        assert page_problems(html) == [], name
+        assert "canvas" in Dom(html).tags, name
+    text = {name: Dom(html).text["se-view"] for name, html in got.items()}
+    note = "nicht zwingend der erste der Laufbahn"
+    if noted:
+        assert note in text["noted"] and "sicher ist das nicht" in text["noted"]
+        assert f"erstes erfasstes Fest {_starts(noted['history']['rows'])}" in text["noted"]
+    if plain:
+        assert note not in text["plain"]
+        assert "heisst nicht gleiche Zeit." in text["plain"] and "vor etwa 2016" not in text["plain"]
+    if single:
+        assert "Wertung am Saisonende" in text["single"]
+    # without the first season: said in a note on the new axes, nothing in time mode
+    missing = "Der Beginn der Daten konnte nicht gelesen werden"
+    assert missing in text["no-first"] and missing not in text["no-first-time"]
+    assert "Die Daten beginnen" not in text["no-first"]
+    assert sum(1 for k in ("noted", "plain", "single") if k in urls) >= 2    # the sample has such athletes
+
+
+def test_comparison_refuses_files_of_different_builds(browser: str, site: Path, base_url: str,
+                                                     tmp_path: Path) -> None:
+    """After a data update a browser can hold an athlete's bouts file from the previous
+    build next to a fresh history file. The older file lacks the newest festival; drawn
+    together, the page would call its Gänge "against unpublished opponents". The page
+    must see that the two do not belong together, draw one point per festival for that
+    athlete and say why - and leave the other athlete and the other axes alone."""
+    data = site / SUBPATH / "data"
+    ranked = json.loads((data / "rankings_latest.json").read_text(encoding="utf-8"))["rows"]
+    first, second = ranked[0][1], ranked[1][1]
+    other = tmp_path / "site" / SUBPATH
+    shutil.copytree(site / SUBPATH, other)
+    path = other / "data" / "bouts" / f"bouts_{first}.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    assert old["fests"] and len(old["build"]) == 12
+    old["fests"].pop()                           # the previous build did not have it yet
+    old["build"] = "0" * 12 if old["build"] != "0" * 12 else "1" * 12
+    path.write_text(json.dumps(old), encoding="utf-8")
+    httpd, url = _serve(tmp_path / "site")
+    try:
+        got = _load_all(browser, {
+            "stale-one": url + f"compare.html?ids={first}&x=gaenge",
+            "stale-pair": url + f"compare.html?ids={first},{second}&x=gaenge",
+            "stale-time": url + f"compare.html?ids={first},{second}",
+            "fresh-one": base_url + f"compare.html?ids={first}&x=gaenge",
+        }, tmp_path / "profiles")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    text = {}
+    for name, html in got.items():
+        assert page_problems(html) == [], name
+        assert "canvas" in Dom(html).tags, name
+        text[name] = Dom(html).text["se-view"]
+    note, per_gang = "stammen nicht vom selben Datenstand", "Die Wertung wird pro Fest berechnet, nicht pro Gang"
+    # alone: one point per festival, said so, and no sentence about the Gänge
+    assert note in text["stale-one"] and "ein Punkt pro Fest" in text["stale-one"]
+    assert per_gang not in text["stale-one"]
+    assert "die Wertung ändert sich nur von Fest zu Fest" in text["stale-one"]
+    # next to an athlete whose files belong together: he keeps his Gänge, the note names
+    # only the other one
+    assert note in text["stale-pair"] and per_gang in text["stale-pair"]
+    assert text["stale-pair"].count(note) == 1
+    # nothing of it on the time axis, and nothing on the untouched site
+    assert note not in text["stale-time"] and note not in text["fresh-one"]
+    assert per_gang in text["fresh-one"]
+    for name in text:
+        assert "konnten nicht geladen werden" not in text[name], name
 
 
 def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_url: str,

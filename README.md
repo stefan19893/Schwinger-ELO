@@ -51,9 +51,10 @@ python -m src.cli COMMAND [options]
 | `crawl` | Festival listings, statistic PDFs, ranking lists and portraits from schlussgang.ch into the cache `data/raw/` and SQLite. Incremental; 0.5–1.0 s between requests, request caps per run. Options: `--from-year`, `--to-year`, `--no-pdfs`, `--no-portraits`, `--portraits-only` |
 | `parse` | Cached PDFs → SQLite (`bouts`, `athletes_raw`, identity evidence). Offline. `--force` re-parses everything |
 | `clean` | Identity resolution → `data/processed/*.parquet` |
-| `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`. `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
+| `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (rating change per bout). `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
 | `build` | Static site → `dist/`. Exits 1 without rating data; `--allow-empty` writes pages without content (never for a deployment) |
-| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one. `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
+| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one; a file in `data/bouts` that holds anything beyond its contract (an extra key, a row that is not seven values, an opponent index outside its list, a name that is not the search index's, more rated rows at a festival than the athlete's history counts bouts) — such a file could say something about a bout against an athlete who is not published; and history or bouts files whose `build` stamp is not `meta.json`'s. Reads every data file (real data: 14,400 files in about 1.5 s). `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
+| `pack-site OUTPUT` | Pack `dist/` into the tar file GitHub Pages deploys (uncompressed; hidden files left out, as `actions/upload-pages-artifact` does) **without listing its files** — they are named after athletes, and a workflow log is public. Logs counts and sizes only. Exits 1 on a missing site, on a symbolic link or special file in it, on an archive of 1 GB or more, and when `OUTPUT` lies inside `dist/`. Always packs the site directory; there is no option for another source |
 | `all` | `crawl → parse → clean → elo → build`. `--skip-crawl` leaves the crawl out |
 | `serve` | Serve `dist/` at `http://localhost:8000` (`--port`, `--host`) |
 | `state-export OUTPUT` | Bundle `data/raw`, the database, the Parquet files and the guard baseline into one `.tar.gz` (`OUTPUT` ending in `.tar.gz` is the file; anything else is a directory, created if missing, for a time-stamped name). The bundle is readable by you only (mode 0600). **Not for publication** |
@@ -77,7 +78,7 @@ configured model). The model parameters are `elo_k_scale`, `season_reversion_del
 
 | Setting | Default | Effect |
 |---|---|---|
-| `publish_min_age` | `18` | Athletes who are not certainly 18 at the data date (data year − birth year ≤ 18) are not published by name: they count in the ratings, but have no profile, no search entry and no rank, and a festival lists them as "Jungschwinger, Name nicht veröffentlicht". Their festival rows carry no rating value. Ranks are the places among the published athletes. `0` publishes everyone. On the data of 2026-09-27: 726 athletes withheld, 525 of them otherwise ranked |
+| `publish_min_age` | `18` | Athletes who are not certainly 18 at the data date (data year − birth year ≤ 18) are not published by name: they count in the ratings, but have no profile, no search entry and no rank, and a festival lists them as "Jungschwinger, Name nicht veröffentlicht". No rating is displayed for them (their festival rows carry no rating value). **This withholds the display, not the information:** their ratings are calculated from public results and follow from the published athletes' histories (see "What you accept by opting in"). Ranks are the places among the published athletes. `0` publishes everyone. On the data of 2026-09-27: 726 athletes withheld, 525 of them otherwise ranked |
 | `publish_unknown_recent_seasons` | `3` | Athletes **without a known birth year** are withheld in the same way when their first season is one of the last three of the data year (2024–2026): they may be minors (97.7 % of debutants are at least 16; a 16-year-old debutant is not certainly 18 for three data years). 8 of the 726. The 1,737 athletes without a birth year who started earlier are published. `0` switches the rule off; the `--sample` demo runs without it |
 | `site_noindex` | `True` | `<meta name="robots" content="noindex">` on every page and a `robots.txt`. Under `<user>.github.io/Schwinger-ELO/` crawlers do not read that `robots.txt` (only the one at the root of the host counts) and the JSON data files cannot carry the tag — the switch keeps the pages out of search results, it is not access control |
 | `contact_email` | `""` | When set, the about page shows the address as a non-public route for corrections and objections beside the GitHub issues link. Empty: nothing is shown |
@@ -93,8 +94,16 @@ gefunden" with suggestions (on the comparison page for the affected athlete only
 `athletes.json` (search index), `alltime_top200.json`, `seasons.json`, `festivals.json`,
 one `history/history_<athlete_id>.json` per athlete, one `fests/fest_<fest_id>.json`
 per festival and one `bouts/bouts_<athlete_id>.json` per athlete (his bouts against other
-published athletes; read only by the comparison page, one file per selected athlete).
-The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 87 MB).
+published athletes, each with what it contributed to his rating, and the opponents' names;
+read only by the comparison page, one file per selected athlete). The contributions come
+from `bout_ratings.parquet`, so `build` needs the output of the current `elo`. Nothing is
+exported about a bout against an athlete who is not published by name.
+`meta.json` and every history and bouts file carry the same `build` stamp (a digest of the
+inputs and settings, not a time). The comparison page draws an athlete's Gänge only when
+his two files carry the same stamp; with a cached file from an earlier build it falls back
+to one point per festival and says so. `check-site` refuses a bouts file that holds
+anything beyond its contract and files of mixed builds.
+The same inputs give a byte-identical `dist/` (real data: about 14,400 files, 103 MB).
 
 `build` needs the outputs of `clean` and `elo` in `data/processed/`. Without them (or with
 an empty `ratings.parquet`) it exits with status 1 and leaves an existing `dist/` untouched,
@@ -108,7 +117,7 @@ Pages (German, static, relative URLs only, so they work under `/Schwinger-ELO/`)
 |---|---|
 | `index.html` | current ranking with Teilverband filter, season lists (`#saison-2019`), highest ratings (`#bestwerte`), search |
 | `athlete.html?id=<athlete_id>` | profile, career chart, seasons, festivals |
-| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings over time in one chart, seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
+| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings in one chart — over time or, with the switch above the chart, by number of bouts (`&x=gaenge`; there the line moves Gang by Gang: the rating is calculated per festival, and the chart shows how the festival's change is made up of the contributions of its Gänge — a breakdown, not a rating after each Gang; bouts against athletes who are not published appear only as one combined remainder per festival), by age (`&x=alter`, calendar year minus birth year; athletes without a known birth year are not drawn and named) or by season of the recorded career (`&x=saison`, season-end ratings); any other value of `x` shows time — seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
 | `fests.html`, `fests.html?id=<fest_id>` | festival list and one festival with every athlete's bouts |
 | `about.html` | method, source, known limitations, how to report errors |
 
@@ -147,8 +156,8 @@ Three workflows:
 | Workflow | Starts | Does | Needs the opt-in |
 |---|---|---|---|
 | `ci.yml` | push to `main`, pull requests | install (Python 3.11: `requirements.txt`; 3.14: the hashed `requirements-lock.txt`), `pytest` (incl. the browser smoke test), sample build, `check-site --sample`. No request to schlussgang.ch, publishes nothing | no |
-| `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, deploy to Pages. No crawl | **yes** |
-| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site-crawl-locally) | **yes** |
+| `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, pack the site (`pack-site`), deploy to Pages. No crawl | **yes** |
+| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, pack the site (`pack-site`), deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site) | **yes** |
 
 "Opt-in" is the repository variable `PUBLISH_ENABLED`. Unless it is exactly `true`, every
 job of the two publishing workflows is skipped: no crawl, no build, no deployment — also
@@ -189,9 +198,11 @@ Nothing below has been done; each step is yours.
 - [ ] **Rows of withheld athletes.** A festival still lists them as "Jungschwinger, Name
       nicht veröffentlicht" with wins / draws / losses, grade sum and bouts (these are
       also their opponents' bouts), without name, club, Teilverband, birth year and
-      without any rating. Laid beside the linked schlussgang.ch list, such a row can be
-      matched to a person — the names are public there. Accept, or ask for these rows to
-      be dropped (which also removes those bouts from the opponents' lists).
+      without any rating shown. Laid beside the linked schlussgang.ch list, such a row can
+      be matched to a person — the names are public there — and the rating that is not
+      shown can be worked out (next list). Accept, or ask for these rows to be dropped
+      (which also removes those bouts from the opponents' lists, and still does not hide
+      the ratings: the opponents' rating changes remain).
 - [ ] **`site_noindex`** (default on) — and its limits: the `noindex` tag covers the five
       HTML pages only. `robots.txt` is read by crawlers only at the root of a host; under
       `<user>.github.io/Schwinger-ELO/` it has no effect, and the JSON data files (names,
@@ -226,9 +237,20 @@ test fails if a workflow sets one).
   fails, the next run compares against the already accepted site and deploys the change
   without asking again. (Recording after the deployment would need a second 0.5 GB
   round trip of the state from a third job.)
-- **Withheld athletes are not invisible.** Their anonymous festival rows can be matched
-  against the source list, and their rating can be estimated from the rating changes of
-  their published opponents (stated on the site's about page).
+- **Withheld athletes are not named and no rating is shown for them — but they are not
+  hidden, and the site says so** (about page; decision of 2026-10-04). Their anonymous
+  festival rows can be matched against the source list. Their ratings are calculated
+  from public results like everyone's, and they can be worked out: measured with the
+  published files and the public formula only, the pre-festival rating of every withheld
+  athlete who met a published one (722 of the 726) follows from the published athletes'
+  histories with a median error of 0.7 rating points (96 % within 5); and since this
+  repository and the sources are public, running the pipeline with `publish_min_age = 0`
+  gives all of them exactly. The comparison page also prints, per festival, what the
+  bouts against unnamed opponents contributed together to a published athlete's rating.
+  Closing this would mean coarser or missing ratings for the published athletes
+  (rounding to 10 points still leaves a median error of 58 against 96 for a blind
+  guess) — not done; the filter keeps minors out of the lists, the search and the
+  rankings, which is what it is for.
 - **The age filter depends on the source's birth years.** `check-site` fails when the
   number of withheld athletes drops, the number of published ones jumps or the birthdays
   disappear from the portraits (tolerances in `src/config.py`), and each January it lets
@@ -239,12 +261,23 @@ test fails if a workflow sets one).
   `--require-hashes` (exact versions, wheel hashes verified against the local
   installation; whether a GitHub runner is offered the same binary wheels is untested —
   if not, the install fails). `pip` itself and the actions (`actions/checkout@v5` …,
-  major tags written from memory) are not pinned by hash, and project code plus these
+  major tags) are not pinned by hash — except `actions/upload-artifact`, which is pinned to
+  the commit that `upload-pages-artifact@v4` itself uses (v4.6.2) — and project code plus these
   dependencies run in the same job that later holds the `contents: write` token: a job
   without third-party code is not possible while the state must not travel through a
   (publicly readable) artifact.
 - **Workflow logs are public.** At the default log level no stage prints athlete names
   or ids (tested on the sample pipeline); a traceback from an unexpected crash could.
+  The site's files are named after athletes (`data/history/history_<id>.json`), so the
+  workflows do not use `actions/upload-pages-artifact` — its `tar` step lists every file
+  it packs — but `pack-site`, which logs counts only, followed by the same upload step
+  that action ends with.
+- **The log of the first deployment (2026-10-04) does contain those file names.** It was
+  made with `upload-pages-artifact@v4`, whose archive step printed 12,612 lines such as
+  `data/history/history_<id>.json` and `data/bouts/bouts_<id>.json`: the ids (name slugs)
+  of the *published* athletes — nobody the site withholds, nothing the site itself does
+  not show, but in a place that was promised to hold no names. The owner can remove it:
+  Actions → that run → "⋯" → **Delete all logs** (the run and the deployment stay).
 
 **2. Get the workflows onto `main`** (merge / push the branch). `ci.yml` starts running;
 the other two stay inert.
@@ -313,18 +346,68 @@ This first run is also the first real test of the workflows — they were valida
       release is not listed for a signed-out browser (`…/releases` shows nothing).
 - [ ] After step 7: the local action `./.github/actions/pipeline-state` found the draft
       with the workflow token (steps "Download the pipeline state" and "Upload the new
-      state" green), `upload-pages-artifact@v4` / `deploy-pages@v4` resolved, the site
-      is served under `/Schwinger-ELO/`, and the run's log shows no athlete name.
+      state" green), `deploy-pages@v4` resolved, the site is served under
+      `/Schwinger-ELO/`, and the run's log shows no athlete name. **The first deploy
+      run (2026-10-04) failed the last point:** the action then in use
+      (`upload-pages-artifact@v4`) listed every file of the site, named after the
+      published athletes, in the log. Delete that log (Actions → the run → "Delete all
+      logs"); see "Workflow logs are public" above.
+- [ ] After the first deployment with `pack-site` (not yet run on GitHub): the step
+      "Pack the site" prints one line with counts, "Upload the Pages artifact" uploads
+      one file `artifact.tar` under the name `github-pages`, the job "Deploy" accepts
+      it, and a search of the run's log for `history_` finds nothing. If "Deploy"
+      rejects the artifact, nothing was published: the previous deployment stays online.
 - [ ] Only if you ever start `scrape_and_update.yml` by hand: the "Incremental crawl"
       step reports on the order of 100–350 network requests (not thousands), and
       schlussgang.ch answered the runner.
 - [ ] Consider pinning the actions to commit SHAs (Dependabot can maintain them).
 
-### Updating the site (crawl locally)
+### Updating the site
 
-GitHub does not crawl: new festivals are fetched on your machine, the state is uploaded
-and the deploy workflow rebuilds the site from it (no request to schlussgang.ch from a
-runner).
+Nothing reaches the public site by itself: a merge to `main` does not deploy and GitHub
+never crawls. The site changes only when "Deploy to GitHub Pages" is started by hand
+(with `PUBLISH_ENABLED` = `true`). There are two kinds of update.
+
+**A. New code or page changes (no new data)** — for example a merged pull request.
+
+1. Merge the pull request into `main` and wait for the green CI run on `main`.
+2. Start the deployment, either
+   - in the browser (also on a phone): open
+     `https://github.com/<user>/Schwinger-ELO/actions/workflows/deploy_pages.yml` →
+     **Run workflow** → branch `main` → leave `accept_changes` off, or
+   - in a terminal: `gh workflow run deploy_pages.yml && gh run watch`.
+3. When the run is green (about ten minutes), reload the site; a browser may show the
+   old scripts until its cache is refreshed.
+
+The run rebuilds the site from the state bundle on the draft release with the code of
+`main`; it makes no request to schlussgang.ch. If the change makes the site smaller or
+publishes more athletes on purpose (for example another `publish_min_age`), the deploy
+guard stops the run: start it once more with `accept_changes` ticked.
+
+**The next deployment is the first one that packs the site with `pack-site`** (the one
+of 2026-10-04 used `actions/upload-pages-artifact`), and the first with the comparison by
+Gänge. `pack-site` was run locally on the real build (14,446 files, a tar of 114 MB, one
+log line, no file name), but the three steps "Pack the site" → "Upload the Pages
+artifact" → "Deploy" have not run on GitHub yet. Look at, in this order:
+
+- "Check the built site (deploy guard)": `check-site: ok` with the athlete counts you
+  know (6,306 published, 726 withheld on the data of 2026-09-27); no `accept_changes`
+  needed — the counts do not change with this release;
+- "Pack the site": one line with counts and sizes ("… files in … directories, …; file
+  names are not logged");
+- "Upload the Pages artifact": one file `artifact.tar`, artifact name `github-pages`;
+- "Deploy": green. If it rejects the artifact, nothing was published and the previous
+  site stays online — nothing to undo; report the message of that step;
+- the run's log, searched for `history_`: no hit;
+- the site: `about.html` has the new paragraph "Was das nicht heisst: …";
+  `compare.html` with one athlete, axis "Gänge", shows the line per Gang. For the first
+  minutes a browser that visited before may show the note "Gänge nicht einzeln gezeigt …
+  nicht vom selben Datenstand" — it still holds a file of the previous site; a reload
+  clears it.
+
+**B. New festival results (crawl locally)** — needs your machine, on an up-to-date
+`main` (`git switch main && git pull`). New festivals are fetched here, the state is
+uploaded and the same deploy workflow rebuilds the site from it.
 
 ```bash
 python -m src.cli all                                # incremental crawl + rebuild
@@ -339,9 +422,14 @@ rm -r ~/schwingen-state
 gh workflow run deploy_pages.yml && gh run watch
 ```
 
-The new bundle is uploaded before the old one is removed, so a failed upload leaves the
-previous state in place. Should two bundles ever be on the release, the deploy run
-imports the newer one (by its creation time) and removes both after its own upload.
+(`./scripts/deploy_local.sh --no-serve` does the first line including the virtual
+environment.) The upload is the whole state, about 500 MB. The new bundle is uploaded
+before the old one is removed, so a failed upload leaves the previous state in place.
+Should two bundles ever be on the release, the deploy run imports the newer one (by its
+creation time) and removes both after its own upload. If `check-site` fails locally,
+read its numbers before anything is uploaded — see "Afterwards".
+
+**After either:** `gh release view pipeline-state --json isDraft` must still say `true`.
 
 **Afterwards**
 
