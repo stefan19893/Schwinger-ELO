@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-04
 **Current phase:** Phase 8 (comparison chart by bouts, age or career season) built and reviewed on branch `phase-8-compare-by-bouts` (local commits only), waiting for the owner. Phases 0–7 are done and on `main`. **The site is published** (2026-10-04): https://stefan19893.github.io/Schwinger-ELO/ — `PUBLISH_ENABLED=true` set by the owner, first `deploy_pages.yml` run green (09:09 UTC), built from `main` at 6a341d7 (PR #9: no crawl schedule), i.e. without Phase 8.
-**Next action:** WAITING FOR THE OWNER — (1) confirm the five design choices in the last handoff note of `phase-8-compare-bouts-axis.md` and (review 2026-10-04: every exit criterion passes, no must-fix in code; the reviewer's six nice-to-haves are fixed, review fixes F1–F7 in the phase file, 1,103 tests green) — new for the owner: the rule for the "not the start of his career" note (first two seasons of the data, or first festival at 20 or older); (2) push / merge the branch; (3) the owner starts `deploy_pages.yml` again to publish it. Updates of the data are crawled locally (README, "Updating the site"); GitHub never crawls on its own. `./scripts/go_live.sh --off` stops the automation. Open from the README list "Verify after the first push": the release is still a draft with one bundle, no athlete name in the run log.
+**Next action:** Phase 9 task 1 (`phase-9-per-gang.md`, elo-modeler) on branch `phase-9-per-gang`, stacked on Phase 8. In parallel, branch `quiet-pages-artifact` (from `main`, separate worktree): the Pages packing step must not list file names (= published athlete ids) in the Actions log. Phase 8 = PR #10 (open, CI green): the owner merges it and starts `deploy_pages.yml` to publish it (README, "Updating the site"). The site is live; GitHub never crawls on its own; `./scripts/go_live.sh --off` stops the automation.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -16,6 +16,7 @@
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | done |
 | 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | done |
 | 8 | Comparison by bouts, age, career season | — (feature request) | `phase-8-compare-bouts-axis.md` | in review |
+| 9 | Rating change per Gang | — (feature request) | `phase-9-per-gang.md` | in progress |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 
