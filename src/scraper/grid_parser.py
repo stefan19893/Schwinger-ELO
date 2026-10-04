@@ -44,6 +44,9 @@ _STATUS_RE = re.compile(r"^(?:[ST]?\*{1,3}|[STEKk]|EK|TK|KK|BK|GK)$")
 _GLUED_NUMBER_RE = re.compile(r"^(\d{1,3})([A-ZÄÖÜÉÈÀ]{2,}.*)$")              # "265WETZEL"
 _GLUED_SIGN_RE = re.compile(r"^([A-ZÄÖÜÉÈÀ][A-ZÄÖÜÉÈÀ\-]+)([+o\-][EKk]?)$")   # "ROGERoK"
 _INT_RE = re.compile(r"^\d{1,3}$")
+# a mark printed without space before the total: "S78.50" (S = the two athletes of the
+# Schlussgang, Heller sheets from 2007), "S*55.50" (status)
+_GLUED_TOTAL_RE = re.compile(r"^([A-Z]|[ST]?\*{1,3})([2-7]\d[.,]\d{2})$")
 _PL_RE = re.compile(r"^Pl\.?$")
 _ASSOC_RE = re.compile(r"^(?:ISV|NOSV?|NWSV?|SWSV?|BKSV|BE)$")
 _PARTICLES = {"von", "van", "de", "der", "di", "da", "del", "della", "la", "le", "du", "dos",
@@ -123,9 +126,17 @@ def _split_stars(words: Sequence[Word]) -> list[Word]:
 
 def _unglue(words: Sequence[Word]) -> list[Word]:
     """Capitals sheets print without space where a column overflows: "265WETZEL",
-    "ROGERoK", "ANDIo"."""
+    "ROGERoK", "ANDIo". A mark glued to a total is taken off it, or the header cell is
+    not seen and its Gänge fall into the athlete to the left ("S78.50": the Schlussgang
+    mark is dropped, as the text layouts do; stars stay as the status)."""
     out: list[Word] = []
     for w in words:
+        m = _GLUED_TOTAL_RE.match(w.text)
+        if m:
+            if "*" in m.group(1):
+                out.append(Word(m.group(1), w.x0, w.x0))
+            out.append(Word(m.group(2), w.x0, w.x1))
+            continue
         m = re.match(r"^([1-9]\d{0,2}[a-z]{0,2}\.\))(\S.*)$", w.text)      # "4b.)Graber"
         if m:
             out.append(Word(m.group(1), w.x0, w.x0))

@@ -70,6 +70,7 @@ EXPECTED = [
     (26537, "grid", "ok", 12, 42, 64, 56, 72, 12),          # "58 . 25"
     (26657, "grid", "ok", 33, 79, 165, 132, 198, 33),       # total first, three abreast
     (26638, "grid", "ok", 12, 36, 59, 46, 72, 12),          # header year misprinted
+    (26546, "grid", "ok", 24, 83, 158, 124, 192, 24),       # ESAF 2007: "S78.50"
 ]
 
 
@@ -163,6 +164,59 @@ def test_esaf_2004_columns_are_independent() -> None:
     # printed "d" at the top of the third column: the letter is completed from the
     # numbered rank with the same total (8.a in the second column), not from "6." beside it
     assert athlete(res, "Oesch Christian")["rank"] == "8d"
+
+
+def test_esaf_2007_schlussgang_mark_glued_to_the_total() -> None:
+    """"1. Name ** S78.50 5.a Name ** 76.50": the totals of the two athletes of the
+    Schlussgang carry an "S" without space. Read as one cell, the row gave the first
+    column the total and the eight Gänge of the second: sixteen entries alternating
+    between two athletes, of which only every second one found its mirror."""
+    fest, _text, rows = load(26546)
+    sheet = parse_grid(rows, fest.year)
+    assert [(b.rank, b.points, len(b.entries)) for b in sheet.blocks[:4]] == \
+        [("1", 78.5, 8), ("5a", 76.5, 8), ("8c", 75.75, 8), ("2", 77.5, 8)]
+    res = parse(26546)
+    assert res.gang_count == 8
+    assert Counter(a["n_entries"] for a in listed(res)) == {8: 24}
+    assert not res.rejects and not any(a["points_mismatch"] for a in listed(res))
+    first, second = listed(res)[0], listed(res)[3]
+    for a, total in ((first, 78.5), (second, 77.5)):
+        # the mark is not a Sennenschwinger "S" and not part of the name
+        assert (a["points"], a["grade_sum"], a["status"], a["sennen_turner"]) == \
+            (total, total, "**", None)
+        mine = [b for b in res.bouts if a["athlete_raw_id"] in (b["athlete_a_id"],
+                                                                b["athlete_b_id"])]
+        assert sorted(b["gang_nr"] for b in mine) == [1, 2, 3, 4, 5, 6, 7, 8]
+    last = [b for b in res.bouts if {b["athlete_a_id"], b["athlete_b_id"]}
+            == {first["athlete_raw_id"], second["athlete_raw_id"]}]
+    assert [(b["gang_nr"], b["grade_a"], b["grade_b"], b["flags"]) for b in last] == \
+        [(8, 10.0, 8.75, "")]
+    winner = "WIN_A" if last[0]["athlete_a_id"] == first["athlete_raw_id"] else "WIN_B"
+    assert last[0]["outcome"] == winner
+
+
+def test_mark_glued_to_a_total() -> None:
+    sheet = parse_grid(_rows(
+        "Testfest, 1. Juni 2007 Statistische Tabelle",
+        "1. Muster Hans ** S58.50         2. Beispiel Urs S*57.00       3. Zeuge Max * 56.75",
+        "+ Probe Karl * 10.00             o Muster Hans ** 8.50         + Probe Karl * 9.75",
+        "+ Beispiel Urs * 10.00           + Zeuge Max * 9.75            o Beispiel Urs * 8.50",
+    ))
+    assert [(b.rank, b.name_raw, b.points, len(b.entries)) for b in sheet.blocks] == \
+        [("1", "Muster Hans **", 58.5, 2), ("2", "Beispiel Urs S*", 57.0, 2),
+         ("3", "Zeuge Max *", 56.75, 2)]
+
+
+def test_text_reading_is_kept_for_the_tables_that_mark_the_schlussgang() -> None:
+    wins = pr.marked_table_reads_as_text
+    marked = _rows("1. Muster Hans ** S58.50      2. Beispiel Urs * S57.00")
+    plain = _rows("1. Muster Hans ** 58.50       2. Beispiel Urs * 57.00")
+    assert wins("standard", (169, 904, 452), (164, 892, 450), marked)   # no margin needed
+    assert not wins("standard", (169, 904, 452), (164, 892, 450), plain)
+    assert not wins("multicol", (169, 904, 452), (164, 892, 450), marked)
+    assert not wins("standard", (279, 1744, 872), (279, 1744, 872), marked)  # tie: the table
+    assert not wins("standard", (169, 880, 452), (164, 892, 450), marked)
+    assert not pr.text_reads_better((169, 904, 452), (164, 892, 450))   # the general rule
 
 
 def test_capitals_sheet_start_numbers_and_pl_rows() -> None:

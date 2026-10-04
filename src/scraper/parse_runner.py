@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import logging
+import re
 import sqlite3
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -34,8 +35,9 @@ log = logging.getLogger("schwingen.parse")
 # Bump whenever parsing rules change so cached sheets are re-parsed.
 # v2: extra bouts, wrapped / no-grade lines, Gang count (review fixes); v3: one_sided
 # Schlussgang, interim sheets, entries_overflow, duplicate-content check; v4: sheets
-# before 2011 (positional table reader, unlisted opponents) - 2011+ results unchanged
-PARSER_VERSION = 4
+# before 2011 (positional table reader, unlisted opponents) - 2011+ results unchanged;
+# v5: a mark glued to a total ("S78.50", ESAF 2007 and Stoos 2004) - 2011+ unchanged
+PARSER_VERSION = 5
 
 _ATHLETE_COLS = ["athlete_raw_id", "fest_id", "idx", "rank", "name_raw", "name", "name_key",
                  "name_base_key", "status", "mark", "sennen_turner", "withdrawn", "points",
@@ -164,8 +166,25 @@ def parse_old(fest: Festival, text: str, rows: Sequence[Row], *,
     by_text = bp.parse_festival(text, fest.fest_id, fest.date, fest.name, **kw)
     by_grid = bp.festival_from_sheet(parse_grid(rows, fest.year), fest.fest_id, fest.date,
                                      fest.name, **kw)
-    return by_text if text_reads_better(parse_quality(by_text), parse_quality(by_grid)) \
-        else by_grid
+    tq, gq = parse_quality(by_text), parse_quality(by_grid)
+    if marked_table_reads_as_text(by_text.layout, tq, gq, rows):
+        return by_text
+    return by_text if text_reads_better(tq, gq) else by_grid
+
+
+# "S78.50": the tables of 2007-2010 that mark the two athletes of the Schlussgang on their
+# totals are the layout of 2011, which the text reading knows. There the table reading
+# has nothing to add (no residence or association next to the name) and misses the
+# athletes who left after one or two Gänge (total below 20), so the text reading is kept
+# whenever it is at least as good on both measures; on a tie the table stays.
+SCHLUSSGANG_TOTAL_RE = re.compile(r"^S[2-7]\d[.,]\d{2}$")
+
+
+def marked_table_reads_as_text(layout: str, text: tuple[int, int, int],
+                               grid: tuple[int, int, int], rows: Sequence[Row]) -> bool:
+    return layout == "standard" and text[:2] != grid[:2] \
+        and text[0] >= grid[0] and text[1] >= grid[1] \
+        and any(SCHLUSSGANG_TOTAL_RE.match(w.text) for r in rows for w in r.words)
 
 
 # The text reading replaces the table reading only when it is clearly better: this many
