@@ -1289,9 +1289,8 @@ def test_real_esaf_winners_lead_after_their_festival(real: Real) -> None:
     """After an ESAF the König is one of the three best-rated participants."""
     fests = pd.read_parquet(real.cfg.processed_dir / "festivals.parquet")
     h = real.result.history
-    # 2007 is left out: the sheet of the ESAF 2007 yields only four of the König's eight
-    # bouts (Gänge 1, 3, 5, 7 - parser, reported in phase-10-history.md)
-    for year, king in [(2004, "Abderhalden Jörg"), (2010, "Wenger Kilian"),
+    for year, king in [(2004, "Abderhalden Jörg"), (2007, "Abderhalden Jörg"),
+                       (2010, "Wenger Kilian"),
                        (2013, "Sempach Matthias"), (2016, "Glarner Matthias"),
                        (2019, "Stucki Christian"), (2022, "Wicki Joel"),
                        (2025, "Orlik Armon")]:
