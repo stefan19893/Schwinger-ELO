@@ -508,7 +508,8 @@ def _sample_db_ready(cfg: Config) -> bool:
 
 def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     """Rate all eligible bouts: data/processed/{bouts,athletes,identity_map}.parquet ->
-    ratings.parquet (history), athlete_ratings.parquet, season_ratings.parquet.
+    ratings.parquet (history), athlete_ratings.parquet, season_ratings.parquet,
+    bout_ratings.parquet (the history per bout and side).
     ``evaluate`` additionally prints the calibration / evaluation report (read-only)."""
     import time
 
@@ -730,7 +731,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("clean", "identity resolution -> data/processed/{bouts,athletes,festivals,"
                  "identity_map,bout_rejects}.parquet (reads SQLite read-only)")
     sp = add("elo", "compute ratings -> data/processed/{ratings,athlete_ratings,"
-                    "season_ratings}.parquet")
+                    "season_ratings,bout_ratings}.parquet")
     sp.add_argument("--evaluate", action="store_true", default=False,
                     help="also print the evaluation report: update modes, MoV grid, "
                          "calibration, rating drift, identity sensitivity (about a minute)")

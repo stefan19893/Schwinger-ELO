@@ -272,6 +272,37 @@ def test_damaged_bundles_are_rejected_and_leave_nothing_behind(warm: Config,
     assert not (tmp_path / "escaped").exists() and not (tmp_path / "abs.db").exists()
 
 
+def test_bundle_carries_the_per_bout_ratings(warm: Config, tmp_path: Path) -> None:
+    """Every file in processed/ travels, without being listed anywhere."""
+    assert (warm.processed_dir / "bout_ratings.parquet").is_file()
+    info = sbd.export_state(warm, tmp_path / "s.tar.gz")
+    with tarfile.open(info.path) as tar:
+        assert "processed/bout_ratings.parquet" in tar.getnames()
+    target = load_config({"data_dir": tmp_path / "restored"}, env={})
+    sbd.import_state(target, info.path)
+    assert (target.processed_dir / "bout_ratings.parquet").read_bytes() == \
+        (warm.processed_dir / "bout_ratings.parquet").read_bytes()
+
+
+def test_state_from_before_the_per_bout_ratings_still_works(warm: Config,
+                                                            tmp_path: Path) -> None:
+    """A bundle made before `elo` wrote bout_ratings.parquet: export and import accept
+    it, and the `elo` stage (part of `all --skip-crawl`) writes the file again."""
+    reference = (warm.processed_dir / "bout_ratings.parquet").read_bytes()
+    ratings = (warm.processed_dir / "ratings.parquet").read_bytes()
+    (warm.processed_dir / "bout_ratings.parquet").unlink()
+    out = tmp_path / "old.tar.gz"
+    assert cli.main(["state-export", str(out), "--data-dir", str(warm.data_dir)]) == 0
+    target = tmp_path / "restored"
+    assert cli.main(["state-import", str(out), "--data-dir", str(target)]) == 0
+    restored = load_config({"data_dir": target}, env={})
+    assert sbd.state_problems(restored) == []
+    assert not (restored.processed_dir / "bout_ratings.parquet").exists()
+    assert cli.main(["elo", "--sample", "--data-dir", str(target)]) == 0
+    assert (restored.processed_dir / "bout_ratings.parquet").read_bytes() == reference
+    assert (restored.processed_dir / "ratings.parquet").read_bytes() == ratings
+
+
 def test_export_refuses_an_incomplete_state(warm: Config, tmp_path: Path) -> None:
     out = tmp_path / "s.tar.gz"
     assert cli.main(["state-export", str(out), "--sample"]) == 1

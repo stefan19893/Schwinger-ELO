@@ -1,7 +1,7 @@
 """``python -m src.cli elo``: Parquet in, ratings out (spec §4.2 / §5).
 
 Reads ``bouts.parquet``, ``athletes.parquet`` and ``identity_map.parquet`` from
-``data/processed/`` (written by ``clean``) and writes three files next to them:
+``data/processed/`` (written by ``clean``) and writes four files next to them:
 
 * ``ratings.parquet``         the full rating history — one row per athlete and
                               festival: ``athlete_id, date, fest_id, rating_before,
@@ -16,6 +16,14 @@ Reads ``bouts.parquet``, ``athletes.parquet`` and ``identity_map.parquet`` from
                               current rank.
 * ``season_ratings.parquet``  one row per athlete and calendar year he fought in: rating
                               at the end of the year, rank among the ranked athletes.
+* ``bout_ratings.parquet``    the history at bout resolution — two rows per rated bout
+                              (one per side): ``bout_id, fest_id, date, gang_nr, side,
+                              athlete_id, opponent_id, score, expected, k, mov_lambda,
+                              delta``. ``delta`` is what the bout contributed to the
+                              athlete's rating; per athlete and festival the ``delta`` sum
+                              to ``rating_after - rating_before`` of ``ratings.parquet``
+                              (:func:`src.pipeline.elo_engine.bout_contributions`). Holds
+                              every athlete: internal state, never published as it is.
 
 Who is ranked (``ranked`` / ``rank``; everybody is *rated*):
 
@@ -39,7 +47,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-from src.pipeline.elo_engine import EloParams, EloResult, SchwingElo
+from src.pipeline.elo_engine import EloParams, EloResult, SchwingElo, bout_contributions
 from src.pipeline.export import write_parquet_atomic
 
 if TYPE_CHECKING:
@@ -50,7 +58,7 @@ log = logging.getLogger("schwingen.elo")
 NOT_A_NAME = "not_a_name"
 
 _S, _F, _B, _D = pa.string(), pa.float64(), pa.bool_(), pa.date32()
-_I16, _I32, _I64 = pa.int16(), pa.int32(), pa.int64()
+_I8, _I16, _I32, _I64 = pa.int8(), pa.int16(), pa.int32(), pa.int64()
 
 
 def _schema(*cols: tuple[str, pa.DataType, bool]) -> pa.Schema:
@@ -80,9 +88,15 @@ SEASON_RATINGS_SCHEMA = _schema(
     ("bouts_total", _I32, False), ("provisional", _B, False), ("burn_in", _B, False),
     ("ranked", _B, False), ("rank", _I32, True))
 
+BOUT_RATINGS_SCHEMA = _schema(
+    ("bout_id", _S, False), ("fest_id", _I64, False), ("date", _D, False),
+    ("gang_nr", _I8, False), ("side", _S, False), ("athlete_id", _S, False),
+    ("opponent_id", _S, False), ("score", _F, False), ("expected", _F, False),
+    ("k", _F, False), ("mov_lambda", _F, False), ("delta", _F, False))
+
 SCHEMAS: dict[str, pa.Schema] = {
     "ratings": RATINGS_SCHEMA, "athlete_ratings": ATHLETE_RATINGS_SCHEMA,
-    "season_ratings": SEASON_RATINGS_SCHEMA}
+    "season_ratings": SEASON_RATINGS_SCHEMA, "bout_ratings": BOUT_RATINGS_SCHEMA}
 
 
 @dataclass
@@ -92,6 +106,7 @@ class EloOutputs:
     athletes: pd.DataFrame
     seasons: pd.DataFrame
     paths: dict[str, Path]
+    bouts: pd.DataFrame | None = None  # bout_ratings.parquet (per bout and side)
 
 
 # --------------------------------------------------------------------------- identity
@@ -247,10 +262,12 @@ def compute(bouts: pd.DataFrame, athletes: pd.DataFrame, identity_map: pd.DataFr
 
 
 def run_elo(cfg: Config) -> EloOutputs:
-    """Compute all ratings from ``cfg.processed_dir`` and write the three outputs."""
+    """Compute all ratings from ``cfg.processed_dir`` and write the four outputs."""
     bouts, athletes, identity_map = load_inputs(cfg.processed_dir)
     result, table, seasons = compute(bouts, athletes, identity_map, cfg)
-    frames = {"ratings": result.history, "athlete_ratings": table, "season_ratings": seasons}
+    per_bout = bout_contributions(result)
+    frames = {"ratings": result.history, "athlete_ratings": table, "season_ratings": seasons,
+              "bout_ratings": per_bout}
     tables = {name: _to_table(df, SCHEMAS[name]) for name, df in frames.items()}
     paths: dict[str, Path] = {}
     for name, tab in tables.items():  # converted (validated) before any file is replaced
@@ -259,7 +276,7 @@ def run_elo(cfg: Config) -> EloOutputs:
         log.info("elo: wrote %s (%d rows, %.1f KiB)", paths[name], tab.num_rows,
                  paths[name].stat().st_size / 1024)
     return EloOutputs(result=result, ratings=result.history, athletes=table, seasons=seasons,
-                      paths=paths)
+                      paths=paths, bouts=per_bout)
 
 
 def top_table(table: pd.DataFrame, n: int = 10) -> list[str]:
