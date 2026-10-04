@@ -301,3 +301,7 @@ def test_comparison_axis_rules() -> None:
     assert "vor etwa 2016" in js and "Jahrgang unbekannt:" in js
     assert "Von keinem der ausgewählten Schwinger ist der Jahrgang bekannt" in js
     assert "Im Jahr seines ' + SE.esc(p.data.age) + '. Geburtstags" in js   # no fractional age
+    about = (WEB / "about.html").read_text(encoding="utf-8")
+    for needle in ("nach Gängen, nach Alter oder nach Karrieresaison", "nur der Jahrgang bekannt",
+                   "ab dem ersten erfassten Fest"):
+        assert needle in about, needle

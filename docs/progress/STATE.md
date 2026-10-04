@@ -1,8 +1,8 @@
 # Project State
 
 **Last updated:** 2026-10-04
-**Current phase:** Phase 8 (comparison by number of bouts) in progress on branch `phase-8-compare-by-bouts`; before that: all phases (0–7) done and on `main` (Phase 7 = PR #6, squash be3d4b3). Publication is prepared but NOT done: `PUBLISH_ENABLED` is unset.
-**Next action:** Phase 8 task 4 — about-page text, README, SPEC (`phase-8-compare-bouts-axis.md`; tasks 1–3 done, 1,102 tests green; scope extended by the owner to four axes: time, bouts, age, career season). Publication (2026-10-04): PR #9 merged (no crawl schedule), owner set `PUBLISH_ENABLED=true`; first deploy not yet started — the owner starts `deploy_pages.yml` by hand or with `./scripts/go_live.sh` (checks the preparation, asks once, sets `PUBLISH_ENABLED=true`, starts and watches the first deploy; `--check` / `--off`). Prepared 2026-10-04: site rebuilt from `main` (6,306 athletes published, 1,495 ranked, 726 withheld), deploy-guard baseline recorded, state bundle (504 MB) on the draft release `pipeline-state` (verified draft; anonymous requests get 404), Pages source = GitHub Actions. After the first deploy: README "Verify after the first push". If local data changes before going live (new crawl), re-run `check-site --record`, `state-export` and replace the bundle on the draft release.
+**Current phase:** Phase 8 (comparison chart by bouts, age or career season) in review on branch `phase-8-compare-by-bouts`; before that: all phases (0–7) done and on `main` (Phase 7 = PR #6, squash be3d4b3). Publication is prepared but NOT done: `PUBLISH_ENABLED` is unset.
+**Next action:** Phase 8 is in review: run `phase-reviewer` against `phase-8-compare-bouts-axis.md`, owner confirms the five choices listed in its last handoff note; then merge (branch `phase-8-compare-by-bouts`, local commits only). Publication (2026-10-04): PR #9 merged (no crawl schedule), owner set `PUBLISH_ENABLED=true`; first deploy not yet started — the owner starts `deploy_pages.yml` by hand or with `./scripts/go_live.sh` (checks the preparation, asks once, sets `PUBLISH_ENABLED=true`, starts and watches the first deploy; `--check` / `--off`). Prepared 2026-10-04: site rebuilt from `main` (6,306 athletes published, 1,495 ranked, 726 withheld), deploy-guard baseline recorded, state bundle (504 MB) on the draft release `pipeline-state` (verified draft; anonymous requests get 404), Pages source = GitHub Actions. After the first deploy: README "Verify after the first push". If local data changes before going live (new crawl), re-run `check-site --record`, `state-export` and replace the bundle on the draft release.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -15,7 +15,7 @@
 | 5 | Exporter & frontend | M4 | `phase-5-web.md` | done |
 | 6 | CI & deployment | M5 | `phase-6-deploy.md` | done |
 | 7 | Athlete comparison | — (feature request) | `phase-7-compare.md` | done |
-| 8 | Comparison by number of bouts | — (feature request) | `phase-8-compare-bouts-axis.md` | in progress |
+| 8 | Comparison by bouts, age, career season | — (feature request) | `phase-8-compare-bouts-axis.md` | in review |
 
 Status values: `not started` · `in progress` · `in review` · `done`
 

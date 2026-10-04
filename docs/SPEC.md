@@ -88,7 +88,7 @@ Schwinger-ELO/
 ├── web/                            # Frontend source (static pages, German UI; copied to dist/ as is)
 │   ├── index.html                  # Current ranking, season lists, highest ratings, search
 │   ├── athlete.html                # Athlete profile & career chart (?id=<athlete_id>)
-│   ├── compare.html                # Comparison of up to six athletes (?ids=<athlete_id>,<athlete_id>,...)
+│   ├── compare.html                # Comparison of up to six athletes (?ids=<athlete_id>,<athlete_id>,...[&x=gaenge|alter|saison])
 │   ├── fests.html                  # Festival list and one festival (?id=<fest_id>)
 │   ├── about.html                  # Method, source, limitations, how to report errors
 │   ├── js/
@@ -96,7 +96,7 @@ Schwinger-ELO/
 │   │   ├── index.js                # Start page views (#aktuell, #saison-YYYY, #bestwerte)
 │   │   ├── athlete.js              # Profile page
 │   │   ├── charts.js               # ECharts career chart (incl. the 1 April reversion steps)
-│   │   ├── compare.js              # Comparison page: selection in the URL, figures, chart, seasons, direct bouts, common festivals
+│   │   ├── compare.js              # Comparison page: selection in the URL, figures, chart (x axis: time, bouts, age or career season), seasons, direct bouts, common festivals
 │   │   ├── fests.js                # Festival list / festival detail
 │   │   └── about.js                # Fills the methodology page with numbers from meta.json
 │   ├── css/

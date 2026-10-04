@@ -108,7 +108,7 @@ Pages (German, static, relative URLs only, so they work under `/Schwinger-ELO/`)
 |---|---|
 | `index.html` | current ranking with Teilverband filter, season lists (`#saison-2019`), highest ratings (`#bestwerte`), search |
 | `athlete.html?id=<athlete_id>` | profile, career chart, seasons, festivals |
-| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings over time in one chart, seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
+| `compare.html?ids=<athlete_id>,<athlete_id>,…` | comparison of up to six athletes: figures side by side, ratings in one chart — over time or, with the switch above the chart, by number of bouts (`&x=gaenge`), by age (`&x=alter`, calendar year minus birth year; athletes without a known birth year are not drawn and named) or by season of the recorded career (`&x=saison`, season-end ratings); any other value of `x` shows time — seasons, direct bouts (tally and list) and common festivals. The selection is part of the address, so a comparison can be shared; an outdated id shows suggestions for that slot. Athletes who are not published by name cannot be selected and do not occur in the comparison data |
 | `fests.html`, `fests.html?id=<fest_id>` | festival list and one festival with every athlete's bouts |
 | `about.html` | method, source, known limitations, how to report errors |
 
