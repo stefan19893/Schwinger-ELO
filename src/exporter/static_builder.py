@@ -56,7 +56,10 @@ Publication switches (``src/config.py``):
     <= the age) is *withheld*: he counts in the ratings, but has no history file, no
     search entry and no rank, appears in no list, and a festival shows him without id,
     name, club, Teilverband and without any rating value (column ``anon`` = 1; record and
-    grade sum stay, they are the festival's bouts).
+    grade sum stay, they are the festival's bouts). This withholds the display, not the
+    information: his rating is calculated from public results and follows, to within a
+    point or so, from the published athletes' ``before`` / ``after`` (owner's decision of
+    2026-10-04: accepted, and said on the about page).
     Ranks are the places among the published athletes (see :func:`_published_ranks`).
 ``publish_unknown_recent_seasons``
     An athlete without a known birth year is withheld in the same way when his first

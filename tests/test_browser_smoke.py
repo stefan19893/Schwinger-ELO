@@ -246,6 +246,10 @@ def test_about_page_is_filled_from_meta(pages: dict[str, str]) -> None:
     # the age rule is explained (the sample withholds a few athletes), no contact invented
     assert "hidden" not in dom.attrs["se-minors"].get("class", "")
     assert "nicht mit Namen veröffentlicht" in dom.text["se-minors"]
+    # what the withholding does not do is said as plainly as what it does
+    assert "für sie wird keine Wertung angezeigt" in dom.text["se-minors2"]
+    assert "hidden" not in dom.attrs["se-minors3"].get("class", "")
+    assert "lassen sich aber ausrechnen" in dom.text["se-minors3"]
     assert "hidden" in dom.attrs["se-contact"]["class"] and "mailto:" not in html
     assert '<meta name="robots" content="noindex">' in html
 

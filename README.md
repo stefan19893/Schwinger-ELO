@@ -78,7 +78,7 @@ configured model). The model parameters are `elo_k_scale`, `season_reversion_del
 
 | Setting | Default | Effect |
 |---|---|---|
-| `publish_min_age` | `18` | Athletes who are not certainly 18 at the data date (data year − birth year ≤ 18) are not published by name: they count in the ratings, but have no profile, no search entry and no rank, and a festival lists them as "Jungschwinger, Name nicht veröffentlicht". Their festival rows carry no rating value. Ranks are the places among the published athletes. `0` publishes everyone. On the data of 2026-09-27: 726 athletes withheld, 525 of them otherwise ranked |
+| `publish_min_age` | `18` | Athletes who are not certainly 18 at the data date (data year − birth year ≤ 18) are not published by name: they count in the ratings, but have no profile, no search entry and no rank, and a festival lists them as "Jungschwinger, Name nicht veröffentlicht". No rating is displayed for them (their festival rows carry no rating value). **This withholds the display, not the information:** their ratings are calculated from public results and follow from the published athletes' histories (see "What you accept by opting in"). Ranks are the places among the published athletes. `0` publishes everyone. On the data of 2026-09-27: 726 athletes withheld, 525 of them otherwise ranked |
 | `publish_unknown_recent_seasons` | `3` | Athletes **without a known birth year** are withheld in the same way when their first season is one of the last three of the data year (2024–2026): they may be minors (97.7 % of debutants are at least 16; a 16-year-old debutant is not certainly 18 for three data years). 8 of the 726. The 1,737 athletes without a birth year who started earlier are published. `0` switches the rule off; the `--sample` demo runs without it |
 | `site_noindex` | `True` | `<meta name="robots" content="noindex">` on every page and a `robots.txt`. Under `<user>.github.io/Schwinger-ELO/` crawlers do not read that `robots.txt` (only the one at the root of the host counts) and the JSON data files cannot carry the tag — the switch keeps the pages out of search results, it is not access control |
 | `contact_email` | `""` | When set, the about page shows the address as a non-public route for corrections and objections beside the GitHub issues link. Empty: nothing is shown |
@@ -198,9 +198,11 @@ Nothing below has been done; each step is yours.
 - [ ] **Rows of withheld athletes.** A festival still lists them as "Jungschwinger, Name
       nicht veröffentlicht" with wins / draws / losses, grade sum and bouts (these are
       also their opponents' bouts), without name, club, Teilverband, birth year and
-      without any rating. Laid beside the linked schlussgang.ch list, such a row can be
-      matched to a person — the names are public there. Accept, or ask for these rows to
-      be dropped (which also removes those bouts from the opponents' lists).
+      without any rating shown. Laid beside the linked schlussgang.ch list, such a row can
+      be matched to a person — the names are public there — and the rating that is not
+      shown can be worked out (next list). Accept, or ask for these rows to be dropped
+      (which also removes those bouts from the opponents' lists, and still does not hide
+      the ratings: the opponents' rating changes remain).
 - [ ] **`site_noindex`** (default on) — and its limits: the `noindex` tag covers the five
       HTML pages only. `robots.txt` is read by crawlers only at the root of a host; under
       `<user>.github.io/Schwinger-ELO/` it has no effect, and the JSON data files (names,
@@ -235,9 +237,20 @@ test fails if a workflow sets one).
   fails, the next run compares against the already accepted site and deploys the change
   without asking again. (Recording after the deployment would need a second 0.5 GB
   round trip of the state from a third job.)
-- **Withheld athletes are not invisible.** Their anonymous festival rows can be matched
-  against the source list, and their rating can be estimated from the rating changes of
-  their published opponents (stated on the site's about page).
+- **Withheld athletes are not named and no rating is shown for them — but they are not
+  hidden, and the site says so** (about page; decision of 2026-10-04). Their anonymous
+  festival rows can be matched against the source list. Their ratings are calculated
+  from public results like everyone's, and they can be worked out: measured with the
+  published files and the public formula only, the pre-festival rating of every withheld
+  athlete who met a published one (722 of the 726) follows from the published athletes'
+  histories with a median error of 0.7 rating points (96 % within 5); and since this
+  repository and the sources are public, running the pipeline with `publish_min_age = 0`
+  gives all of them exactly. The comparison page also prints, per festival, what the
+  bouts against unnamed opponents contributed together to a published athlete's rating.
+  Closing this would mean coarser or missing ratings for the published athletes
+  (rounding to 10 points still leaves a median error of 58 against 96 for a blind
+  guess) — not done; the filter keeps minors out of the lists, the search and the
+  rankings, which is what it is for.
 - **The age filter depends on the source's birth years.** `check-site` fails when the
   number of withheld athletes drops, the number of published ones jumps or the birthdays
   disappear from the portraits (tolerances in `src/config.py`), and each January it lets

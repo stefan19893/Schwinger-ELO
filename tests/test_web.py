@@ -196,6 +196,16 @@ def test_publication_switches_in_the_pages() -> None:
     for needle in ("pub.min_age > 0", "withheld_from_birth_year", "c.withheld_ranked",
                    "Jahrgang nicht bekannt", "nur die veröffentlichten Schwinger"):
         assert needle in about_js, needle
+    # the page promises no more than the withholding keeps (owner's decision 2026-10-04):
+    # not named, no profile, no rating shown - but the ratings can be worked out
+    assert '<p id="se-minors3" class="hidden"></p>' in about
+    for needle in ("für sie wird keine Wertung angezeigt", "Verborgen sind diese Schwinger damit nicht",
+                   "aus den öffentlichen Resultaten berechnet", "lassen sich aber ausrechnen",
+                   "show('se-minors3');"):
+        assert needle in about_js, needle
+    for gone in ("jede Wertungszahl", "ungefähr", "liesse sich nur verhindern"):
+        assert gone not in about_js, gone
+    assert "für ihn wird keine Wertung angezeigt" in app and "ohne Zahlen zur Wertung" not in app
     # the e-mail route: no address in the sources, set as text / href from meta.contact
     assert '<p id="se-contact" class="hidden">' in about and "mailto:" not in about
     assert "@" not in about.split('id="se-contact"')[1].split("</p>")[0]
