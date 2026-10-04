@@ -53,7 +53,7 @@ python -m src.cli COMMAND [options]
 | `clean` | Identity resolution → `data/processed/*.parquet` |
 | `elo` | Ratings → `ratings.parquet`, `athlete_ratings.parquet`, `season_ratings.parquet`, `bout_ratings.parquet` (rating change per bout). `--evaluate` also prints the evidence report behind the model parameters (one to two minutes) |
 | `build` | Static site → `dist/`. Exits 1 without rating data; `--allow-empty` writes pages without content (never for a deployment) |
-| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one. `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
+| `check-site` | Deploy guard: exits 1 on an empty, incomplete or shrunken site in `dist/`, compared with the last accepted `meta.json` (`data/published_meta.json`) — and on a site that publishes more athletes or withholds fewer than that one (an age filter that lost its birth years). Never deployable, whatever the option: a site whose data files (rankings, season and all-time lists, festival rows, opponent lists in `data/bouts`, namesakes) name an athlete id that is not in the search index `athletes.json`, or whose per-athlete files do not match it one to one; a file in `data/bouts` that holds anything beyond its contract (an extra key, a row that is not seven values, an opponent index outside its list, a name that is not the search index's, more rated rows at a festival than the athlete's history counts bouts) — such a file could say something about a bout against an athlete who is not published; and history or bouts files whose `build` stamp is not `meta.json`'s. Reads every data file (real data: 14,400 files in about 1.5 s). `--record` stores a passed site as the new baseline, `--accept-changes` lets an intended change pass once, `--baseline FILE` |
 | `pack-site OUTPUT` | Pack `dist/` into the tar file GitHub Pages deploys (uncompressed; hidden files left out, as `actions/upload-pages-artifact` does) **without listing its files** — they are named after athletes, and a workflow log is public. Logs counts and sizes only. Exits 1 on a missing site, on a symbolic link or special file in it, on an archive of 1 GB or more, and when `OUTPUT` lies inside `dist/`. Always packs the site directory; there is no option for another source |
 | `all` | `crawl → parse → clean → elo → build`. `--skip-crawl` leaves the crawl out |
 | `serve` | Serve `dist/` at `http://localhost:8000` (`--port`, `--host`) |
@@ -157,7 +157,7 @@ Three workflows:
 |---|---|---|---|
 | `ci.yml` | push to `main`, pull requests | install (Python 3.11: `requirements.txt`; 3.14: the hashed `requirements-lock.txt`), `pytest` (incl. the browser smoke test), sample build, `check-site --sample`. No request to schlussgang.ch, publishes nothing | no |
 | `deploy_pages.yml` | by hand | restore the state, rebuild offline (`all --skip-crawl`), deploy guard, save the state, pack the site (`pack-site`), deploy to Pages. No crawl | **yes** |
-| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site) | **yes** |
+| `scrape_and_update.yml` | by hand (no schedule) | restore the state, incremental crawl, rebuild, deploy guard, save the state, pack the site (`pack-site`), deploy. Not needed when you crawl locally — see [Updating the site](#updating-the-site) | **yes** |
 
 "Opt-in" is the repository variable `PUBLISH_ENABLED`. Unless it is exactly `true`, every
 job of the two publishing workflows is skipped: no crawl, no build, no deployment — also
@@ -383,6 +383,27 @@ The run rebuilds the site from the state bundle on the draft release with the co
 `main`; it makes no request to schlussgang.ch. If the change makes the site smaller or
 publishes more athletes on purpose (for example another `publish_min_age`), the deploy
 guard stops the run: start it once more with `accept_changes` ticked.
+
+**The next deployment is the first one that packs the site with `pack-site`** (the one
+of 2026-10-04 used `actions/upload-pages-artifact`), and the first with the comparison by
+Gänge. `pack-site` was run locally on the real build (14,446 files, a tar of 114 MB, one
+log line, no file name), but the three steps "Pack the site" → "Upload the Pages
+artifact" → "Deploy" have not run on GitHub yet. Look at, in this order:
+
+- "Check the built site (deploy guard)": `check-site: ok` with the athlete counts you
+  know (6,306 published, 726 withheld on the data of 2026-09-27); no `accept_changes`
+  needed — the counts do not change with this release;
+- "Pack the site": one line with counts and sizes ("… files in … directories, …; file
+  names are not logged");
+- "Upload the Pages artifact": one file `artifact.tar`, artifact name `github-pages`;
+- "Deploy": green. If it rejects the artifact, nothing was published and the previous
+  site stays online — nothing to undo; report the message of that step;
+- the run's log, searched for `history_`: no hit;
+- the site: `about.html` has the new paragraph "Was das nicht heisst: …";
+  `compare.html` with one athlete, axis "Gänge", shows the line per Gang. For the first
+  minutes a browser that visited before may show the note "Gänge nicht einzeln gezeigt …
+  nicht vom selben Datenstand" — it still holds a file of the previous site; a reload
+  clears it.
 
 **B. New festival results (crawl locally)** — needs your machine, on an up-to-date
 `main` (`git switch main && git pull`). New festivals are fetched here, the state is
