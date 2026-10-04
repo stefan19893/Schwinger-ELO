@@ -172,6 +172,13 @@ def _fest_ids(obj: dict[str, Any], stem: str) -> list[Any]:
 def _bout_file_ids(obj: dict[str, Any], stem: str) -> list[Any]:
     if f"bouts_{obj['id']}" != stem:
         raise ValueError("the file holds another athlete's bouts")
+    # the opponents' names stand next to their ids: one name per id, nothing else (a
+    # name without an id could be anybody's and would escape the id check below)
+    names, unc = obj["names"], obj["unc"]
+    if len(names) != len(obj["opps"]) or not all(isinstance(n, str) and n for n in names):
+        raise ValueError("names do not match the opponent list")
+    if not all(type(i) is int and 0 <= i < len(names) for i in unc):
+        raise ValueError("unc is not a list of opponent indices")
     return [obj["id"], *obj["opps"]]
 
 

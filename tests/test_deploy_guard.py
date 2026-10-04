@@ -406,7 +406,8 @@ def _set_first_id(table: dict[str, Any], value: Any) -> None:
 
 GHOST = "niemand-geheim-p0"          # an id that is not in the search index
 REFERENCES = {
-    "opponent list": ("bouts", lambda o: o["opps"].append(GHOST)),
+    # (an id without a name is a broken shape, see SHAPES below: here id and name are added)
+    "opponent list": ("bouts", lambda o: (o["opps"].append(GHOST), o["names"].append("X Y"))),
     "ranking row": ("rankings_latest.json", lambda o: _set_first_id(o, GHOST)),
     "all-time row": ("alltime_top200.json", lambda o: _set_first_id(o, GHOST)),
     "season row": ("seasons.json", lambda o: _set_first_id(o["seasons"][0], GHOST)),
@@ -414,8 +415,34 @@ REFERENCES = {
         s for s in o["seasons"] if s["peak"])["peak"].update(id=GHOST)),
     "festival row": ("fests", lambda o: _set_first_id(o["athletes"], GHOST)),
     "namesake": ("history", lambda o: o["namesakes"].append({"id": GHOST, "unc": 0})),
-    "not a string": ("bouts", lambda o: o["opps"].append(["x"])),
+    "not a string": ("bouts", lambda o: (o["opps"].append(["x"]), o["names"].append("X Y"))),
 }
+
+
+SHAPES = {
+    "a name without an id": lambda o: o["names"].append("Muster Hans"),
+    "a name that is no text": lambda o: o["names"].__setitem__(0, None),
+    "names missing": lambda o: o.pop("names"),
+    "marker outside the list": lambda o: o["unc"].append(len(o["opps"])),
+}
+
+
+@pytest.mark.parametrize("case", sorted(SHAPES))
+def test_opponent_names_must_match_the_opponent_ids(built: Path, tmp_path: Path,
+                                                    case: str) -> None:
+    """A comparison file names its opponents: exactly one name per id. A name without an
+    id would pass the id check, so the shape itself is fatal."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    target = next(p for p in sorted((dist / "data" / "bouts").iterdir())
+                  if json.loads(p.read_bytes())["opps"])
+    _edit(target, SHAPES[case])
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 1, rep.fatal
+    assert rep.fatal[0].startswith("data/bouts: 1 file(s) missing, unreadable or not in the "
+                                   "expected shape"), rep.fatal
 
 
 @pytest.mark.parametrize("case", sorted(REFERENCES))

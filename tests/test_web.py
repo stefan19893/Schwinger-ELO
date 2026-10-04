@@ -116,7 +116,7 @@ def test_scripts_only_fetch_files_the_builder_writes() -> None:
     compare = (WEB / "js" / "compare.js").read_text(encoding="utf-8")
     assert f"B_UNRATED = {sb.B_UNRATED}" in compare
     # compare.js reads the bout rows by position
-    assert sb.BOUT_SIDE_COLS == ["gang", "opp", "res", "g", "go", "flags"]
+    assert sb.BOUT_SIDE_COLS == ["gang", "opp", "res", "g", "go", "flags", "d"]
     assert "row = [gang, opp, res, g, go, flags]" in compare
     assert sb.OTHER_FEST_COLS == ["id", "name", "date", "cat"]
     # the column names the scripts read exist in the contracts
