@@ -358,6 +358,67 @@ def test_comparison_axes(pages: dict[str, str], site: Path) -> None:
     assert "Erst ein Schwinger ausgewählt" in season.text["se-view"]
 
 
+def _starts(rows: list[list]) -> int:
+    return int(rows[0][0][:4])
+
+
+def test_comparison_axis_caveats(browser: str, site: Path, base_url: str, tmp_path: Path) -> None:
+    """The caveats of the new axes follow the selection (review fixes): who gets the "not
+    the start of his career" note, the sentence on the years before 2016, a single season,
+    and a site whose meta.json names no first season."""
+    data = site / SUBPATH / "data"
+    meta = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+    heads = [json.loads(p.read_text(encoding="utf-8")) for p in sorted((data / "history").iterdir())]
+
+    def truncated(h: dict) -> bool:          # the rule of compare.js, written out again
+        y = _starts(h["history"]["rows"])
+        return y < meta["first_season"] + 2 or (h["by"] is not None and y - h["by"] >= 20)
+
+    noted = next((h for h in heads if truncated(h)), None)
+    plain = next((h for h in heads if not truncated(h)
+                  and h["history"]["rows"][0][0] >= "2016-01-01"), None)
+    single = next((h for h in heads if len(h["seasons"]["rows"]) == 1), None)
+    urls = {}
+    if noted:
+        urls["noted"] = base_url + f"compare.html?ids={noted['id']}&x=gaenge"
+    if plain:
+        urls["plain"] = base_url + f"compare.html?ids={plain['id']}&x=gaenge"
+    if single:
+        urls["single"] = base_url + f"compare.html?ids={single['id']}&x=saison"
+    # the same site with a meta.json that names no first season
+    other = tmp_path / "site" / SUBPATH
+    shutil.copytree(site / SUBPATH, other)
+    meta.pop("first_season")
+    (other / "data" / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    httpd, url = _serve(tmp_path / "site")
+    try:
+        some = (noted or heads[0])["id"]
+        urls["no-first"] = url + f"compare.html?ids={some}&x=gaenge"
+        urls["no-first-time"] = url + f"compare.html?ids={some}"
+        got = _load_all(browser, urls, tmp_path / "profiles")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    for name, html in got.items():
+        assert page_problems(html) == [], name
+        assert "canvas" in Dom(html).tags, name
+    text = {name: Dom(html).text["se-view"] for name, html in got.items()}
+    note = "nicht zwingend der erste der Laufbahn"
+    if noted:
+        assert note in text["noted"] and "sicher ist das nicht" in text["noted"]
+        assert f"erstes erfasstes Fest {_starts(noted['history']['rows'])}" in text["noted"]
+    if plain:
+        assert note not in text["plain"]
+        assert "heisst nicht gleiche Zeit." in text["plain"] and "vor etwa 2016" not in text["plain"]
+    if single:
+        assert "Wertung am Saisonende" in text["single"]
+    # without the first season: said in a note on the new axes, nothing in time mode
+    missing = "Der Beginn der Daten konnte nicht gelesen werden"
+    assert missing in text["no-first"] and missing not in text["no-first-time"]
+    assert "Die Daten beginnen" not in text["no-first"]
+    assert sum(1 for k in ("noted", "plain", "single") if k in urls) >= 2    # the sample has such athletes
+
+
 def test_withheld_athletes_appear_without_name(browser: str, site: Path, base_url: str,
                                                tmp_path: Path) -> None:
     data = site / SUBPATH / "data"

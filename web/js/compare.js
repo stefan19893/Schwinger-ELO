@@ -29,6 +29,10 @@
   /* ?x= value per axis; time has none. Only these fixed values are ever accepted. */
   var X_PARAM = { bouts: 'gaenge', age: 'alter', season: 'saison' };
   var firstSeason = null;      // meta.first_season, for the caveats of the axes
+  var metaState = 'pending';   // pending | ok | missing (meta.json failed or names no first season)
+  var scaleNoted = false;      // the scale note of caveats() is on the page
+  var EARLY_SEASONS = 2;       // the first seasons of the data are thin: a debut there may be none
+  var ADULT_AGE = 20;          // first recorded in the year of this birthday or later: likely not a debut
   var chart = null;
 
   /* Colour-blind-safe set (after Okabe and Ito), one variant per colour scheme; every
@@ -123,7 +127,7 @@
       }).catch(function (err) {
         e.status = err.status === 404 ? 'missing' : 'error';
         e.error = err;
-      }).then(function () { e.pending = false; render(); });
+      }).then(function () { e.pending = false; renderLoaded(); });
     });
     render();
   }
@@ -399,6 +403,7 @@
           ' Festen liess sich nicht sicher entscheiden, welcher Namensvetter angetreten ist. Verlauf, Bilanz und direkte Gänge können Gänge einer anderen Person enthalten.'));
       }
     });
+    scaleNoted = false;
     if (list.length < 2) { return out.join(''); }
     /* by season: two careers that touch in one year are not "apart" */
     var spans = list.map(function (e) {
@@ -427,6 +432,7 @@
     var ended = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date < SCALE_SETTLED; });
     var late = list.some(function (e) { return e.rows.length && e.rows[e.rows.length - 1].date >= SCALE_SETTLED; });
     if (mixed || (ended && late)) {
+      scaleNoted = true;
       out.push(SE.note((mixed ? '<strong>Bestwerte aus verschiedenen Jahren sind nicht direkt vergleichbar.</strong> ' : '') +
         'Die Skala wächst bis etwa 2016 noch an: Wertungen aus den Jahren 2011 bis 2015 liegen systematisch tiefer als spätere, ' +
         'unabhängig davon, wer besser war. Verlässlich vergleichen lässt sich, wer zur selben Zeit höher stand. ' +
@@ -551,8 +557,12 @@
     if (ui.x === 'season') {
       return { from: lo, to: hi, all: 'Alle Saisons', label: 'Gemeinsame Saisons 1–' + SE.esc(hi), aria: 'Bereich der Saisons' };
     }
-    return { from: lo, to: hi, all: 'Ganzes Alter', label: 'Gemeinsames Alter ' + SE.esc(Math.floor(lo)) + '–' + SE.esc(Math.floor(hi)), aria: 'Bereich des Alters' };
+    /* whole years only; an overlap inside one calendar year is that one age, not "22–22" */
+    var a = Math.floor(lo), b = Math.floor(hi);
+    return { from: lo, to: hi, all: 'Ganzes Alter', label: 'Gemeinsames Alter ' + SE.esc(a) + (b > a ? '–' + SE.esc(b) : ''), aria: 'Bereich des Alters' };
   }
+
+  var MIN_SEASONS = 5;
 
   function seasonLabel(k) { return SE.esc(k) + '. erfasste Saison'; }
 
@@ -623,9 +633,12 @@
     if (mode !== 'time') {
       xAxis.type = 'value';
       xAxis.minInterval = 1;
-      xAxis.min = mode === 'bouts' ? 0 : mode === 'season' ? 1 : function (v) { return Math.floor(v.min); };
-      xAxis.max = mode === 'age' ? function (v) { return Math.ceil(v.max); } : 'dataMax';
-      xAxis.axisLabel.formatter = function (v) { return String(v) + (mode === 'season' ? '.' : ''); };
+      /* career seasons: from 0 (no label: there is no season 0) over at least five seasons,
+       * so a first season is never on the border of the chart */
+      xAxis.min = mode === 'age' ? function (v) { return Math.floor(v.min); } : 0;
+      xAxis.max = mode === 'age' ? function (v) { return Math.ceil(v.max); }
+        : mode === 'season' ? function (v) { return Math.max(v.max, MIN_SEASONS); } : 'dataMax';
+      xAxis.axisLabel.formatter = function (v) { return mode !== 'season' ? String(v) : v < 1 ? '' : String(v) + '.'; };
       zoom.labelFormatter = function (v) { return String(Math.round(v)); };
     }
     return {
@@ -684,54 +697,88 @@
 
   function names(list) { return list.map(function (e) { return SE.esc(plainName(e)); }).join(', '); }
 
-  /* The athletes whose recorded career begins with the data: what came before is
-   * unknown. Empty until meta.json has said which season is the first. */
-  function fromTheStart(list) {
-    if (firstSeason === null) { return []; }
+  /* Year of the first history row: where every curve of the chart starts. */
+  function startYear(e) { return e.rows.length ? Number(e.rows[0].date.slice(0, 4)) : null; }
+
+  /* The athletes whose record probably does not begin with their career. Two signs, either
+   * is enough: the first festival lies in the first seasons of the data (they are thin, so
+   * a "debut" there is often only the first sheet that was found), or it lies in the year
+   * of his 20th birthday or later (active athletes usually start in their teens). Neither
+   * proves earlier bouts; the note says "likely". Without meta.json only the second sign
+   * can be read. */
+  function likelyTruncated(list) {
     return list.filter(function (e) {
-      var s = e.h.seasons.rows.length ? SE.table(e.h.seasons)[0].season : e.h.first;
-      return Math.min(s, e.h.first || s) === firstSeason;
+      var y = startYear(e);
+      if (y === null) { return false; }
+      return (firstSeason !== null && y < firstSeason + EARLY_SEASONS) || (hasBirthYear(e) && y - e.h.by >= ADULT_AGE);
     });
   }
 
-  var ERAS = 'Gleiche Stelle auf der Achse heisst nicht gleiche Zeit: Wertungen aus den Jahren vor etwa 2016 liegen systematisch tiefer ' +
-    '(<a class="se-link" href="about.html#grenzen">mehr dazu</a>).';
+  /* "Name (erstes erfasstes Fest 2013, im Jahr seines 24. Geburtstags)" */
+  function startText(e) {
+    var y = startYear(e);
+    return SE.esc(plainName(e)) + ' (erstes erfasstes Fest ' + SE.esc(y) +
+      (hasBirthYear(e) && y - e.h.by >= ADULT_AGE ? ', im Jahr seines ' + SE.esc(y - e.h.by) + '. Geburtstags' : '') + ')';
+  }
+
+  /* Always: the axis aligns different years. The scale caveat only when somebody drawn
+   * has a festival from the years of the growing scale, and not a second time when the
+   * scale note stands above the chart. */
+  function eras(shown) {
+    var old = shown.some(function (e) { return e.rows.length && e.rows[0].date < SCALE_SETTLED; });
+    return 'Gleiche Stelle auf der Achse heisst nicht gleiche Zeit' + (!old ? '.'
+      : scaleNoted ? ' (siehe den Hinweis zur Skala oben).'
+        : ': Wertungen aus den Jahren vor etwa 2016 liegen systematisch tiefer (<a class="se-link" href="about.html#grenzen">mehr dazu</a>).');
+  }
 
   /* Caption and caveats of the three axes that are not calendar time; a caveat only
    * when it applies to the selection. */
   function axisNotes(list, shown) {
-    var p = '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">', early = fromTheStart(shown), html = '';
+    var p = '<p class="mt-1 text-xs text-stone-500 dark:text-stone-400">', early = likelyTruncated(shown), html = '';
+    var one = early.length === 1;
+    /* what is known, and what is only likely */
+    var begin = (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
+      early.map(startText).join(', ') + ': ';
     if (ui.x === 'bouts') {
       html = p + 'Waagrecht: Anzahl gewerteter Gänge seit dem ersten erfassten Fest – so stehen die Laufbahnen nach Erfahrung nebeneinander statt nach Datum. ' +
         'Punkt = Wertung nach einem Fest, eingetragen bei seinem letzten Gang (antippen für Details); die Wertung ändert sich nur von Fest zu Fest, die Linie verbindet die Punkte. ' +
         'Gestrichelt senkrecht: Rückführung Richtung 1500 am Saisonwechsel (1. April) zwischen zwei Festen, gehört zu keinem Fest. ' +
-        'Alle beginnen beim Startwert 1500. ' + ERAS + ' Unten lässt sich der Bereich eingrenzen.</p>';
+        'Alle beginnen beim Startwert 1500. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
       if (early.length) {
-        html += '<div class="mt-2">' + SE.note('<strong>«Gang 1» ist der erste erfasste Gang, nicht zwingend der erste der Laufbahn.</strong> Die Daten beginnen ' +
-          SE.esc(firstSeason) + '. ' + names(early) + (early.length === 1 ? ' trat schon in dieser ersten Saison an und hatte' : ' traten schon in dieser ersten Saison an und hatten') +
-          ' womöglich bereits Gänge davor, die hier fehlen. Zählung und Startwert 1500 beginnen trotzdem beim ersten erfassten Fest: ' +
-          'die ersten Gänge im Diagramm zeigen dann nicht den Anfang der Laufbahn, sondern wie die Wertung vom Startwert aus aufholt.', 'info') + '</div>';
+        html += '<div class="mt-2">' + SE.note('<strong>«Gang 1» ist der erste erfasste Gang, nicht zwingend der erste der Laufbahn.</strong> ' + begin +
+          'Wahrscheinlich ' + (one ? 'hatte er' : 'hatten sie') + ' schon Gänge davor, die nicht erfasst sind – sicher ist das nicht. ' +
+          'Zählung und Startwert 1500 beginnen in jedem Fall beim ersten erfassten Fest; die ersten Gänge im Diagramm zeigen dann nicht den Anfang der Laufbahn, ' +
+          'sondern wie die Wertung vom Startwert aus aufholt.', 'info') + '</div>';
       }
     } else if (ui.x === 'season') {
       html = p + 'Waagrecht: die wievielte Saison seit dem ersten erfassten Fest (nach Kalenderjahren gezählt). Punkt = Wertung am Saisonende, wie in der Tabelle «Saisons» (antippen für Details); ' +
         'hohler Punkt = Saison ohne Platz in der Saisonrangliste (zu wenige Gänge oder Saison ohne Rangierung). ' +
         'Gestrichelt: Saisons ohne erfasstes Fest dazwischen – sie zählen als Jahr der Laufbahn, haben aber keinen Wert. ' +
-        'Der Verlauf innerhalb einer Saison fehlt in dieser Ansicht. ' + ERAS + ' Unten lässt sich der Bereich eingrenzen.</p>';
+        'Der Verlauf innerhalb einer Saison fehlt in dieser Ansicht. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
       if (early.length) {
-        html += '<div class="mt-2">' + SE.note('<strong>«1. Saison» ist die erste erfasste Saison, nicht zwingend die erste der Laufbahn.</strong> Die Daten beginnen ' +
-          SE.esc(firstSeason) + '. ' + names(early) + (early.length === 1 ? ' trat schon in dieser Saison an und kann' : ' traten schon in dieser Saison an und können') +
-          ' davor bereits Saisons bestritten haben, die hier fehlen.', 'info') + '</div>';
+        html += '<div class="mt-2">' + SE.note('<strong>«1. Saison» ist die erste erfasste Saison, nicht zwingend die erste der Laufbahn.</strong> ' + begin +
+          'Wahrscheinlich ' + (one ? 'hat er' : 'haben sie') + ' davor schon Saisons bestritten, die nicht erfasst sind – sicher ist das nicht.', 'info') + '</div>';
       }
     } else {
       html = p + 'Waagrecht: Alter als Kalenderjahr minus Jahrgang. Bekannt ist nur der Jahrgang, nicht der Geburtstag: der Abschnitt von 22 bis 23 ist das Kalenderjahr, ' +
         'in dem ein Schwinger 22 wird – sein wirkliches Alter liegt bis zu einem Jahr darunter, und zwei Schwinger an derselben Stelle können fast ein Jahr auseinanderliegen. ' +
         'Punkt = Wertung nach einem Fest (antippen für Details). Gestrichelt: Rückführung Richtung 1500 am Saisonwechsel (1. April), gehört zu keinem Fest. ' +
-        'Gepunktet: Zeit ohne Kampf bis zum Datenstand. ' + ERAS + ' Unten lässt sich der Bereich eingrenzen.</p>';
+        'Gepunktet: Zeit ohne Kampf bis zum Datenstand. ' + eras(shown) + ' Unten lässt sich der Bereich eingrenzen.</p>';
       if (early.length) {
-        html += '<div class="mt-2">' + SE.note('<strong>Die Daten beginnen ' + SE.esc(firstSeason) + '.</strong> ' + early.map(function (e) {
-          return SE.esc(plainName(e)) + ' (ab ' + SE.esc(firstSeason - e.h.by) + ')';
-        }).join(', ') + ': Die Kurve beginnt mit dem Alter in diesem Jahr und beim Startwert 1500, nicht am Anfang der Laufbahn; frühere Jahre fehlen.', 'info') + '</div>';
+        /* the age the curve starts at: year of the first history row minus the birth year */
+        html += '<div class="mt-2">' + SE.note('<strong>Die Kurve beginnt nicht zwingend am Anfang der Laufbahn.</strong> ' +
+          (firstSeason !== null ? 'Die Daten beginnen ' + SE.esc(firstSeason) + ' und sind in den ersten Jahren lückenhaft. ' : '') +
+          early.map(function (e) {
+            return SE.esc(plainName(e)) + ' (ab ' + SE.esc(startYear(e) - e.h.by) + ', erstes erfasstes Fest ' + SE.esc(startYear(e)) + ')';
+          }).join(', ') + ': Die Kurve beginnt im Jahr des ersten erfassten Fests und beim Startwert 1500. ' +
+          'Wahrscheinlich ' + (one ? 'schwang er' : 'schwangen sie') + ' schon in jüngeren Jahren, die nicht erfasst sind – sicher ist das nicht.', 'info') + '</div>';
       }
+    }
+    if (metaState === 'missing') {
+      /* the first sign of likelyTruncated() cannot be read: say so instead of staying silent */
+      html += '<div class="mt-2">' + SE.note('Der Beginn der Daten konnte nicht gelesen werden. Wessen Laufbahn schon vor den erfassten Daten begann, ' +
+        'ist deshalb hier nur angegeben, wo es sich aus dem Jahrgang ergibt; bei den übrigen kann der erste erfasste Gang ebenfalls nicht der erste sein. ' +
+        'Bitte die Seite neu laden.') + '</div>';
     }
     return html;
   }
@@ -1032,6 +1079,17 @@
     loadBouts();
   }
 
+  /* render() at the end of a download. Inside a promise an exception would vanish as an
+   * unhandled rejection; it is thrown again outside, where the page's error banner
+   * (app.js, window 'error') sees it. */
+  function renderLoaded() {
+    try {
+      render();
+    } catch (err) {
+      window.setTimeout(function () { throw err; }, 0);
+    }
+  }
+
   view.addEventListener('click', function (ev) {
     var el = ev.target && ev.target.closest ? ev.target.closest('[data-focus],[data-zoom],[data-common],[data-more],[data-x],#se-example') : null;
     if (!el) { return; }
@@ -1087,12 +1145,17 @@
     if (mq.addEventListener) { mq.addEventListener('change', render); }
   }
 
-  /* the first season of the data, for the note of the bout axis (meta.json is loaded by
-   * every page anyway) */
+  /* The first season of the data, for the caveats of the axes (meta.json is loaded by
+   * every page anyway). A failed download is a state of its own and is said on the page;
+   * an error of the redraw is not a download error (renderLoaded). */
   SE.meta().then(function (meta) {
-    firstSeason = typeof meta.first_season === 'number' ? meta.first_season : null;
-    if (ui.x !== 'time' && firstSeason !== null) { render(); }
-  }).catch(function () { /* the chart works without the note */ });
+    firstSeason = meta && typeof meta.first_season === 'number' ? meta.first_season : null;
+    metaState = firstSeason === null ? 'missing' : 'ok';
+  }, function () {
+    metaState = 'missing';
+  }).then(function () {
+    if (ui.x !== 'time') { renderLoaded(); }
+  });
 
   ui.x = parseX(SE.param('x'));
   setIds(parseIds(SE.param('ids')), false);

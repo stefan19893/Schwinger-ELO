@@ -301,6 +301,35 @@ def test_comparison_axis_rules() -> None:
     assert "vor etwa 2016" in js and "Jahrgang unbekannt:" in js
     assert "Von keinem der ausgewählten Schwinger ist der Jahrgang bekannt" in js
     assert "Im Jahr seines ' + SE.esc(p.data.age) + '. Geburtstags" in js   # no fractional age
+    # review fixes. F1: the half about the years before 2016 only when somebody drawn has a
+    # festival from then, and not next to the scale note
+    eras = js[js.index("function eras"):js.index("function axisNotes")]
+    assert "e.rows[0].date < SCALE_SETTLED" in eras and "scaleNoted ?" in eras
+    assert eras.index("heisst nicht gleiche Zeit'") < eras.index("!old ? '.'")
+    assert js.count("scaleNoted = true;") == 1 and js.count("' + eras(shown) + '") == 3
+    # F2: who gets the "not the start of his career" note - the thin first seasons of the
+    # data or a first festival at an adult age; worded as likely, not as known
+    rule = js[js.index("function likelyTruncated"):js.index("function startText")]
+    assert "var EARLY_SEASONS = 2;" in js and "var ADULT_AGE = 20;" in js
+    assert ("(firstSeason !== null && y < firstSeason + EARLY_SEASONS) || "
+            "(hasBirthYear(e) && y - e.h.by >= ADULT_AGE)") in rule
+    assert notes.count("Wahrscheinlich ") == 3 and notes.count("sicher ist das nicht") == 3
+    assert "trat schon in dieser" not in js and "fromTheStart" not in js
+    # F3: a single career season does not sit on the border of the chart
+    assert "var MIN_SEASONS = 5;" in js and "Math.max(v.max, MIN_SEASONS)" in js
+    assert "v < 1 ? ''" in js                                  # no label "0."
+    # F4: an overlap inside one calendar year is one age, not "22–22"
+    assert "SE.esc(a) + (b > a ? '–' + SE.esc(b) : '')" in js
+    # F5: the age the curve starts at comes from the first history row, as the curve does
+    assert "function startYear(e) { return e.rows.length ? Number(e.rows[0].date.slice(0, 4)) : null; }" in js
+    assert "' (ab ' + SE.esc(startYear(e) - e.h.by)" in notes and "firstSeason - e.h.by" not in js
+    # F6: no meta.json is said on the page; a render error after a download is thrown again
+    # where the error banner sees it
+    assert "metaState === 'missing'" in notes and "Der Beginn der Daten konnte nicht gelesen werden" in notes
+    tail = js[js.index("SE.meta().then("):]
+    assert ".catch(" not in tail and "metaState = 'missing';" in tail and "renderLoaded();" in tail
+    assert "window.setTimeout(function () { throw err; }, 0);" in js
+    assert "e.pending = false; renderLoaded(); }" in js
     about = (WEB / "about.html").read_text(encoding="utf-8")
     for needle in ("nach Gängen, nach Alter oder nach Karrieresaison", "nur der Jahrgang bekannt",
                    "ab dem ersten erfassten Fest"):
