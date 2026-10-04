@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-10-04
 **Current phase:** all phases (0–7) done and on `main` (Phase 7 = PR #6, squash be3d4b3). Publication is prepared but NOT done: `PUBLISH_ENABLED` is unset.
-**Next action:** WAITING FOR THE OWNER — go live with `./scripts/go_live.sh` (checks the preparation, asks once, sets `PUBLISH_ENABLED=true`, starts and watches the first deploy; `--check` / `--off`). Prepared 2026-10-04: site rebuilt from `main` (6,306 athletes published, 1,495 ranked, 726 withheld), deploy-guard baseline recorded, state bundle (504 MB) on the draft release `pipeline-state` (verified draft; anonymous requests get 404), Pages source = GitHub Actions. After the first deploy: README "Verify after the first push". If local data changes before going live (new crawl), re-run `check-site --record`, `state-export` and replace the bundle on the draft release.
+**Next action:** WAITING FOR THE OWNER — (1) push / merge branch `local-crawl-only` (removes the crawl schedule; must be on `main` before going live), (2) go live with `./scripts/go_live.sh` (checks the preparation, asks once, sets `PUBLISH_ENABLED=true`, starts and watches the first deploy; `--check` / `--off`). Prepared 2026-10-04: site rebuilt from `main` (6,306 athletes published, 1,495 ranked, 726 withheld), deploy-guard baseline recorded, state bundle (504 MB) on the draft release `pipeline-state` (verified draft; anonymous requests get 404), Pages source = GitHub Actions. After the first deploy: README "Verify after the first push". If local data changes before going live (new crawl), re-run `check-site --record`, `state-export` and replace the bundle on the draft release.
 
 ## Phases
 | # | Phase | Spec milestone | File | Status |
@@ -20,6 +20,7 @@ Status values: `not started` · `in progress` · `in review` · `done`
 
 ## Decisions
 <!-- - YYYY-MM-DD — decision — reason -->
+- 2026-10-04 — No scheduled crawl on GitHub: `schedule:` removed from `scrape_and_update.yml` (by hand only); the owner crawls locally, uploads the state bundle and starts `deploy_pages.yml` (README, "Updating the site") — owner's decision, "at least for the moment".
 - 2026-09-29 — Single CLI (`python -m src.cli`) used by both `scripts/deploy_local.sh` and GitHub Actions; `--sample` offline dataset for fast local runs — spec §5–6.
 - 2026-09-29 — Repo root `Schwinger-ELO/` is the project root (spec §3 updated accordingly).
 - 2026-09-29 — Added `pyarrow` to requirements — pandas needs a Parquet engine for `data/processed/*.parquet`.

@@ -34,7 +34,7 @@ Schwinger-ELO/
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                  # Tests on push / pull request (no crawl, no deployment)
-│       ├── scrape_and_update.yml   # Scheduled: incremental crawl -> rebuild -> deploy (gated on PUBLISH_ENABLED)
+│       ├── scrape_and_update.yml   # By hand only (no schedule): incremental crawl -> rebuild -> deploy (gated on PUBLISH_ENABLED)
 │       └── deploy_pages.yml        # Manual: rebuild from the stored state -> deploy (gated on PUBLISH_ENABLED)
 ├── scripts/
 │   ├── deploy_local.sh             # One-command local setup, build and serve
@@ -280,7 +280,8 @@ Since GitHub Pages serves static files only:
 - **Nothing is published without the owner's opt-in:** every job of `deploy_pages.yml` and `scrape_and_update.yml` runs only when the repository variable `PUBLISH_ENABLED` is `true` (and the ref is `main`). `ci.yml` (tests, sample build) is not gated; it neither crawls nor deploys.
 - **Publication switches** (`src/config.py`): `publish_min_age = 18` (athletes not certainly 18 at the data date are not published by name and their festival rows carry no rating; ranks are re-numbered among the published), `publish_unknown_recent_seasons = 3` (the same for athletes without a birth year whose first season is within the last three of the data year), `site_noindex = True` (robots meta tag + `robots.txt`), `contact_email = ""` (shown on the about page when set).
 - **State between runs:** one bundle (`state-export` / `state-import`) as an asset of a *draft* release `pipeline-state` — durable, not publicly downloadable, seeded from the owner's machine. Runs upload a new generation and delete the older ones afterwards. A missing state fails the run before any request (`--require-state`).
-- **Sequence of the scheduled run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → Pages artifact → `actions/deploy-pages@v4`. The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
+- **No schedule (decision 2026-10-04):** the owner crawls locally and uploads the state; `scrape_and_update.yml` starts by hand only.
+- **Sequence of the crawl run:** tests → `state-import` → `crawl --require-state` → `state-export` (snapshot, kept even if a later step fails) → `all --skip-crawl --require-state` → `check-site --record` → `state-export` → upload (local action `.github/actions/pipeline-state`: draft checked before the download and again before the upload) → Pages artifact → `actions/deploy-pages@v4`. The publishing jobs install `requirements-lock.txt` with `--require-hashes`. `deploy_pages.yml` is the same without the crawl and is started by hand only.
 - **Deploy guard:** see `check-site` in §5; the baseline travels inside the state bundle.
 
 ---

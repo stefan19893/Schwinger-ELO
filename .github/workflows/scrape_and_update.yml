@@ -1,5 +1,7 @@
-# Scheduled update: incremental crawl of schlussgang.ch -> rebuild -> deploy to GitHub
-# Pages. Weekly during the season, monthly in winter (hall festivals).
+# Hosted update: incremental crawl of schlussgang.ch -> rebuild -> deploy to GitHub Pages.
+# Started by hand only: it has no schedule, because the owner crawls on their own machine
+# and uploads the state (README, "Updating the site"). To let GitHub crawl on its own
+# again, add a `schedule:` trigger here.
 #
 # INERT UNTIL THE OWNER OPTS IN: every job is skipped unless the repository variable
 # PUBLISH_ENABLED is exactly 'true'. See README.md, "Hosted setup".
@@ -16,9 +18,6 @@
 name: Scrape and update
 
 on:
-  schedule:
-    - cron: "17 3 * 3-10 2"         # Tuesdays 03:17 UTC, March to October
-    - cron: "17 3 1 1,2,11,12 *"    # 1st of the month, November to February
   workflow_dispatch:
     inputs:
       accept_changes:

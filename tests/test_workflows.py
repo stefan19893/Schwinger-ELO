@@ -75,10 +75,9 @@ def test_triggers() -> None:
     head = lambda t: t.split("\npermissions:", 1)[0].split("\non:\n", 1)[1]  # noqa: E731
     # the deploy workflow starts by hand only: a merge must not change the public site
     assert re.findall(r"^  ([a-z_]+):", head(deploy), flags=re.M) == ["workflow_dispatch"]
-    assert re.findall(r"^  ([a-z_]+):", head(scrape), flags=re.M) == ["schedule",
-                                                                     "workflow_dispatch"]
-    crons = re.findall(r'cron: "([^"]+)"', scrape)
-    assert crons == ["17 3 * 3-10 2", "17 3 1 1,2,11,12 *"]   # weekly in season, monthly off
+    # no schedule: the owner crawls locally, GitHub never crawls on its own
+    assert re.findall(r"^  ([a-z_]+):", head(scrape), flags=re.M) == ["workflow_dispatch"]
+    assert "cron" not in head(scrape) and "schedule" not in head(scrape)
     assert re.findall(r"^  ([a-z_]+):", head(ci), flags=re.M) == ["push", "pull_request"]
     for text in (deploy, scrape, ci):
         assert "pull_request_target" not in text and "workflow_run" not in text

@@ -7,7 +7,7 @@
 #
 # What it changes on GitHub: the repository variable PUBLISH_ENABLED and one manual run of
 # "Deploy to GitHub Pages". No pipeline logic lives here - the workflows call the CLI.
-# From then on "Scrape and update" runs on its schedule (README, "Hosted setup").
+# Nothing runs on a schedule: later updates are crawled locally (README, "Updating the site").
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -62,7 +62,8 @@ Going live means (README, "What you accept by opting in"):
     matched against the public result lists;
   - noindex covers the HTML pages only; objections come in through public GitHub issues
     unless contact_email is set;
-  - the weekly crawl and deploy then run on their own until you run this script with --off.
+  - nothing runs on its own afterwards: GitHub crawls and deploys only when you start a
+    workflow by hand (this script with --off blocks even that).
 EOF
 read -r -p "Type 'publish' to go live: " answer
 [ "$answer" = "publish" ] || { echo "Aborted. Nothing was changed."; exit 1; }
