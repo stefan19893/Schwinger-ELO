@@ -49,6 +49,10 @@ log = logging.getLogger("schwingen.client")
 QueryParams = Mapping[str, str] | Sequence[tuple[str, str]] | None
 
 RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
+# Backfill (`crawl --backfill`): refused or rate-limited means stop, and a failing file
+# gets one more attempt, not four.
+BACKFILL_BLOCK_STATUSES = frozenset({403, 429})
+BACKFILL_MAX_ATTEMPTS = 2
 
 
 class FetchError(RuntimeError):
@@ -58,6 +62,12 @@ class FetchError(RuntimeError):
         super().__init__(f"{message} ({url})")
         self.url = url
         self.status = status
+
+
+class Blocked(FetchError):
+    """The server refused the crawler (a status in ``block_statuses``, e.g. 403 / 429).
+
+    Raised without any retry; callers stop the whole run instead of trying the next URL."""
 
 
 class CacheMiss(RuntimeError):
@@ -149,6 +159,7 @@ class HttpClient:
         transport: httpx.BaseTransport | None = None,
         retry_wait: wait_base | None = None,
         retry_after_max: float = 300.0,
+        block_statuses: frozenset[int] = frozenset(),
         sleep: Callable[[float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         utcnow: Callable[[], _dt.datetime] | None = None,
@@ -162,6 +173,8 @@ class HttpClient:
         self.max_retries = max(1, max_retries)
         self.refresh = refresh
         self.offline = offline
+        # Statuses that mean "stop crawling" (backfill: 403, 429): never retried.
+        self.block_statuses = frozenset(block_statuses)
         self.stats = ClientStats()
         self._retry_wait = _RetryAfterWait(
             retry_wait or wait_exponential_jitter(initial=2, max=60), retry_after_max)
@@ -239,6 +252,9 @@ class HttpClient:
             resp = self._http.get(url)
         finally:
             self._last_request = self._clock()
+        if resp.status_code in self.block_statuses:
+            raise Blocked(url, resp.status_code,
+                          f"HTTP {resp.status_code} - refused, not retried")
         if resp.status_code in RETRY_STATUS:
             retry_after = parse_retry_after(resp.headers.get("retry-after"), self._utcnow())
             log.warning("HTTP %d for %s - will retry%s", resp.status_code, url,
@@ -299,15 +315,20 @@ class HttpClient:
 
 def client_from_config(cfg: Any, *, transport: httpx.BaseTransport | None = None,
                        offline: bool | None = None) -> HttpClient:
-    """Build an :class:`HttpClient` from a :class:`src.config.Config`."""
+    """Build an :class:`HttpClient` from a :class:`src.config.Config`.
+
+    Backfill mode (``cfg.backfill``): the longer delay, one retry only, and 403 / 429
+    end the run (:class:`Blocked`) instead of being retried."""
+    backfill = bool(getattr(cfg, "backfill", False))
     return HttpClient(
         cfg.raw_dir,
         cfg.user_agent,
-        delay_min=cfg.request_delay_min,
-        delay_max=cfg.request_delay_max,
+        delay_min=cfg.backfill_delay_min if backfill else cfg.request_delay_min,
+        delay_max=cfg.backfill_delay_max if backfill else cfg.request_delay_max,
         timeout=cfg.request_timeout,
-        max_retries=cfg.max_retries,
+        max_retries=min(cfg.max_retries, BACKFILL_MAX_ATTEMPTS) if backfill else cfg.max_retries,
         retry_after_max=cfg.retry_after_max,
+        block_statuses=BACKFILL_BLOCK_STATUSES if backfill else frozenset(),
         refresh=cfg.refresh,
         offline=(cfg.sample or cfg.offline) if offline is None else offline,
         transport=transport,

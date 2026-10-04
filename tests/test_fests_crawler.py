@@ -499,3 +499,17 @@ def test_crawl_applies_exclude_flags(tmp_path: Path) -> None:
     with make_client(tmp_path, api) as c:
         fc.crawl_festivals(c, conn, 2025, 2025, today=TODAY, categories=[15], exclude_flags=())
     assert load_festivals(conn)[48706].elo_eligible is True
+
+
+@pytest.mark.parametrize("name", [
+    "Bern-Jurassisches Schwingfest Tavannes 2010",
+    "Berner Jurassisches Schwingfest Péry 2001",
+    "Bern-Jurasisches Schwingfest Tramelan 2006",
+])
+def test_bern_jura_spellings_are_gauverband(name: str) -> None:
+    from src.scraper.festival_reference import reference_category
+
+    assert fc.map_category(14, name) == "Gauverband"
+    assert reference_category(name) == "Gauverband"
+    assert fc.map_category(13, "Berner Kantonalschwingfest Büren 2001") == "Teilverband"
+    assert reference_category("Berner Kantonalschwingfest Büren 2001") == "Teilverband"

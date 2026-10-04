@@ -24,6 +24,8 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SCHWINGEN_DATA_DIR", str(tmp_path / "data"))
     # the site under test is the sample build, which runs without the unknown-birth-year rule
     monkeypatch.setenv("SCHWINGEN_PUBLISH_UNKNOWN_RECENT_SEASONS", "0")
+    # ... and whose data begin in 2011 (the guard holds the site against `from_year`)
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2011")
 
 
 @pytest.fixture(scope="module")
@@ -261,6 +263,93 @@ def test_more_published_athletes_fail_beyond_the_tolerance(
     assert cli.main(["check-site", "--accept-changes"]) == 0
 
 
+def test_a_longer_history_is_refused_until_accepted_and_says_what_changed(
+        built: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10: the data begin seven seasons earlier, so more athletes are named and
+    fewer of the rated ones have a birth year. Both findings are those of a broken age
+    filter - the guard still refuses (the override is the owner's), but its lines name
+    the first season, and the last line gives the one-time command. Nothing is recorded
+    by a refused run."""
+    meta = _site(built, tmp_path)
+    c = meta["counts"]
+    base = json.loads(json.dumps(meta))
+    base["first_season"] = meta["first_season"] + 7
+    base["counts"].update(athletes=int(c["athletes"] / 1.4),
+                          birth_year_known=min(c["rated"], int(c["birth_year_known"] * 1.3)))
+    path = tmp_path / "data" / dg.BASELINE_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(base), encoding="utf-8")
+    before = path.read_bytes()
+    cfg = load_config(env=dict(os.environ))
+    rep = dg.check_site(cfg, tmp_path / "dist", base)
+    assert not rep.ok and not rep.fatal and len(rep.changes) == 2, rep.changes
+    old, new = base["first_season"], meta["first_season"]
+    assert all(f"The data now begin in {new} instead of {old}" in line
+               for line in rep.changes)
+    assert f"first season of the data: {old} -> {new}" in rep.notes
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--record"]) == 1
+    assert "check-site --accept-changes --record" in caplog.text
+    assert "accept_changes" in caplog.text and "2 change(s)" in caplog.text
+    assert path.read_bytes() == before                      # a refusal records nothing
+    assert cli.main(["check-site", "--accept-changes", "--record"]) == 0
+    assert dg.read_meta(path)["first_season"] == new
+    assert cli.main(["check-site"]) == 0                    # ... once: the next run passes
+    # without a change of the first season the findings carry no such explanation
+    _baseline(tmp_path, meta, athletes=int(c["athletes"] / 1.4))
+    rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path))
+    assert len(rep.changes) == 1 and "The data now begin" not in rep.changes[0]
+
+
+def test_new_code_on_a_state_without_the_old_seasons_is_never_deployable(
+        built: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10 review: a merge deployed before the state bundle was replaced builds the
+    old range with the new settings - same counts as the baseline, so nothing else trips -
+    and would publish the cold-start season with places. Both signs are fatal, no override
+    lifts them, nothing is recorded, and the message says what to do."""
+    meta = _site(built, tmp_path)                       # data from 2011, ranked from 2012
+    path = _baseline(tmp_path, meta)
+    before = path.read_bytes()
+    assert cli.main(["check-site"]) == 0
+    # the code expects the history from 2004 and ranks from 2005
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2004")
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2005})
+    cfg = load_config(env=dict(os.environ))
+    rep = dg.check_site(cfg, tmp_path / "dist", dg.read_meta(path), accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 2, rep.fatal
+    assert "first ranked season (2005" in rep.fatal[0] and "(2011)" in rep.fatal[0]
+    assert "the data begin in 2011, but this code expects them to begin in 2004" in rep.fatal[1]
+    assert "seasons 2004-2010" in rep.fatal[1]
+    assert all("replace the pipeline state" in line and "Updating the site" in line
+               for line in rep.fatal)
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes", "--record"]) == 1
+    assert "must not be deployed" in caplog.text and path.read_bytes() == before
+    # each sign alone is enough
+    plain = _site(built, tmp_path)                      # ranked from 2012 again
+    rep = dg.check_site(cfg, tmp_path / "dist", plain, accept_changes=True)
+    assert len(rep.fatal) == 1 and "expects them to begin in 2004" in rep.fatal[0]
+    monkeypatch.setenv("SCHWINGEN_FROM_YEAR", "2011")
+    cfg = load_config(env=dict(os.environ))
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2011})
+    rep = dg.check_site(cfg, tmp_path / "dist", plain, accept_changes=True)
+    assert len(rep.fatal) == 1 and "must not be ranked" in rep.fatal[0]
+    # a longer burn-in than one season is a setting, not an error
+    _site(built, tmp_path, model={**meta["model"], "first_ranked_season": 2013})
+    assert dg.check_site(cfg, tmp_path / "dist", plain).ok
+
+
+def test_a_site_that_lost_its_first_seasons_needs_the_override(built: Path,
+                                                               tmp_path: Path) -> None:
+    meta = _site(built, tmp_path)
+    base = json.loads(json.dumps(meta))
+    base["first_season"] = meta["first_season"] - 3
+    rep = dg.check_site(load_config(env=dict(os.environ)), tmp_path / "dist", base)
+    assert not rep.ok and not rep.fatal
+    assert [c for c in rep.changes if "loses seasons" in c]
+
+
 def test_year_rollover_releases_exactly_the_announced_cohort(built: Path,
                                                              tmp_path: Path) -> None:
     """In January the oldest withheld cohort becomes publishable: no override needed for
@@ -415,6 +504,8 @@ REFERENCES = {
         s for s in o["seasons"] if s["peak"])["peak"].update(id=GHOST)),
     "festival row": ("fests", lambda o: _set_first_id(o["athletes"], GHOST)),
     "namesake": ("history", lambda o: o["namesakes"].append({"id": GHOST, "unc": 0})),
+    "twin of the search index": ("athletes.json",
+                                 lambda o: o.setdefault("twins", {}).update({GHOST: [1, 6]})),
     "not a string": ("bouts", lambda o: (o["opps"].append(["x"]), o["names"].append("X Y"))),
 }
 
@@ -523,6 +614,95 @@ def test_guard_contract_is_the_exporters() -> None:
     assert dg.BOUT_COLS == sb.BOUT_SIDE_COLS
     assert dg.BOUT_OTHER_COLS == sb.OTHER_FEST_COLS
     assert dg.BOUT_UNRATED == sb.B_UNRATED
+    assert dg.FEST_ATHLETE_COLS == sb.FEST_ATHLETE_COLS
+    assert dg.FEST_BOUT_COLS == sb.FEST_BOUT_COLS
+
+
+def _col(o: dict[str, Any], table: str, name: str) -> int:
+    return o[table]["cols"].index(name)
+
+
+def _anon_row(o: dict[str, Any]) -> list[Any]:
+    return next(r for r in o["athletes"]["rows"] if r[_col(o, "athletes", "anon")])
+
+
+def _hidden_bout(o: dict[str, Any]) -> list[Any]:
+    """A bout with a withheld athlete on one side."""
+    anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[_col(o, "athletes", "anon")]}
+    return next(b for b in o["bouts"]["rows"] if b[1] in anon or b[2] in anon)
+
+
+def _listed_bout(o: dict[str, Any]) -> list[Any]:
+    return next(b for b in o["bouts"]["rows"] if b[7] is not None)
+
+
+FEST_TAMPERED = {
+    # a contribution where none may be: it would give away the hidden side's rating
+    "a contribution at a bout against a withheld athlete":
+        lambda o: _hidden_bout(o).__setitem__(7, -12.3),
+    "a contribution at a festival that does not count": lambda o: o.update(status="unrated"),
+    "a contribution that is text": lambda o: _listed_bout(o).__setitem__(7, "+4.2"),
+    "a ninth value in a bout row": lambda o: _listed_bout(o).append(0.61),
+    "a bout pointing outside the athlete rows":
+        lambda o: _listed_bout(o).__setitem__(2, len(o["athletes"]["rows"])),
+    # a withheld athlete's own row: no rating value, no name
+    "a rating on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "before"), 1512.3),
+    "an expected score on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "exp"), 2.4),
+    "a name on a withheld athlete's row":
+        lambda o: _anon_row(o).__setitem__(_col(o, "athletes", "name"), "Muster Hans"),
+    "a remainder column": lambda o: (o["athletes"]["cols"].append("rest"),
+                                     [r.append(-3.1) for r in o["athletes"]["rows"]]),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FEST_TAMPERED))
+def test_festival_files_carry_no_rating_value_for_unpublished_athletes(
+        built: Path, tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10: the festival files carry the contribution per Gang - only between two
+    published athletes. A file with a contribution at any other bout, or with a rating
+    value on a withheld athlete's row, is not deployable, and no override lifts it."""
+    meta = _site(built, tmp_path)
+    _baseline(tmp_path, meta)
+    cfg = load_config(env=dict(os.environ))
+    dist = tmp_path / "dist"
+    assert dg.check_site(cfg, dist, meta).ok
+
+    def usable(p: Path) -> bool:          # a rated festival with listed and hidden bouts
+        o = json.loads(p.read_bytes())
+        anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[-1]}
+        return bool(anon) and any(b[7] is not None for b in o["bouts"]["rows"])
+
+    target = next(p for p in sorted((dist / "data" / "fests").iterdir()) if usable(p))
+    _edit(target, FEST_TAMPERED[case])
+    rep = dg.check_site(cfg, dist, meta, accept_changes=True)
+    assert not rep.ok and len(rep.fatal) == 1, rep.fatal
+    assert rep.fatal[0] == ("data/fests: 1 file(s) missing, unreadable or not in the "
+                            "expected shape - rebuild"), rep.fatal
+    with caplog.at_level("INFO"):
+        assert cli.main(["check-site", "--accept-changes"]) == 1
+    assert "must not be deployed" in caplog.text
+
+
+def test_festival_contract_check_is_not_vacuous(built: Path, tmp_path: Path) -> None:
+    """On the built site the festival files pass, and they do hold what the check is
+    about: contributions between published athletes, bouts against withheld athletes
+    without one, rows of withheld athletes without any rating value."""
+    _site(built, tmp_path)
+    listed = hidden = anon_rows = 0
+    for p in sorted((tmp_path / "dist" / "data" / "fests").iterdir()):
+        o = json.loads(p.read_bytes())
+        assert dg._fest_ids(o, p.stem, dg._Seen(names={})) is not None
+        anon = {i for i, r in enumerate(o["athletes"]["rows"]) if r[-1]}
+        anon_rows += len(anon)
+        for b in o["bouts"]["rows"]:
+            if b[1] in anon or b[2] in anon:
+                assert b[7] is None
+                hidden += 1
+            elif b[7] is not None:
+                listed += 1
+    assert listed > 0 and hidden > 0 and anon_rows > 0
 
 
 def test_untampered_bout_files_pass_and_are_held_against_the_history(built: Path,
@@ -589,7 +769,7 @@ def test_reference_check_reads_the_real_shapes(built: Path, tmp_path: Path) -> N
     problems, n_read = dg._reference_problems(dist)
     per_athlete = len(json.loads((data / "athletes.json").read_text(encoding="utf-8"))["rows"])
     assert problems == [] and per_athlete > 100
-    assert n_read == 3 + len(list((data / "fests").iterdir())) + 2 * per_athlete
+    assert n_read == 4 + len(list((data / "fests").iterdir())) + 2 * per_athlete
     anon = sum(1 for p in (data / "fests").iterdir() for r in json.loads(
         p.read_text(encoding="utf-8"))["athletes"]["rows"] if r[0] is None)
     assert anon > 0                                   # rows without an id exist and pass

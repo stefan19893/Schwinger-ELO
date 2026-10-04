@@ -329,3 +329,63 @@ def test_socket_guard_allows_loopback() -> None:
             client.connect(server.getsockname())
             conn, _ = server.accept()
             conn.close()
+
+
+# ------------------------------------------------------------------ backfill (Phase 10)
+@pytest.mark.parametrize("status", [403, 429])
+def test_block_status_stops_without_retry(tmp_path: Path, status: int) -> None:
+    from src.scraper.client import Blocked
+
+    calls: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        return httpx.Response(status, headers={"retry-after": "1"})
+
+    with make_client(tmp_path, handler, block_statuses=frozenset({403, 429})) as c:
+        with pytest.raises(Blocked) as ei:
+            c.get(URL)
+        assert ei.value.status == status and c.stats.retries == 0
+    assert len(calls) == 1  # 429 is retried by default, never in a backfill
+    assert not any((tmp_path / "raw").rglob("*.body"))
+
+
+def test_429_is_still_retried_without_block_statuses(tmp_path: Path) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        return httpx.Response(429 if len(calls) == 1 else 200, content=b"{}")
+
+    with make_client(tmp_path, handler) as c:
+        assert c.get(URL).status == 200
+    assert len(calls) == 2
+
+
+def test_client_from_config_backfill_is_slower_and_gives_up(tmp_path: Path) -> None:
+    from src.config import load_config
+    from src.scraper.client import client_from_config
+
+    normal = load_config({"data_dir": tmp_path}, env={})
+    with client_from_config(normal) as c:
+        assert (c.delay_min, c.delay_max, c.max_retries) == (0.5, 1.0, 4)
+        assert not c.block_statuses
+    slow = load_config({"data_dir": tmp_path, "backfill": True}, env={})
+    with client_from_config(slow) as c:
+        assert (c.delay_min, c.delay_max) == (2.0, 4.0)
+        assert c.max_retries == 2 and c.block_statuses == {403, 429}
+        assert c._http.headers["user-agent"] == normal.user_agent  # same identity
+
+
+@pytest.mark.parametrize("override", [
+    {"backfill_delay_min": 0.2},                               # below the politeness floor
+    {"backfill_delay_min": 3.0, "backfill_delay_max": 2.0},
+    {"request_delay_min": 3.0, "request_delay_max": 5.0},      # backfill faster than normal
+    {"backfill": True, "refresh": True},
+    {"backfill_max_errors": 0},
+])
+def test_backfill_config_is_validated(override: dict[str, object]) -> None:
+    from src.config import load_config
+
+    with pytest.raises(ValueError):
+        load_config(override, env={})

@@ -345,3 +345,48 @@ def test_run_clean_writes_club_and_teilverband(db: Path, tmp_path: Path,
         "Thun", "BKSV", "Thun", "hans-muster")
     assert ident.loc["100-002", "club"] is None
     assert res.counts["athletes"] == 5  # evidence does not change the baseline identities
+
+
+# ------------------------------------------------------------------ from_year (Phase 10)
+def test_from_year_keeps_earlier_seasons_out_of_the_outputs(db: Path, tmp_path: Path) -> None:
+    """Seasons before `from_year` stay in the staging database and are not exported:
+    neither their festivals nor their rows nor their bouts."""
+    assert len(inputs(db).raw) == len(RAW)
+    conn = cl.connect_ro(db)
+    try:
+        inp = cl.load_inputs(conn, [], from_year=2016)
+        everything = cl.load_inputs(conn, [], from_year=2004)
+    finally:
+        conn.close()
+    assert set(inp.festivals["fest_id"]) == {200}
+    assert set(inp.raw["fest_id"]) == {200} and len(inp.raw) == 3
+    assert set(inp.bouts["fest_id"]) == {200} and len(inp.bouts) == 2
+    assert len(everything.raw) == len(RAW) and len(everything.bouts) == len(BOUTS)
+    res = cl.run_clean(db, tmp_path / "processed", resolver=cl.BaselineResolver(), from_year=2016)
+    assert res.counts["raw_athletes"] == 3 and res.counts["bouts_in"] == 2
+    assert res.counts["festivals"] == 1 and res.counts["unmapped_bouts"] == 0
+    assert set(res.identity_map["athlete_raw_id"].str[:3]) == {"200"}
+    # the staging database is untouched
+    assert len(inputs(db).raw) == len(RAW)
+
+
+def test_clean_command_uses_config_from_year(db: Path, tmp_path: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    from src import cli
+    from src.config import load_config
+
+    seen: dict[str, object] = {}
+    real = cl.run_clean
+
+    def fake(db_path: Path, out_dir: Path, **kw: object) -> cl.CleanResult:
+        seen.update(kw)
+        return real(db_path, out_dir, resolver=cl.BaselineResolver(), **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("src.pipeline.cleaner.run_clean", fake)
+    data = tmp_path / "data"
+    data.mkdir()
+    make_db(data / "schwingen.db")
+    assert cli.cmd_clean(load_config({"data_dir": data}, env={})) == 0
+    assert seen == {"from_year": 2004}
+    assert cli.cmd_clean(load_config({"data_dir": data, "from_year": 2016}, env={})) == 0
+    assert seen == {"from_year": 2016}

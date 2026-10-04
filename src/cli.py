@@ -15,7 +15,7 @@ import functools
 import http.server
 import logging
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 from typing import TYPE_CHECKING
 
@@ -47,8 +47,16 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
         return 1
     from src.db import connect
     from src.scraper import fests_crawler as fc
-    from src.scraper.client import FetchError, client_from_config
+    from src.scraper.client import Blocked, FetchError, client_from_config
 
+    if cfg.backfill:
+        if portraits_only:
+            raise ValueError("--backfill and --portraits-only exclude each other")
+        portraits = False  # old seasons have no portraits; never part of a backfill
+        log.info("crawl: backfill mode - %.1f-%.1f s between requests, at most %d requests "
+                 "this run, stops on HTTP 403 / 429 or %d failed files in a row",
+                 cfg.backfill_delay_min, cfg.backfill_delay_max, cfg.backfill_max_requests,
+                 cfg.backfill_max_errors)
     if portraits_only:
         log.info("crawl: portraits only, offline=%s, cache=%s", cfg.offline, cfg.raw_dir)
         with client_from_config(cfg, transport=transport, offline=cfg.offline) as client:
@@ -62,26 +70,52 @@ def cmd_crawl(cfg: Config, transport: httpx.BaseTransport | None = None,
     conn = connect(cfg.db_path)
     try:
         with client_from_config(cfg, transport=transport, offline=cfg.offline) as client:
+            if not cfg.backfill and not cfg.offline:
+                problem = _old_seasons_not_cached(cfg, client, conn)
+                if problem:
+                    log.error("crawl: %s - nothing was requested. A normal crawl never "
+                              "downloads the seasons before %d: they are fetched once, "
+                              "slowly, with `crawl --backfill --from-year %d --to-year %d`, "
+                              "or come with the pipeline state of the machine that has "
+                              "them (`state-import`; README, \"Updating the site\"). To "
+                              "crawl the later seasons only: `--from-year %d`", problem,
+                              OLD_SEASONS_BEFORE, cfg.from_year, OLD_SEASONS_BEFORE - 1,
+                              OLD_SEASONS_BEFORE)
+                    return 1
             try:
                 report = fc.crawl_festivals(
                     client, conn, cfg.from_year, cfg.to_year,
                     current_max_age=cfg.listing_max_age_hours * 3600,
                     final_grace_days=cfg.listing_final_grace_days,
-                    max_requests=cfg.crawl_max_requests,
+                    max_requests=(cfg.backfill_max_requests if cfg.backfill
+                                  else cfg.crawl_max_requests),
                     exclude_flags=_exclude_flags(cfg),
                     progress=sys.stderr.isatty(),
                 )
             except fc.CrawlLimitExceeded as exc:
-                log.error("crawl: %s - finished years are saved; raise "
-                          "SCHWINGEN_CRAWL_MAX_REQUESTS or narrow --from-year/--to-year", exc)
+                log.error("crawl: %s - finished years are saved; %s", exc,
+                          "re-run the same command to continue" if cfg.backfill else
+                          "raise SCHWINGEN_CRAWL_MAX_REQUESTS or narrow --from-year/--to-year")
+                return 1
+            except Blocked as exc:
+                log.error("crawl: the server refused the crawler (%s) - stopped, nothing is "
+                          "retried; finished years are saved. Do not re-run before the "
+                          "cause is understood", exc)
                 return 1
             except FetchError as exc:
                 log.error("crawl: %s - finished years are saved, re-run to resume", exc)
                 return 1
             _log_crawl_report(report)
-            pdf_rc = _crawl_pdfs(cfg, client, conn) if cfg.crawl_pdfs else 0
-            if cfg.crawl_pdfs:
-                pdf_rc = _crawl_ranking_pdfs(cfg, client, conn) or pdf_rc
+            try:
+                pdf_rc = _crawl_pdfs(cfg, client, conn) if cfg.crawl_pdfs else 0
+                if cfg.crawl_pdfs and not (cfg.backfill and pdf_rc):
+                    pdf_rc = _crawl_ranking_pdfs(cfg, client, conn) or pdf_rc
+            except Blocked as exc:
+                log.error("crawl: the server refused the crawler (%s) after %d requests - "
+                          "stopped, nothing is retried; downloaded files are cached. Do not "
+                          "re-run before the cause is understood", exc,
+                          client.stats.network_requests)
+                pdf_rc = 1
             if portraits:
                 pdf_rc = _crawl_portraits(cfg, client) or pdf_rc
             stats = client.stats
@@ -162,32 +196,94 @@ def cmd_state_import(cfg: Config, source: str, force: bool = False) -> int:
     return 1 if problems else 0
 
 
+# Seasons before this year are the one-time backfill (Phase 10): old files nobody is
+# waiting for, fetched at the backfill pace only (2-4 s, capped, stop on 403 / 429).
+OLD_SEASONS_BEFORE = 2011
+
+
+def _old_seasons_not_cached(cfg: Config, client: HttpClient,
+                            conn: sqlite3.Connection) -> str | None:
+    """What a normal crawl would have to download for the seasons before
+    :data:`OLD_SEASONS_BEFORE` - as a sentence, ``None`` when everything is cached (then
+    the crawl makes no request for them: their listings and PDFs are final). Checked
+    before the first request: a data directory that does not hold the old seasons (a
+    state bundle from before the history was added, a fresh clone) must not fetch some
+    700 old files at the normal pace, least of all from a workflow runner."""
+    from src.db import load_festivals
+    from src.scraper import fests_crawler as fc
+    from src.scraper.client import build_url
+    from src.scraper.ranking_pdfs import festivals_with_ranking
+
+    last = min(cfg.to_year, OLD_SEASONS_BEFORE - 1)
+    if cfg.from_year > last:
+        return None
+    listings = _not_cached(client, (build_url(fc.API_URL, fc.listing_params(tid, year))
+                                    for year in range(cfg.from_year, last + 1)
+                                    for tid in fc.SOURCE_CATEGORIES))
+    old = [f for f in load_festivals(conn).values() if cfg.from_year <= f.year <= last]
+    pdfs = _not_cached(client, {f.statistic_pdf_url for f in old
+                                if f.kind == "active" and not f.cancelled})
+    pdfs += _not_cached(client, {f.ranking_pdf_url for f in festivals_with_ranking(old)})
+    if not listings and not pdfs:
+        return None
+    return (f"the seasons {cfg.from_year}-{last} are not in this data directory's cache "
+            f"({listings} listing queries and {pdfs} PDFs of {len(old)} known festivals "
+            f"missing)")
+
+
+def _backfill_range(cfg: Config, festivals: Iterable[Festival]) -> list[Festival]:
+    """Festivals whose PDFs this run looks at: all of them normally; in backfill mode only
+    those of ``from_year..to_year`` (the files of other seasons are not touched)."""
+    fests = list(festivals)
+    if not cfg.backfill:
+        return fests
+    return [f for f in fests if cfg.from_year <= f.year <= cfg.to_year]
+
+
+def _not_cached(client: HttpClient, urls: Iterable[str | None]) -> int:
+    """How many of these URLs have no cached copy (what a run still has to fetch)."""
+    from src.scraper.client import build_url
+    return sum(1 for u in urls if u and not client.cache_paths(build_url(u))[0].is_file())
+
+
+def _backfill_budget(cfg: Config, client: HttpClient) -> int:
+    """Network requests left in this backfill run (one cap for listings and all PDFs)."""
+    return max(0, cfg.backfill_max_requests - client.stats.network_requests)
+
+
 def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> int:
     """Download (or confirm cached) the statistic PDF of every active festival."""
     import datetime as dt
 
     from src.db import load_festivals
+    from src.scraper.client import Blocked
     from src.scraper.statistic_pdfs import PdfLimitExceeded, download_statistic_pdfs
 
     seen: set[str] = set()
     todo = []
-    for f in sorted(load_festivals(conn).values(), key=lambda f: (f.date, f.fest_id)):
+    for f in sorted(_backfill_range(cfg, load_festivals(conn).values()),
+                    key=lambda f: (f.date, f.fest_id)):
         if f.kind == "active" and not f.cancelled and f.statistic_pdf_url \
                 and f.statistic_pdf_url not in seen:
             seen.add(f.statistic_pdf_url)
             todo.append(f)
-    log.info("crawl: statistic PDFs for %d active festivals (cap %d network requests)",
-             len(todo), cfg.pdf_max_requests)
+    cap = _backfill_budget(cfg, client) if cfg.backfill else cfg.pdf_max_requests
+    log.info("crawl: statistic PDFs for %d active festivals, %d not cached yet (cap %d "
+             "network requests)", len(todo),
+             _not_cached(client, (f.statistic_pdf_url for f in todo)), cap)
     before = client.stats.network_requests
     try:
         rep = download_statistic_pdfs(
             client, tqdm(todo, desc="pdfs", unit="pdf", disable=not sys.stderr.isatty()),
-            today=dt.date.today(), max_requests=cfg.pdf_max_requests,
-            max_age_hours=cfg.pdf_max_age_hours, grace_days=cfg.pdf_final_grace_days)
+            today=dt.date.today(), max_requests=cap,
+            max_age_hours=cfg.pdf_max_age_hours, grace_days=cfg.pdf_final_grace_days,
+            max_consecutive_errors=cfg.backfill_max_errors if cfg.backfill else 10)
     except PdfLimitExceeded as exc:
         log.error("crawl: %s after %d requests - downloaded PDFs are cached, re-run to "
                   "continue", exc, client.stats.network_requests - before)
         return 1
+    except Blocked:
+        raise
     except RuntimeError as exc:
         log.error("crawl: %s", exc)
         return 1
@@ -196,7 +292,8 @@ def _crawl_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connection) -> in
              f" (HTTP {rep.status_counts})" if rep.status_counts else "", len(rep.missing))
     for fid, err in rep.failed:
         log.warning("crawl: PDF of festival %d failed: %s", fid, err)
-    rep.missing += _crawl_interim_sheets(client, todo, cfg)
+    if not cfg.backfill:
+        rep.missing += _crawl_interim_sheets(client, todo, cfg)
     if rep.missing:
         log.error("crawl: --offline: %d statistic PDFs not in cache", len(rep.missing))
         return 1
@@ -211,22 +308,27 @@ def _crawl_ranking_pdfs(cfg: Config, client: HttpClient, conn: sqlite3.Connectio
     from src.db import load_festivals
     from src.scraper.ranking_pdfs import (download_ranking_pdfs, festivals_with_ranking,
                                           ranking_max_requests)
+    from src.scraper.client import Blocked
     from src.scraper.statistic_pdfs import PdfLimitExceeded
 
-    todo = festivals_with_ranking(load_festivals(conn).values())
-    cap = ranking_max_requests()
-    log.info("crawl: ranking PDFs for %d active festivals (cap %d network requests)",
-             len(todo), cap)
+    todo = festivals_with_ranking(_backfill_range(cfg, load_festivals(conn).values()))
+    cap = _backfill_budget(cfg, client) if cfg.backfill else ranking_max_requests()
+    log.info("crawl: ranking PDFs for %d active festivals, %d not cached yet (cap %d "
+             "network requests)", len(todo),
+             _not_cached(client, (f.ranking_pdf_url for f in todo)), cap)
     before = client.stats.network_requests
     try:
         rep = download_ranking_pdfs(
             client, tqdm(todo, desc="rankings", unit="pdf", disable=not sys.stderr.isatty()),
             today=dt.date.today(), max_requests=cap, max_age_hours=cfg.pdf_max_age_hours,
-            grace_days=cfg.pdf_final_grace_days)
+            grace_days=cfg.pdf_final_grace_days,
+            max_consecutive_errors=cfg.backfill_max_errors if cfg.backfill else 10)
     except PdfLimitExceeded as exc:
         log.error("crawl: %s after %d requests - downloaded PDFs are cached, re-run to "
                   "continue", exc, client.stats.network_requests - before)
         return 1
+    except Blocked:
+        raise
     except RuntimeError as exc:
         log.error("crawl: %s", exc)
         return 1
@@ -472,7 +574,7 @@ def cmd_clean(cfg: Config) -> int:
                   _db_version(cfg), SCHEMA_VERSION)
         return 1
     t0 = time.perf_counter()
-    result = run_clean(cfg.db_path, cfg.processed_dir)
+    result = run_clean(cfg.db_path, cfg.processed_dir, from_year=cfg.from_year)
     log.info("clean: done in %.1f s -> %s (%s)", time.perf_counter() - t0, cfg.processed_dir,
              ", ".join(f"{k}={v}" for k, v in result.counts.items()))
     return 0
@@ -531,12 +633,13 @@ def cmd_elo(cfg: Config, evaluate: bool = False) -> int:
     out = run_elo(cfg)
     p, h, table = out.result.params, out.ratings, out.athletes
     log.info("elo: mode=%s, K x %g (%s), alpha=%g, baseline_diff=%g, lambda in [%g, %g], "
-             "delta=%g, provisional below %d bouts / after %.1f seasons, ranked from "
-             "season %d", p.update_mode, p.k_scale,
+             "delta=%g, one-sided bouts x %g, provisional below %d bouts / after %.1f "
+             "seasons, ranked from season %d", p.update_mode, p.k_scale,
              " / ".join(f"{p.k(c):g}" for c in p.k_factors), p.mov_alpha,
              p.mov_baseline_diff, p.mov_lambda_min,
-             p.mov_lambda_max, p.reversion_delta, p.provisional_min_bouts,
-             p.provisional_inactive_seasons, cfg.elo_first_ranked_season)
+             p.mov_lambda_max, p.reversion_delta, p.one_sided_weight,
+             p.provisional_min_bouts, p.provisional_inactive_seasons,
+             cfg.elo_first_ranked_season)
     log.info("elo: %d bouts at %d festivals, %d athletes rated, %d history rows, as of %s "
              "(%.1f s)", len(out.result.bouts), h["fest_id"].nunique(),
              len(out.result.ratings), len(h),
@@ -627,8 +730,12 @@ def cmd_check_site(cfg: Config, accept_changes: bool = False, record: bool = Fal
             "check-site: %s%s", line, " - accepted (--accept-changes)" if rep.accepted else "")
     if not rep.ok:
         if rep.changes and not rep.fatal:
-            log.error("check-site: FAILED - if this is intended, run once with "
-                      "--accept-changes (workflow input `accept_changes`)")
+            log.error(
+                "check-site: FAILED - %d change(s) above need the owner's decision; nothing "
+                "was recorded. If every one of them is intended: `python -m src.cli "
+                "check-site --accept-changes --record` once on this machine (accepts this "
+                "site and makes it the baseline for later builds), then export the state; "
+                "in a workflow run, tick the input `accept_changes` once", len(rep.changes))
         else:
             log.error("check-site: FAILED - this site must not be deployed")
         return 1
@@ -743,6 +850,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--no-portraits", action="store_true", default=False,
                         help="skip the schlussgang athlete portraits")
         if name == "crawl":
+            sp.add_argument("--backfill", action="store_true", default=False,
+                            help="slow one-time download of old seasons (use with "
+                                 "--from-year/--to-year): 2-4 s between requests, small "
+                                 "request cap per run, listings and PDFs of that range "
+                                 "only, no portraits, stops on HTTP 403/429")
             sp.add_argument("--portraits-only", action="store_true", default=False,
                             help="only download the athlete portraits and the 2023+ "
                                  "festival -> portrait listings (no festival listings, no PDFs)")
@@ -803,6 +915,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         "offline": True if args.offline else None,
         "require_state": True if args.require_state else None,
         "crawl_pdfs": False if getattr(args, "no_pdfs", False) else None,
+        "backfill": True if getattr(args, "backfill", False) else None,
     }
     return load_config(overrides)
 

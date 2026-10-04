@@ -157,3 +157,31 @@ def test_code_printed_on_every_row_counts_like_the_festival(conn: sqlite3.Connec
         "BKSV", "code")
     assert (got["1-000"]["sub_association"], got["1-000"]["sub_assoc_source"]) == ("ISV", "code")
     assert rep.uniform_sheets == 3 and rep.uniform_rows == n
+
+
+def test_lists_before_2011_do_not_shape_the_club_registry(conn: sqlite3.Connection) -> None:
+    """Phase 10: old ranking lists are read against the registry of the 2011+ lists.
+    Their spellings must not rename a club, and remarks in their club column are no club."""
+    old = Festival(fest_id=9, name="Seeländisches Schwingfest Ins 2007", date="2007-06-10",
+                   category="Gauverband", location=None)
+    upsert_festivals(conn, [old])
+    athletes(conn, 1, [("Muster Hans", None, None, None)])
+    athletes(conn, 9, [("Muster Hans", None, None, None), ("Probe Karl", None, None, None),
+                       ("Zeuge Max", None, None, None)])
+    rankings(conn, 1, [(0, "Basel", None, "BS", "Basel-Stadt")] * 1
+             + [(None, "Basel", None, "BS", "Basel-Stadt")] * 3)
+    rankings(conn, 9, [(0, "Basel", None, None, "Basel"),        # known club, other spelling
+                       (1, "Ins", None, None, "Couronne"),        # remark of the old layout
+                       (2, "Ins", None, None, "Punkte")]
+             + [(None, "Basel", None, None, "Basel")] * 20       # would outvote "Basel-Stadt"
+             + [(None, "Ins", None, None, "Couronne")] * 20)
+    conn.commit()
+    ev.build_evidence(conn)
+    got = evidence(conn)
+    clubs = {r[0]: r[1] for r in conn.execute("SELECT club_key, name FROM clubs")}
+    assert clubs == {"basel stadt": "Basel-Stadt"}
+    assert (got["1-000"]["club_key"], got["1-000"]["club"]) == ("basel stadt", "Basel-Stadt")
+    assert (got["9-000"]["club_key"], got["9-000"]["club"]) == ("basel stadt", "Basel-Stadt")
+    assert got["9-001"]["club"] is None and got["9-002"]["club"] is None
+    assert got["9-001"]["residence"] == "Ins"                     # the rest of the row counts
+    assert ev.CLUB_REGISTRY_FROM == "2011-01-01"

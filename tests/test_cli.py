@@ -23,7 +23,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 # ------------------------------------------------------------------ config
 def test_defaults() -> None:
     cfg = load_config(env={})
-    assert cfg.from_year == 2011
+    assert cfg.from_year == 2004   # Phase 10: first season with mostly complete sheets
     assert cfg.request_delay_min == 0.5 and cfg.request_delay_max == 1.0
     assert cfg.k_factors["ESAF"] == 48 and cfg.k_factors["Kantonal"] == 24
     assert cfg.k_factors["Gauverband"] == 24 and cfg.k_factors["Regional"] == 16
@@ -565,3 +565,156 @@ def test_parse_real_mode_is_offline(tmp_path: Path) -> None:
 def test_parse_force_flag() -> None:
     assert cli.build_parser().parse_args(["parse", "--force"]).force is True
     assert cli.build_parser().parse_args(["crawl", "--no-pdfs"]).no_pdfs is True
+
+
+# ------------------------------------------------------------------ crawl --backfill
+class _BackfillSite:
+    """Listings from the FakeApi fixtures (2011: six Bergkranz festivals, five with
+    PDFs on www.schlussgang.ch) plus the files themselves; ``refuse`` = status for PDFs."""
+
+    def __init__(self, refuse: int | None = None) -> None:
+        from tests.test_fests_crawler import FakeApi
+
+        self.api = FakeApi()
+        self.files: list[str] = []
+        self.refuse = refuse
+
+    def __call__(self, req: "httpx.Request") -> "httpx.Response":
+        import httpx
+
+        if req.url.host == "backend-api.schlussgang.ch":
+            return self.api(req)
+        assert req.url.host == "www.schlussgang.ch"  # never esv.ch
+        self.files.append(str(req.url))
+        if self.refuse is not None:
+            return httpx.Response(self.refuse)
+        return httpx.Response(200, content=b"%PDF-1.4 test")
+
+
+def _backfill_cfg(tmp_path: Path, **kw: object) -> Config:
+    return _crawl_cfg(tmp_path, crawl_pdfs=True, backfill=True, **kw)
+
+
+def test_backfill_option_parses() -> None:
+    args = cli.build_parser().parse_args(
+        ["crawl", "--backfill", "--from-year", "2001", "--to-year", "2010"])
+    cfg = cli.config_from_args(args)
+    assert cfg.backfill and (cfg.from_year, cfg.to_year) == (2001, 2010)
+    assert not cli.config_from_args(cli.build_parser().parse_args(["crawl"])).backfill
+
+
+def test_backfill_downloads_slowly_and_only_once(tmp_path: Path,
+                                                 no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _backfill_cfg(tmp_path)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert len(site.api.requests) == 5           # listings; no portrait query in a backfill
+    assert len(site.files) == len(set(site.files)) >= 6  # statistic + ranking PDFs
+    assert len(no_sleep) == 5 + len(site.files) - 1
+    assert min(no_sleep) > 1.9 and max(no_sleep) <= 4.0   # 2-4 s, minus the elapsed time
+    n = len(site.files)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert len(site.api.requests) == 5 and len(site.files) == n  # nothing fetched twice
+
+
+def test_normal_crawl_never_downloads_the_old_seasons(
+        tmp_path: Path, no_sleep: list[float], caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 10 review: the seasons before 2011 are fetched by `crawl --backfill` only. A
+    normal crawl on a data directory that does not hold them (a state bundle from before
+    the history, a fresh clone) refuses before the first request instead of downloading
+    some 700 old files at 0.5-1.0 s."""
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _crawl_cfg(tmp_path, crawl_pdfs=True, from_year=2009)      # 2009 .. 2011
+    with caplog.at_level("ERROR"):
+        assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert site.api.requests == [] and site.files == [] and no_sleep == []
+    assert "the seasons 2009-2010 are not in this data directory's cache" in caplog.text
+    assert "nothing was requested" in caplog.text and "crawl --backfill --from-year 2009 " \
+        "--to-year 2010" in caplog.text and "--from-year 2011" in caplog.text
+    # the later seasons alone are crawled as ever
+    later = _crawl_cfg(tmp_path, crawl_pdfs=True)
+    assert cli.cmd_crawl(later, transport=httpx.MockTransport(site), portraits=False) == 0
+    assert site.api.requests and site.files
+    # --offline asks nothing anyway and keeps reporting what is missing
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path, from_year=2009, offline=True),
+                         transport=httpx.MockTransport(site), portraits=False) == 1
+
+
+def test_normal_crawl_passes_once_the_backfill_has_cached_the_old_seasons(
+        tmp_path: Path, no_sleep: list[float], monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture) -> None:
+    """With the old seasons in the cache a normal crawl goes ahead and requests nothing
+    for them; one missing old PDF is enough to refuse. (The 2011 fixtures stand in for an
+    old season: the boundary is moved for the test.)"""
+    import httpx
+
+    monkeypatch.setattr(cli, "OLD_SEASONS_BEFORE", 2012)
+    site = _BackfillSite()
+    normal = _crawl_cfg(tmp_path, crawl_pdfs=True)
+    assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert site.api.requests == [] and site.files == []
+    assert cli.cmd_crawl(_backfill_cfg(tmp_path), transport=httpx.MockTransport(site)) == 0
+    n_api, n_files = len(site.api.requests), len(site.files)
+    assert n_files >= 6
+    assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 0
+    assert (len(site.api.requests), len(site.files)) == (n_api, n_files)   # all from cache
+    # one old PDF gone from the cache: refused again, nothing requested
+    from src.scraper.client import build_url, client_from_config
+    with client_from_config(normal, offline=True) as client:
+        client.cache_paths(build_url(site.files[0]))[0].unlink()
+    with caplog.at_level("ERROR"):
+        assert cli.cmd_crawl(normal, transport=httpx.MockTransport(site), portraits=False) == 1
+    assert "0 listing queries and 1 PDFs" in caplog.text
+    assert (len(site.api.requests), len(site.files)) == (n_api, n_files)
+
+
+def test_backfill_cap_covers_listings_and_pdfs_and_resumes(tmp_path: Path,
+                                                           no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    cfg = _backfill_cfg(tmp_path, backfill_max_requests=7)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 1
+    assert len(site.api.requests) + len(site.files) == 7
+    rc = 1
+    for _ in range(10):  # re-running the same command continues where it stopped
+        if rc == 0:
+            break
+        rc = cli.cmd_crawl(cfg, transport=httpx.MockTransport(site))
+    assert rc == 0 and len(site.files) == len(set(site.files))
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_backfill_stops_at_the_first_refusal(tmp_path: Path, no_sleep: list[float],
+                                             status: int) -> None:
+    import httpx
+
+    site = _BackfillSite(refuse=status)
+    assert cli.cmd_crawl(_backfill_cfg(tmp_path), transport=httpx.MockTransport(site)) == 1
+    assert len(site.files) == 1  # one refused request: no retry, no next file
+
+
+def test_backfill_stops_after_repeated_errors(tmp_path: Path, no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite(refuse=500)
+    cfg = _backfill_cfg(tmp_path, backfill_max_errors=2)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 1
+    assert len(set(site.files)) == 2 and len(site.files) == 4  # 2 files x 2 attempts, then stop
+
+
+def test_backfill_leaves_other_seasons_alone(tmp_path: Path, no_sleep: list[float]) -> None:
+    import httpx
+
+    site = _BackfillSite()
+    assert cli.cmd_crawl(_crawl_cfg(tmp_path), transport=httpx.MockTransport(site),
+                         portraits=False) == 0           # 2011 festivals in the db, no PDFs
+    cfg = _backfill_cfg(tmp_path, from_year=2010, to_year=2010)
+    assert cli.cmd_crawl(cfg, transport=httpx.MockTransport(site)) == 0
+    assert site.files == []                               # the 2011 PDFs are not this range
+    with pytest.raises(ValueError):
+        cli.cmd_crawl(cfg, transport=httpx.MockTransport(site), portraits_only=True)

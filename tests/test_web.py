@@ -232,7 +232,11 @@ def test_comparison_page_rules() -> None:
     # the chart keeps the profile's honesty: the reversion comes from SE.careerSeries
     assert "SE.careerSeries(e.h)" in js and "s.reversion" in js and "1. April" in js
     # where the comparison invites it: eras, no common time
-    for needle in ("Keine gemeinsame Zeit", "bis etwa 2016", "nicht direkt vergleichbar",
+    # (the wording of the scale note is shared with the start page: SE.scaleText, app.js)
+    app = (WEB / "js" / "app.js").read_text(encoding="utf-8")
+    assert "ab etwa ' + SE.SCALE_FROM + ' sind untereinander vergleichbar" in app
+    assert "SE.SCALE_FROM = 2016;" in app and "var SCALE_SETTLED = '2016-01-01';" in js
+    for needle in ("Keine gemeinsame Zeit", "SE.scaleText(metaObj)", "nicht direkt vergleichbar",
                    "about.html#grenzen", "jeder Gang einmal gezählt", "ohne Note",
                    "Noch niemand ausgewählt", "höchstens"):
         assert needle in js, needle
@@ -261,6 +265,53 @@ def test_comparison_page_rules() -> None:
     assert "<strong>Vergleich.</strong>" in about and "einmal gezählt" in about
     for ident in ("se-picked", "se-add", "se-add-results", "se-add-hint", "se-slots", "se-view"):
         assert f'id="{ident}"' in html, ident
+
+
+def test_festival_page_gang_rules() -> None:
+    """Static checks for the contribution per Gang on the festival page (Phase 10 task 7b;
+    the browser smoke test runs the page, the withheld athlete's own row cannot be opened
+    there and is checked here)."""
+    js = (WEB / "js" / "fests.js").read_text(encoding="utf-8")
+    bouts = js[js.index("function boutsHtml"):js.index("var SORTS")]
+    # numbers only for a listed athlete with a rating, from a file that carries them, at a
+    # festival that counts - never on a withheld athlete's own rows
+    assert "var numbers = f.perGang && !!a.id && !a.anon && a.after !== null;" in bouts
+    assert "f.perGang = rated && f.bouts.cols.indexOf('d') !== -1;" in js
+    assert bouts.count("if (numbers)") == 2 and "else if (f.perGang && a.anon)" in bouts
+    # a Gang against a withheld athlete: no number of its own, one remainder for all
+    assert "if (b.d === null) {" in bouts and "hidden += 1;" in bouts
+    assert "var diff = a.after - a.before, rest = diff - sum;" in bouts
+    # review fix F3: what the remainder is - one hidden Gang: that Gang's contribution
+    # (no sentence denying it); several: their sum, no single value. One constant hides
+    # the number (and the sum of the listed contributions) in both cases; off by default.
+    assert "var HIDE_REMAINDER = false;" in js and js.count("HIDE_REMAINDER") == 2
+    assert "if (hidden && HIDE_REMAINDER) {" in bouts and "} else if (hidden) {" in bouts
+    off = bouts[bouts.index("if (hidden && HIDE_REMAINDER) {"):bouts.index("} else if (hidden) {")]
+    assert "SE.signed1" not in off and "SE.hiddenGaenge(hidden)" in off
+    assert "keinen Einzelwert" not in js and "SE.hiddenGaenge(hidden)" in bouts
+    for needle in ("Kein Beitrag in dieser Zeile: Der Gegner wird nicht mit Namen veröffentlicht",
+                   "– der Beitrag dieses einen Gangs.",
+                   "– ihre Summe; einzeln werden sie nicht gezeigt.",
+                   "hier nicht gezeigt",
+                   "Beitrag des Gangs zur Wertung", "erwartet waren",
+                   "Die Wertung wird pro Fest berechnet, gegen die Wertungen vor dem Fest",
+                   "keine Wertung nach jedem Gang",
+                   "Ohne Zahlen zur Wertung"):
+        assert needle in bouts, needle
+    # the contribution is the file's value for athlete a, its negative for b
+    assert "(mine ? b.d : -b.d)" in js
+    # the summary counts listed athletes only and says so
+    summary = js[js.index("function summaryHtml"):js.index("function renderFest")]
+    assert "a.after !== null && a.before !== null" in summary
+    assert "nicht mit Namen veröffentlicht" in summary and "Gerechnet ohne" in summary
+    for needle in ("Das Fest in Zahlen", "Am meisten gewonnen", "Am meisten verloren",
+                   "Grösste Überraschung"):
+        assert needle in summary, needle
+    for key in ("pts:", "diff:", "before:", "after:"):
+        assert key in js[js.index("var SORTS"):js.index("var UPSET_MIN_GAP")]
+    # phone width: the row does not wrap, the words of the result only from 640 px
+    assert '<li class="flex items-baseline gap-x-2">' in bouts and "flex-wrap" not in bouts
+    assert 'class="hidden sm:inline"' in bouts
 
 
 def test_comparison_axis_rules() -> None:
@@ -303,7 +354,8 @@ def test_comparison_axis_rules() -> None:
     assert "p.season.pos !== null ? p" in js               # no place = hollow point
     # caveats in visible text, each only when it applies to the selection
     notes = js[js.index("function axisNotes"):js.index("function chartSection")]
-    assert notes.count("if (early.length)") == 3 and "SE.esc(firstSeason)" in notes
+    assert notes.count("if (early.length)") == 3 and notes.count("dataBegin()") == 2
+    assert "SE.esc(firstSeason)" in js[js.index("function dataBegin"):js.index("function names")]
     for needle in ("nicht zwingend der erste der Laufbahn", "nicht zwingend die erste der Laufbahn",
                    "Bekannt ist nur der Jahrgang, nicht der Geburtstag", "bis zu einem Jahr darunter",
                    "gehört zu keinem Fest", "wie in der Tabelle «Saisons»", "hohler Punkt"):
@@ -318,11 +370,15 @@ def test_comparison_axis_rules() -> None:
     assert eras.index("heisst nicht gleiche Zeit'") < eras.index("!old ? '.'")
     assert js.count("scaleNoted = true;") == 1 and js.count("' + eras(shown) + '") == 4
     # F2: who gets the "not the start of his career" note - the thin first seasons of the
-    # data or a first festival at an adult age; worded as likely, not as known
+    # data, a first festival that is a Regional one in the first seasons that have any
+    # (Phase 10: before them the data hold Kranzfeste only), or a first festival at an
+    # adult age; worded as likely, not as known
     rule = js[js.index("function likelyTruncated"):js.index("function startText")]
     assert "var EARLY_SEASONS = 2;" in js and "var ADULT_AGE = 20;" in js
-    assert ("(firstSeason !== null && y < firstSeason + EARLY_SEASONS) || "
-            "(hasBirthYear(e) && y - e.h.by >= ADULT_AGE)") in rule
+    assert "(firstSeason !== null && y < firstSeason + EARLY_SEASONS) ||" in rule
+    assert ("firstRegional > firstSeason && e.rows[0].cat === 'Regional' "
+            "&& y < firstRegional + EARLY_SEASONS") in rule
+    assert "(hasBirthYear(e) && y - e.h.by >= ADULT_AGE)" in rule
     assert notes.count("Wahrscheinlich ") == 3 and notes.count("sicher ist das nicht") == 3
     assert "trat schon in dieser" not in js and "fromTheStart" not in js
     # F3: a single career season does not sit on the border of the chart
@@ -393,7 +449,10 @@ def test_comparison_gang_rules() -> None:
         assert needle in notes, needle
     assert "(Aufteilung des Fests, keine eigene Wertung)" in js           # Gang tooltip
     assert "var DOUBT = 'Reihenfolge der Gänge an diesem Fest nicht gesichert';" in js
-    assert "gegen einen nicht veröffentlichten Gegner" in js
+    # (the wording is shared with the festival page: SE.hiddenGaenge in app.js)
+    assert "SE.hiddenGaenge(rest.n) + (rest.n === 1 ? ': ' : ': zusammen ')" in js
+    assert "gegen einen nicht veröffentlichten Gegner" in (WEB / "js" / "app.js").read_text(
+        encoding="utf-8")
     # opponents are named from the file's own list, escaped, with the identity marker
     text = js[js.index("function gangText"):js.index("function restText")]
     assert "SE.esc(e.bouts.names[it.opp]" in text and "e.bouts.unc" in text and "' ?'" in text

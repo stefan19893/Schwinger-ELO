@@ -244,7 +244,21 @@ def test_meta(site: Site) -> None:
     assert set(m["counts"]) == {"athletes", "ranked", "festivals", "festivals_partial",
                                 "festivals_missing", "bouts", "history_rows", "withheld",
                                 "withheld_ranked", "withheld_unknown", "rated",
-                                "birth_year_known"}
+                                "birth_year_known", "bouts_one_sided", "name_only"}
+    # the reach of the data, read from the data (the pages quote it instead of fixed years)
+    seasons = {int(str(d)[:4]) for d in site.ratings["date"]}
+    assert m["first_season"] == min(seasons) and m["last_season"] == max(seasons)
+    b = site.bouts[site.bouts["elo_eligible"].astype(bool)]
+    one = b["flags"].fillna("").str.contains("unlisted_opponent")
+    assert m["counts"]["bouts_one_sided"] == int(one.sum())
+    printed = set(b["athlete_a_id"]) | set(b.loc[~one, "athlete_b_id"])
+    assert m["counts"]["name_only"] == len(set(b.loc[one, "athlete_b_id"]) - printed
+                                           - site.withheld)
+    fests = pd.read_parquet(site.cfg.processed_dir / "festivals.parquet")
+    regional = fests[(fests["category"] == "Regional") & (fests["n_bouts"] > 0)
+                     & fests["elo_eligible"].astype(bool)]
+    assert m["first_regional_season"] == (int(regional["year"].min()) if len(regional)
+                                          else None)
     rated = set(site.ar.loc[site.ar["n_bouts"] > 0, "athlete_id"])
     assert m["counts"]["withheld"] == len(site.withheld & rated)
     assert m["counts"]["withheld_unknown"] == len(site.withheld_unknown & rated)
@@ -301,7 +315,7 @@ def test_rankings_latest(site: Site) -> None:
 
 
 def test_search_index(site: Site) -> None:
-    assert site.search["cols"] == sb.SEARCH_COLS
+    assert site.search["cols"] == sb.SEARCH_COLS and set(site.search) == {"cols", "rows", "twins"}
     rows = table(site.search)
     ids = [r["id"] for r in rows]
     assert len(set(ids)) == len(ids) and all(ID_RE.match(i) for i in ids)
@@ -411,18 +425,73 @@ def test_festival_index_and_files(site: Site) -> None:
             assert a["id"] is None or a["id"] in searchable
             if a["anon"]:   # not certainly of age: the bouts, nothing else - no rating
                 assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"],
-                        a["unc"]) == (None, None, None, None, None, None, 0)
+                        a["exp"], a["unc"]) == (None, None, None, None, None, None, None, 0)
             elif a["id"] is None:   # no profile: at most the name is shown
-                assert (a["club"], a["tv"], a["before"], a["after"], a["unc"]) == \
-                    (None, None, None, None, 0)
+                assert (a["club"], a["tv"], a["before"], a["after"], a["exp"], a["unc"]) == \
+                    (None, None, None, None, None, 0)
             else:
                 assert isinstance(a["name"], str) and a["name"]
             if a["id"] is not None and f["status"] != "unrated":
+                # the values of the athlete's history file (one decimal), expected score too
                 row = rated.loc[(a["id"], fid)]
-                assert a["before"] == round(row["rating_before"])
-                assert a["after"] == round(row["rating_after"])
+                assert a["before"] == round(row["rating_before"], 1)
+                assert a["after"] == round(row["rating_after"], 1)
+                assert a["exp"] == round(row["expected"], 1)
             if f["status"] == "unrated":
-                assert a["before"] is None and a["after"] is None
+                assert a["before"] is None and a["after"] is None and a["exp"] is None
+
+
+def test_festival_contributions(site: Site) -> None:
+    """Phase 10 task 7b: every festival file, every bout. `d` is the engine's contribution
+    for athlete `a` (one decimal) exactly at the rated bouts between two published
+    athletes and null everywhere else; the file's bouts are the festival's bouts; and for
+    a published athlete without hidden bouts the contributions add up to his change."""
+    br = pd.read_parquet(site.cfg.processed_dir / "bout_ratings.parquet")
+    side_a = br[br["side"] == "A"]
+    delta = dict(zip(side_a["bout_id"], side_a["delta"]))
+    published = {r[0] for r in site.search["rows"]}
+    want: dict[int, list[tuple[Any, ...]]] = {}
+    b = site.bouts
+    for bid, fid, gang, a, c, ok in zip(b["bout_id"], b["fest_id"], b["gang_nr"],
+                                        b["athlete_a_id"], b["athlete_b_id"],
+                                        b["elo_eligible"]):
+        both = a in published and c in published
+        want.setdefault(int(fid), []).append(
+            (int(gang), a if a in published else None, c if c in published else None,
+             round(delta[bid], 1) + 0.0 if ok and both else None))
+    n_listed = n_hidden = n_sums = n_files = 0
+    for p in sorted((site.data / "fests").iterdir()):
+        f = load(p)
+        ids = [r[0] for r in f["athletes"]["rows"]]
+        got = sorted(((r[0], ids[r[1]], ids[r[2]], r[7]) for r in f["bouts"]["rows"]),
+                     key=repr)
+        assert got == sorted(want[f["id"]], key=repr), f["id"]
+        n_files += 1
+        athletes = table(f["athletes"])
+        total = [0.0] * len(athletes)
+        hidden = [0] * len(athletes)
+        for r in f["bouts"]["rows"]:
+            assert r[7] is None or (isinstance(r[7], float) and repr(r[7]) != "-0.0")
+            for i, sign in ((r[1], 1), (r[2], -1)):
+                if r[7] is None:
+                    hidden[i] += 1
+                else:
+                    total[i] += sign * r[7]
+            n_listed += r[7] is not None
+            n_hidden += r[7] is None
+        if f["status"] == "unrated":
+            assert all(r[7] is None for r in f["bouts"]["rows"])
+            continue
+        for a, t, h in zip(athletes, total, hidden):
+            if a["anon"] or a["id"] is None:
+                continue
+            if h == 0:      # rounding: one decimal per bout and per rating
+                n = a["w"] + a["d"] + a["l"]
+                assert abs(t - (a["after"] - a["before"])) <= 0.05 * n + 0.1 + 1e-9, f["id"]
+                n_sums += 1
+    assert n_files == len(want) and n_listed > 0 and n_sums > 0
+    if not site.cfg.sample:
+        assert n_hidden > 20_000          # the real site has withheld athletes in bouts
 
 
 def test_history_files(site: Site) -> None:
@@ -459,7 +528,8 @@ def test_history_files(site: Site) -> None:
         for s in table(h["seasons"]):
             assert s["pos"] is None or s["pos"] >= 1
         for n in h["namesakes"]:
-            assert set(n) == {"id", "name", "club", "tv", "by", "first", "last", "unc"}
+            assert set(n) == {"id", "name", "club", "tv", "by", "first", "last", "unc",
+                                  "nf"}
             assert n["unc"] == int(by_id.at[n["id"], "identity_uncertain"])
             assert n["id"] != aid and n["name"].casefold() == h["name"].casefold()
             assert (site.data / "history" / f"history_{n['id']}.json").is_file()
@@ -1077,7 +1147,7 @@ def test_real_age_filter(real: Site) -> None:
     assert all(r["by"] is None or r["by"] < real.meta["publish"]["withheld_from_birth_year"]
                for r in table(real.search))
     sample_files = sorted((real.data / "fests").iterdir())[-40:]
-    assert any(a[-1] for p in sample_files for a in load(p)["athletes"]["rows"])
+    assert any(a[-1] for p in sample_files for a in load(p)["athletes"]["rows"])   # anon
 
 
 def test_real_unknown_birth_years(real: Site) -> None:
@@ -1100,9 +1170,45 @@ def test_real_withheld_rows_carry_no_rating(real: Site) -> None:
         for a in table(load(p)["athletes"]):
             if a["anon"]:
                 n_anon += 1
-                assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"]) == \
-                    (None,) * 6, p.name
+                assert (a["id"], a["name"], a["club"], a["tv"], a["before"], a["after"],
+                        a["exp"]) == (None,) * 7, p.name
     assert n_anon > 5000
+
+
+def test_real_festival_files_give_no_contribution_for_withheld_athletes(real: Site) -> None:
+    """The leak test of the festival files (Phase 10 task 7b), on every file of the real
+    build and derived from the Parquet files, not from the exporter: no bout with a
+    withheld athlete on either side carries a contribution - neither on a listed
+    athlete's Gang against him nor on his own row -, every such bout is there without
+    one, and nothing else in the file is a number of his rating. Counts only."""
+    withheld = real.withheld
+    b = real.bouts
+    hidden_bouts: dict[int, int] = {}
+    for fid, a, c in zip(b["fest_id"], b["athlete_a_id"], b["athlete_b_id"]):
+        if a in withheld or c in withheld:
+            hidden_bouts[int(fid)] = hidden_bouts.get(int(fid), 0) + 1
+    assert sum(hidden_bouts.values()) > 30_000
+    n_checked = n_listed_athletes_with_hidden = 0
+    for p in sorted((real.data / "fests").iterdir()):
+        f = load(p)
+        assert set(f["athletes"]["cols"]) == set(sb.FEST_ATHLETE_COLS)
+        assert f["bouts"]["cols"] == sb.FEST_BOUT_COLS
+        rows = f["athletes"]["rows"]
+        anon = {i for i, r in enumerate(rows) if r[-1]}
+        with_anon = [r for r in f["bouts"]["rows"] if r[1] in anon or r[2] in anon]
+        assert len(with_anon) == hidden_bouts.get(f["id"], 0)
+        assert all(r[7] is None for r in with_anon)
+        assert all(len(r) == 8 for r in f["bouts"]["rows"])
+        # a bout without contribution at a rated festival has a withheld side: nothing
+        # else is hidden, so "ohne Einzelwert" on the page means exactly that
+        if f["status"] != "unrated":
+            assert all(r[7] is not None or r[1] in anon or r[2] in anon
+                       for r in f["bouts"]["rows"])
+        n_checked += len(with_anon)
+        n_listed_athletes_with_hidden += len(
+            {i for r in with_anon for i in (r[1], r[2]) if i not in anon})
+    assert n_checked == sum(hidden_bouts.values())
+    assert n_listed_athletes_with_hidden > 10_000
 
 
 def test_real_bout_files_name_no_withheld_athlete(real: Site) -> None:
@@ -1189,7 +1295,9 @@ def test_real_bout_files_say_nothing_about_hidden_bouts(real: Site) -> None:
 
 def test_real_known_weaknesses_are_represented(real: Site) -> None:
     seasons = {s["season"]: s for s in real.seasons["seasons"]}
-    assert seasons[2011]["status"] == "burn_in"
+    # the burn-in is the first season of the data (2004 since Phase 10, task 6; was 2011)
+    first = min(seasons)
+    assert first == real.cfg.elo_first_ranked_season - 1 and seasons[first]["status"] == "burn_in"
     assert seasons[2020]["status"] == "thin" and seasons[2020]["n_festivals"] < 20
     assert all(seasons[y]["status"] == "ok" for y in (2012, 2016, 2019, 2021, 2025))
     # the season lists need 12 season bouts: no place on a single festival
@@ -1247,13 +1355,42 @@ def test_real_unrated_festival_shows_names(real: Site) -> None:
     assert names_only > 0
 
 
+def test_twins_carry_what_is_left_to_tell_them_apart(site: Site) -> None:
+    """`twins` holds exactly the athletes whose search row equals another one's in every
+    distinguishing field, with their number of festivals and bouts (Phase 10)."""
+    rows = table(site.search)
+    groups: dict[tuple[Any, ...], list[str]] = {}
+    for r in rows:
+        groups.setdefault((r["name"].casefold(), r["club"], r["by"], r["tv"], r["first"],
+                           r["last"]), []).append(r["id"])
+    same = {i for ids in groups.values() if len(ids) > 1 for i in ids}
+    twins = site.search["twins"]
+    assert set(twins) == same
+    by_id = site.ar.set_index("athlete_id")
+    for aid, (n_fests, n_bouts) in twins.items():
+        assert (n_fests, n_bouts) == (by_id.at[aid, "n_festivals"], by_id.at[aid, "n_bouts"])
+        # the namesake list of the profile carries the same number
+        assert all(n["nf"] == by_id.at[n["id"], "n_festivals"]
+                   for n in site.history(aid)["namesakes"])
+
+
 def test_real_namesakes_can_be_told_apart(real: Site) -> None:
+    """Every search row differs from every other one in what the page shows. Two pairs of
+    namesakes of the seasons before 2011 share name, Teilverband and seasons and have
+    neither club nor birth year - the sheets print nothing else, and they are two people
+    each because both stand in the same sheets. For such athletes the row shows the
+    number of festivals (`twins`), which is all that is left; the page says so. The
+    assertions give counts only, never a name."""
     rows = table(real.search)
+    twins = real.search["twins"]
     seen: dict[tuple[Any, ...], int] = {}
     for r in rows:
-        key = (r["name"], r["club"], r["by"], r["tv"], r["first"], r["last"])
+        key = (r["name"], r["club"], r["by"], r["tv"], r["first"], r["last"],
+               twins.get(r["id"], [None])[0])            # as SE.subline shows the row
         seen[key] = seen.get(key, 0) + 1
-    assert [k for k, n in seen.items() if n > 1] == []
+    assert sum(1 for n in seen.values() if n > 1) == 0
+    assert 0 < len(twins) <= 10          # rare: it must not become the normal answer
+    assert all(r["flags"] & sb.F_UNCERTAIN for r in rows if r["id"] in twins)
     ranked = [(r["name"], r["club"], r["by"], r["tv"]) for r in table(real.rankings)]
     assert len(ranked) == len(set(ranked))
 
@@ -1269,6 +1406,12 @@ def test_real_payload_sizes(real: Site) -> None:
     bout_sizes = [p.stat().st_size for p in (real.data / "bouts").iterdir()]
     # (60 MB since Phase 9, was 50: the files also carry the contribution per bout and
     # the opponents' names, so that the Gang tooltip needs no 590 KB search index)
-    assert max(bout_sizes) < 70_000 and sum(bout_sizes) < 60_000_000
+    # Phase 10, history from 2004: 8,830 athletes instead of 6,306 and careers of up to 23
+    # seasons. Largest file 71.7 KB (20.5 KB gzip; 252 festivals, 1,481 bouts), all files
+    # 63.7 MB. The bounds follow the data (80 KB / 75 MB): a file is fetched only for an
+    # athlete selected on the comparison page, and trimming it would mean dropping the
+    # opponents' names again or shortening the ids, i.e. a new contract for 3 KB gzip.
+    assert max(bout_sizes) < 80_000 and sum(bout_sizes) < 75_000_000
     n_files, n_bytes = sb.dist_stats(real.dist)
-    assert n_files < 18_000 and n_bytes < 120_000_000
+    # 19,739 files / 125 MB with the history (was 14,447 / 103 MB); Pages allows 1 GB
+    assert n_files < 24_000 and n_bytes < 160_000_000

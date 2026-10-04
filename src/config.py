@@ -33,6 +33,8 @@ SAMPLE_PROVISIONAL_MIN_BOUTS = 6
 # the rule for unknown birth years would withhold 152 of its 547 athletes (130 of the 143
 # ranked). The local demo therefore runs without it unless it is set explicitly.
 SAMPLE_PUBLISH_UNKNOWN_RECENT_SEASONS = 0
+# The --sample dataset starts in 2011: its burn-in season is 2011, not the real data's 2004.
+SAMPLE_FIRST_RANKED_SEASON = 2012
 
 # Politeness floor (spec §4.1): no configuration may go below this delay.
 MIN_REQUEST_DELAY = 0.5
@@ -62,8 +64,15 @@ class Config:
     refresh: bool = False
     offline: bool = False  # crawl from data/raw only; cache misses are reported, never fetched
 
-    # --- Crawl range -------------------------------------------------------
-    from_year: int = 2011
+    # --- Data range --------------------------------------------------------
+    # First season of the data set: `crawl` lists festivals from this year on and `clean`
+    # puts the festivals from this year on into data/processed (earlier seasons that are
+    # in the staging database stay there). 2004 since Phase 10 (was 2011): the first
+    # season whose Kranzfest sheets on schlussgang.ch are mostly complete (27-37 of 38
+    # per season 2004-2010; no Regional festivals before 2011). 2002 and 2003 are
+    # crawled and parsed too, but their sheets are extracts of the first ranks (half of
+    # the bouts are seen from one side only); 2001 has a sheet for 10 of 38 festivals.
+    from_year: int = 2004
     to_year: int = _dt.date.today().year
 
     # --- Politeness (spec §4.1) ---------------------------------------------
@@ -92,6 +101,17 @@ class Config:
     # Parse (Phase 2): sheets where fewer than this share of entries pair into
     # bouts are treated as structurally unreliable (no bouts imported).
     parse_min_pair_rate: float = 0.5
+    # Backfill of old seasons (`crawl --backfill`, Phase 10): a one-time bulk of old files
+    # nobody is waiting for, so it runs clearly slower than the normal crawl - a random
+    # 2-4 s between requests (~20 requests a minute at most) - with its own, smaller cap
+    # per run (listings + statistic + ranking PDFs together), and it gives up instead of
+    # insisting: HTTP 403 / 429 stop the run at once (no retry), other errors are retried
+    # once and the run stops after backfill_max_errors failed files in a row.
+    backfill: bool = False
+    backfill_delay_min: float = 2.0
+    backfill_delay_max: float = 4.0
+    backfill_max_requests: int = 400
+    backfill_max_errors: int = 3
     # Upper bound for honouring a server's Retry-After header (seconds).
     retry_after_max: float = 300.0
     user_agent: str = (
@@ -127,8 +147,22 @@ class Config:
     # bouts than provisional_min_bouts.
     provisional_inactive_seasons: float = 1.5
     provisional_min_bouts: int = 24
-    # Seasons (calendar years) before this one are rated but not ranked (burn-in).
-    elo_first_ranked_season: int = 2012
+    # Seasons (calendar years) before this one are rated but not ranked (burn-in) and do
+    # not count for peak ratings: the first season of the data (from_year = 2004), in
+    # which everybody starts at 1500. Phase 10 (2026-10-04): one season settles the
+    # *order* (a start one season later gives 19 of the same top 20 from its second
+    # season on); the *level* of the scale needs about five seasons and then widens
+    # again from 2012 (Regional festivals) until about 2016 - a caveat, not a burn-in.
+    elo_first_ranked_season: int = 2005
+    # Weight (0..1, multiplies K) of the bouts flagged `unlisted_opponent`: on the sheets
+    # before 2011 the opponent of a printed athlete is not printed himself (he did not
+    # finish the festival), so the bout is known from one side. 1.0 = like any other bout
+    # (outcome only, lambda = 1), 0 = not rated. Phase 10: full weight - every bout
+    # between a printed and an unprinted athlete is on the sheet (only bouts among the
+    # unprinted are missing), and cutting recent complete sheets the same way shows that
+    # full weight reproduces the complete-data ratings best (RMSE 27 points against 45 /
+    # 60 / 65 at weight 0.5 / 0.25 / 0).
+    elo_one_sided_weight: float = 1.0
     # Identity uncertainty (Phase 3): identity_map rows with confidence <= this value
     # are "low confidence"; an athlete is marked uncertain with >= min_rows such rows
     # or >= min_share of his rows.
@@ -260,6 +294,8 @@ def load_config(
         values["data_dir"] = SAMPLE_DATA_DIR
     if values.get("sample") and "provisional_min_bouts" not in values:
         values["provisional_min_bouts"] = SAMPLE_PROVISIONAL_MIN_BOUTS
+    if values.get("sample") and "elo_first_ranked_season" not in values:
+        values["elo_first_ranked_season"] = SAMPLE_FIRST_RANKED_SEASON
     if values.get("sample") and "publish_unknown_recent_seasons" not in values:
         values["publish_unknown_recent_seasons"] = SAMPLE_PUBLISH_UNKNOWN_RECENT_SEASONS
     cfg = Config(**values)
@@ -268,6 +304,17 @@ def load_config(
     if not MIN_REQUEST_DELAY <= cfg.request_delay_min <= cfg.request_delay_max:
         raise ValueError(f"require {MIN_REQUEST_DELAY} <= request_delay_min <= "
                          f"request_delay_max (politeness floor)")
+    if not MIN_REQUEST_DELAY <= cfg.backfill_delay_min <= cfg.backfill_delay_max:
+        raise ValueError(f"require {MIN_REQUEST_DELAY} <= backfill_delay_min <= "
+                         f"backfill_delay_max (politeness floor)")
+    if cfg.backfill_delay_min < cfg.request_delay_min:
+        raise ValueError("backfill_delay_min must not be below request_delay_min "
+                         "(the backfill is the slower crawl)")
+    if cfg.backfill_max_requests < 0 or cfg.backfill_max_errors < 1:
+        raise ValueError("backfill_max_requests must be >= 0, backfill_max_errors >= 1")
+    if cfg.backfill and cfg.refresh:
+        raise ValueError("--backfill and --refresh are mutually exclusive "
+                         "(a backfill never fetches a file twice)")
     if cfg.offline and cfg.refresh:
         raise ValueError("--offline and --refresh are mutually exclusive")
     if cfg.listing_final_grace_days < 0 or cfg.listing_max_age_hours <= 0:

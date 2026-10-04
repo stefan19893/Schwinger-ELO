@@ -1,4 +1,5 @@
-"""Discovers all festivals 2011-present from schlussgang.ch (spec §4.1, Milestone 1).
+"""Discovers all festivals from ``Config.from_year`` to the present on schlussgang.ch
+(spec §4.1, Milestone 1; the API lists events back to 2001, Kranzfeste only before 2011).
 
 Source: the Drupal JSON:API behind schlussgang.ch/resultate
 (``backend-api.schlussgang.ch/jsonapi/node/event``). One query per
@@ -58,7 +59,8 @@ EIDG_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 # tid 14: the Bernese Gauverbands-Schwingfeste; everything else is cantonal.
 GAU_RE = re.compile(
-    r"mittelländisch|oberländisch|seeländisch|bern-jurassisch|oberaargauisch|emmentalisch",
+    r"mittelländisch|oberländisch|seeländisch|bern(?:er)?[- ]juras+isch|oberaargauisch"
+    r"|emmentalisch",
     re.I)
 KANTONAL_RE = re.compile(r"kantonal|cantonal", re.I)
 

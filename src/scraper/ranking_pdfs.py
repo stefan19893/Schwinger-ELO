@@ -17,7 +17,7 @@ import os
 from collections.abc import Iterable, Mapping
 
 from src.db import Festival
-from src.scraper.client import CacheMiss, FetchError, FetchResult, HttpClient
+from src.scraper.client import Blocked, CacheMiss, FetchError, FetchResult, HttpClient
 from src.scraper.statistic_pdfs import DownloadReport, PdfLimitExceeded, pdf_cache_policy
 
 log = logging.getLogger("schwingen.ranking")
@@ -84,6 +84,8 @@ def download_ranking_pdfs(client: HttpClient, festivals: Iterable[Festival], *,
         except CacheMiss:
             rep.missing.append(f.fest_id)
             continue
+        except Blocked:
+            raise  # refused (backfill: 403 / 429): the caller ends the run
         except FetchError as exc:
             rep.failed.append((f.fest_id, str(exc)))
             if exc.status is not None:

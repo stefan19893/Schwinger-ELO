@@ -681,3 +681,118 @@ def test_sample_fixtures_invariants(tmp_path: Path) -> None:
     assert (ath["n_festivals"] >= 2).sum() > 40
     glarner = ath[ath["full_name"] == "Glarner Matthias"]  # Brünig 2011 + ESAF 2019
     assert len(glarner) == 1 and glarner.iloc[0]["n_festivals"] == 2
+
+
+# ------------------------------------------------------------------ seasons before 2011 (Phase 10)
+def test_history_before_2011_does_not_rename_an_athlete() -> None:
+    later = [row(10 + i, f"201{i + 1}-05-01", "Muster Hans", residence="Thun") for i in range(4)]
+    assert set(resolve(later)[0].values()) == {f"muster-hans-{later[0]['athlete_raw_id']}"}
+    # seasons added before the published ones join him and leave his id alone
+    earlier = [row(1, "2005-05-01", "Muster Hans", residence="Thun"),
+               row(2, "2008-06-01", "Muster Hans *")]
+    m, ident, ath = resolve(earlier + later)
+    assert set(m.values()) == {f"muster-hans-{later[0]['athlete_raw_id']}"}
+    assert ident.loc[earlier[0]["athlete_raw_id"], "evidence"] == "name+residence"
+    assert len(ath) == 1
+
+
+def test_athlete_seen_only_before_2011_takes_his_earliest_row() -> None:
+    rows = [row(1, "2004-05-01", "Altmeister Karl"), row(2, "2006-05-01", "Altmeister Karl"),
+            row(3, "2010-09-01", "Altmeister Karl")]
+    m, _, _ = resolve(rows)
+    assert set(m.values()) == {f"altmeister-karl-{rows[0]['athlete_raw_id']}"}
+    assert idn.ID_ANCHOR_FROM == "2011-01-01"
+
+
+def test_name_only_row_of_an_old_sheet_joins_a_unique_name() -> None:
+    """An opponent the old sheet does not print: a row with a name and nothing else."""
+    career = [row(10 + i, f"200{6 + i}-05-01", "Muster Hans", residence="Thun") for i in range(4)]
+    ghost = [row(1, "2005-08-01", "Muster Hans", flags="unlisted")]
+    m, ident, _ = resolve(ghost + career)
+    assert len(set(m.values())) == 1
+    assert ident.loc[ghost[0]["athlete_raw_id"], "evidence"] == "name"
+
+
+def test_name_only_row_between_two_namesakes_is_flagged() -> None:
+    a = [row(10 + i, f"200{6 + i}-05-01", "Muster Hans", residence="Thun", tv="BKSV")
+         for i in range(3)]
+    b = [row(20 + i, f"200{6 + i}-05-01", "Muster Hans", residence="Chur", tv="NOSV")
+         for i in range(3)]
+    ghost = [row(1, "2005-08-01", "Muster Hans", flags="unlisted")]
+    m, ident, ath = resolve(ghost + a + b)
+    assert len(set(ids(m, a))) == 1 and len(set(ids(m, b))) == 1 and ids(m, a) != ids(m, b)
+    g = ident.loc[ghost[0]["athlete_raw_id"]]
+    assert "ambiguous" in g["evidence"] and g["confidence"] <= 0.4
+    assert len(ath) == 2
+
+
+def test_old_rows_do_not_join_an_athlete_who_was_a_child_then() -> None:
+    """The age rule keeps father and son (or two generations of a name) apart."""
+    son = [row(10 + i, f"201{4 + i}-05-01", "Muster Hans (1998)", club="Thun") for i in range(4)]
+    father = [row(1, "2005-05-01", "Muster Hans"), row(2, "2006-05-01", "Muster Hans")]
+    m, _, ath = resolve(father + son)
+    assert len(set(ids(m, son))) == 1 and len(set(ids(m, father))) == 1
+    assert ids(m, father)[0] != ids(m, son)[0] and len(ath) == 2
+    assert ids(m, son)[0] == f"muster-hans-{son[0]['athlete_raw_id']}"
+
+
+def test_same_date_collision_in_an_old_season_splits_the_later_rows_by_evidence() -> None:
+    old = [row(1, "2006-05-01", "Arnold Raphael", residence="Bürglen", tv="ISV"),
+           row(2, "2006-05-01", "Arnold Raphael", residence="Triengen", tv="ISV")]
+    new = [row(10, "2012-05-01", "Arnold Raphael", residence="Bürglen", tv="ISV"),
+           row(11, "2013-05-01", "Arnold Raphael", residence="Triengen", tv="ISV"),
+           row(12, "2014-05-01", "Arnold Raphael", residence="Bürglen", tv="ISV")]
+    m, _, ath = resolve(old + new)
+    a, b = ids(m, old)
+    assert a != b and ids(m, new) == [a, b, a] and len(ath) == 2
+    # without the old season the three later rows have nothing that separates them by date
+    assert len(set(resolve(new)[0].values())) <= 2
+
+
+def test_spellings_of_published_seasons_are_judged_on_those_seasons() -> None:
+    """More seasons mean more name keys per token; that alone must not turn a typo of a
+    published athlete into an "established" second name (Burkart / Burkhart)."""
+    main = [row(10 + i, f"201{3 + i}-05-01", "Burkart Simon", club="Binningen", tv="NWSV")
+            for i in range(4)]
+    typo = [row(5, "2012-03-25", "Burkhart Simon", club="Binningen", tv="NWSV")]
+    m, _, _ = resolve(main + typo)
+    assert ids(m, typo) == ids(m, main[:1])
+    # other people of the old seasons carry both tokens
+    crowd = [row(100 + i, f"200{5 + i % 5}-0{1 + i}-01", n, residence=f"Ort {i}")
+             for i, n in enumerate(["Burkart Hans", "Burkart Peter", "Burkhart Urs",
+                                    "Burkhart Karl", "Burkhart Fritz", "Burkart Josef"])]
+    m, _, _ = resolve(crowd + main + typo)
+    assert ids(m, typo) == ids(m, main[:1])
+    # two spellings that exist only in the old seasons get the stricter count
+    old_main = [row(200 + i, f"200{5 + i}-05-01", "Burkart Simon", club="Binningen", tv="NWSV")
+                for i in range(4)]
+    old_typo = [row(210, "2006-03-25", "Burkhart Simon", club="Binningen", tv="NWSV")]
+    m, _, _ = resolve(crowd + old_main + old_typo)
+    assert ids(m, old_typo) != ids(m, old_main[:1])
+
+
+def test_name_alone_does_not_bridge_a_long_gap_into_the_old_seasons() -> None:
+    """2005 and then nothing until 2014: the name is all the two careers share."""
+    old = [row(1, "2005-05-01", "Muster Hans"), row(2, "2005-08-01", "Muster Hans", flags="unlisted")]
+    new = [row(10 + i, f"201{4 + i}-05-01", "Muster Hans", residence="Thun") for i in range(3)]
+    m, ident, ath = resolve(old + new)
+    assert len(set(ids(m, old))) == 1 and len(set(ids(m, new))) == 1
+    assert ids(m, old)[0] != ids(m, new)[0] and len(ath) == 2
+    assert ids(m, new)[0] == f"muster-hans-{new[0]['athlete_raw_id']}"
+    assert ids(m, old)[0] == f"muster-hans-{old[0]['athlete_raw_id']}"
+    # evidence beyond the name bridges the gap
+    old_ev = [row(1, "2005-05-01", "Muster Hans", residence="Thun")]
+    m, _, ath = resolve(old_ev + new)
+    assert len(set(m.values())) == 1 and "career_gap=8" in ath.iloc[0]["evidence"]
+    # a short hole is no gap (Kranzfeste only before 2011: careers have holes)
+    near = [row(1, "2009-05-01", "Muster Hans")]
+    assert len(set(resolve(near + new)[0].values())) == 1
+    # and a career that reaches 2011 is not "before 2011": the published rule stays
+    reach = [row(1, "2011-05-01", "Muster Hans")]
+    later = [row(20 + i, f"201{8 + i}-05-01", "Muster Hans", residence="Thun") for i in range(2)]
+    assert len(set(resolve(reach + later)[0].values())) == 1
+    a, b = idn.Cluster(0, "x", years={2004, 2005}), idn.Cluster(1, "x", years={2012})
+    assert idn.history_gap(a, b, []) and idn.history_gap(b, a, ["teilverband", "opponents"])
+    assert not idn.history_gap(a, b, ["residence"])
+    assert not idn.history_gap(idn.Cluster(0, "x", years={2007}), b, [])       # 4 seasons
+    assert not idn.history_gap(idn.Cluster(0, "x", years={2005, 2011}), idn.Cluster(1, "x", years={2019}), [])

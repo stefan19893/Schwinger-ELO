@@ -88,6 +88,20 @@
     return (r > 0 ? '+' : r < 0 ? '−' : '±') + Math.abs(r);
   };
 
+  /* a change with one decimal: +31.2, −4.0, ±0.0 (contributions per Gang) */
+  SE.signed1 = function (n) {
+    if (n === null || n === undefined) { return ''; }
+    var r = Math.round(n * 10) / 10;
+    return (r > 0 ? '+' : r < 0 ? '−' : '±') + Math.abs(r).toFixed(1);
+  };
+
+  /* "1 Gang gegen einen nicht veröffentlichten Gegner" / "3 Gänge gegen nicht
+   * veröffentlichte Gegner": the Gänge of a listed athlete against athletes who are not
+   * published by name - one wording for the festival page and the comparison. */
+  SE.hiddenGaenge = function (n) {
+    return SE.num(n) + (n === 1 ? ' Gang gegen einen nicht veröffentlichten Gegner' : ' Gänge gegen nicht veröffentlichte Gegner');
+  };
+
   SE.date = function (iso) {
     if (!iso) { return '–'; }
     return iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4);
@@ -120,9 +134,30 @@
     if (o.by) { parts.push('Jg. ' + SE.esc(o.by)); }
     if (o.tv) { parts.push('<abbr title="' + SE.esc(SE.TV[o.tv] || o.tv) + '">' + SE.esc(o.tv) + '</abbr>'); }
     if (withYears && o.first) {
-      parts.push('Feste ' + (o.first === o.last ? SE.esc(o.first) : SE.esc(o.first) + '–' + SE.esc(o.last)));
+      /* nf: the number of festivals, given where nothing else tells two namesakes apart */
+      parts.push((o.nf ? SE.num(o.nf) + (o.nf === 1 ? ' Fest ' : ' Feste ') : 'Feste ') +
+        (o.first === o.last ? SE.esc(o.first) : SE.esc(o.first) + '–' + SE.esc(o.last)));
     }
     return parts.join(' · ');
+  };
+
+  /* Shown with an athlete whose search row equals a namesake's in every field (old
+   * sheets: a name and little else). The page does not pretend to know more. */
+  SE.TWIN_NOTE = 'Gleichnamiger Schwinger mit denselben Angaben – nur an der Zahl der Feste zu unterscheiden';
+
+  /* What ratings of different years can be compared: one wording for the start page, the
+   * comparison and the about page. The years are findings of the model evaluation on the
+   * history from 2004 (docs/SPEC.md §4.2), the first season comes from meta.json. */
+  SE.SCALE_FROM = 2016;
+  SE.scaleText = function (meta) {
+    var first = meta && typeof meta.first_season === 'number' ? meta.first_season : null;
+    var s = 'Wertungen ab etwa ' + SE.SCALE_FROM + ' sind untereinander vergleichbar. Davor liegen sie systematisch tiefer';
+    if (first !== null && first <= 2006) {
+      return s + ': ' + first + '–2007 baut sich die Skala erst auf (alle beginnen ' + first + ' bei 1500); ' +
+        '2008–2011 sind nur Kranzfeste erfasst, und die Spitze liegt rund 150 Punkte tiefer als ab ' + SE.SCALE_FROM + '; ' +
+        '2012–2015 wächst die Skala mit den Regionalfesten auf den heutigen Stand.';
+    }
+    return s + ', weil sich die Skala nach dem Start bei 1500 erst aufbaut.';
   };
 
   SE.uncertainMark = function (unc) {
@@ -169,8 +204,10 @@
     if (!searchPromise) {
       searchPromise = SE.getJSON('data/athletes.json').then(function (t) {
         searchIndex = SE.table(t);
+        var twins = t.twins || {};
         for (var i = 0; i < searchIndex.length; i++) {
           var a = searchIndex[i];
+          if (twins[a.id]) { a.nf = twins[a.id][0]; a.twin = 1; }
           a.key = (SE.norm(a.name) + ' ' + SE.norm(a.club)).split(' ');
         }
         return searchIndex;
@@ -226,6 +263,7 @@
         ((a.flags & SE.F_UNCERTAIN) ? SE.uncertainMark(1) : '') + '</span>' +
         '<span class="block text-xs text-stone-500 dark:text-stone-400">' + SE.subline(a, true) + '</span>' +
         '<span class="block text-xs text-stone-500 dark:text-stone-400">' + SE.esc(SE.searchStatus(a)) + '</span>' +
+        (a.twin ? '<span class="block text-xs text-stone-500 dark:text-stone-400">' + SE.TWIN_NOTE + '</span>' : '') +
         '</a></li>';
     });
     html += '</ul>';
@@ -286,6 +324,8 @@
     SE.meta().then(function (meta) {
       var el = SE.$('se-asof');
       if (el) { el.textContent = meta.as_of ? 'Datenstand: ' + SE.date(meta.as_of) : 'Noch keine Daten'; }
+      var since = SE.$('se-since');
+      if (since && meta.first_season) { since.textContent = ' seit ' + meta.first_season; }
       var banner = SE.$('se-banner');
       if (banner && meta.empty) {
         banner.innerHTML = SE.note('Es sind noch keine Daten vorhanden. Zuerst die Pipeline laufen lassen ' +

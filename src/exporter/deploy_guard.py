@@ -25,9 +25,17 @@ Never acceptable (no override):
   one), or more rated rows at a festival than the athlete's history file counts bouts
   there. The file must say nothing about bouts against athletes who are not published; a
   row or a key too many is how such a statement would look;
+* a festival file (``data/fests``) that carries a rating value where none may be: on the
+  row of a withheld athlete or of an athlete without profile (``before``, ``after``,
+  ``exp``), or a contribution ``d`` at a bout that is not between two rows with a profile
+  (or at a festival that does not count). The page shows a published athlete's Gänge
+  with what each contributed; one against a withheld athlete must stay without a number;
 * a history or bouts file whose ``build`` stamp is not the one of ``meta.json``: the site
   was put together from different builds, and the comparison page would refuse to draw
   the Gänge of those athletes;
+* a first ranked season that is not after the first season of the data (the burn-in
+  season would be published with places), or data that do not begin in ``from_year``
+  (new code on a pipeline state without the old seasons): :func:`_range_problems`;
 * the ``--sample`` demo outside a ``--sample`` run;
 * a site built with other publication settings than the configured ones;
 * an age filter that withholds nobody (``publish_min_age`` > 0 and ``counts.withheld`` zero
@@ -40,7 +48,7 @@ are intended and have been looked at:
 * no baseline (first deployment);
 * a count that dropped by more than the tolerance (``guard_max_drop``; for the ranked
   athletes ``guard_max_drop_ranked``), e.g. after raising ``publish_min_age``;
-* a data date older than the baseline's;
+* a data date older than the baseline's, or a first season later than the baseline's;
 * publication settings looser than the baseline's (lower ``publish_min_age`` or
   ``publish_unknown_recent_seasons``, ``noindex`` switched off) - they publish more than
   the last accepted site did;
@@ -87,6 +95,11 @@ BOUT_KEYS = frozenset({"id", "build", "opps", "names", "unc", "cols", "fests", "
 BOUT_COLS = ["gang", "opp", "res", "g", "go", "flags", "d"]
 BOUT_OTHER_COLS = ["id", "name", "date", "cat"]
 BOUT_UNRATED = 16
+# ... and of data/fests/fest_<id>.json (static_builder: FEST_ATHLETE_COLS, FEST_BOUT_COLS)
+FEST_ATHLETE_COLS = ["id", "name", "club", "tv", "before", "after", "exp", "w", "d", "l", "pts",
+                     "unc", "anon"]
+FEST_BOUT_COLS = ["gang", "a", "b", "res", "ga", "gb", "flags", "d"]
+FEST_RATING_COLS = ("before", "after", "exp")     # null on every row without a profile
 
 
 @dataclass
@@ -189,6 +202,18 @@ def _ranking_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     return _table_ids(obj)
 
 
+def _search_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
+    """The ids beside the rows of the search index: ``twins`` (namesakes with identical
+    rows -> [festivals, bouts]). An id there that has no row would be a name slug of
+    somebody who is not published."""
+    twins = obj.get("twins", {})
+    if type(twins) is not dict or not all(
+            type(v) is list and len(v) == 2 and all(_is_int(x) for x in v)
+            for v in twins.values()):
+        raise ValueError("twins is not a map of id -> [festivals, bouts]")
+    return list(twins)
+
+
 def _season_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
     out: list[Any] = []
     for season in obj["seasons"]:
@@ -199,7 +224,47 @@ def _season_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
 
 
 def _fest_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
-    return _table_ids(obj["athletes"])      # null = a row without profile, by design
+    """The athlete ids of a festival file (null = a row without profile, by design) -
+    after the file has been held against the part of its contract that keeps rating
+    values away from athletes who are not published: a withheld athlete's row carries no
+    name and no rating value, a row without profile no rating value, and a bout carries
+    a contribution only between two rows with a profile at a festival that counts. A
+    contribution at any other bout would give away the hidden side's rating."""
+    athletes, bouts = obj["athletes"], obj["bouts"]
+    if athletes["cols"] != FEST_ATHLETE_COLS or bouts["cols"] != FEST_BOUT_COLS:
+        raise ValueError("other columns than the festival contract's")
+    col = {c: i for i, c in enumerate(FEST_ATHLETE_COLS)}
+    width, has_id = len(FEST_ATHLETE_COLS), []
+    for row in athletes["rows"]:
+        if type(row) is not list or len(row) != width:
+            raise ValueError("an athlete row is not the values of the contract")
+        ident, anon = row[col["id"]], row[col["anon"]]
+        if anon not in (0, 1) or not _is_int(anon):
+            raise ValueError("anon is not 0 or 1")
+        values = [row[col[c]] for c in FEST_RATING_COLS]
+        if not all(_is_grade(v) for v in values):
+            raise ValueError("a rating value of another kind than the contract's")
+        if ident is None and any(v is not None for v in values):
+            raise ValueError("a rating value on a row without profile")
+        if anon and (any(row[col[c]] is not None for c in ("id", "name", "club", "tv"))
+                     or row[col["unc"]] != 0):
+            raise ValueError("a withheld athlete's row says more than his bouts")
+        has_id.append(ident is not None and not anon)
+    n, rated = len(has_id), obj["status"] != "unrated"
+    for row in bouts["rows"]:
+        if type(row) is not list or len(row) != len(FEST_BOUT_COLS):
+            raise ValueError("a bout row is not the eight values of the contract")
+        a, b, d = row[1], row[2], row[7]
+        if not (_is_int(a) and _is_int(b) and 0 <= a < n and 0 <= b < n):
+            raise ValueError("a bout does not point at two athlete rows")
+        if d is None:
+            continue
+        if type(d) not in (int, float) or not math.isfinite(d):
+            raise ValueError("a contribution that is no number")
+        if not (rated and has_id[a] and has_id[b]):
+            raise ValueError("a contribution at a bout with an unpublished athlete or at "
+                             "a festival that does not count")
+    return _table_ids(athletes)
 
 
 def _is_int(v: Any) -> bool:
@@ -287,6 +352,7 @@ def _history_ids(obj: dict[str, Any], stem: str, seen: _Seen) -> list[Any]:
 # reader). A festival row may carry no id (null); every id that is there must be published.
 # The history files come before the bout files, which are held against them.
 ATHLETE_REFERENCES = (
+    ("athletes.json", None, _search_ids),
     ("rankings_latest.json", None, _ranking_ids),
     ("alltime_top200.json", None, _ranking_ids),
     ("seasons.json", None, _season_ids),
@@ -350,11 +416,77 @@ def _release(baseline: dict[str, Any], key: str) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
 
 
+def _first_season(meta: dict[str, Any]) -> int | None:
+    v = meta.get("first_season")
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _longer_history(meta: dict[str, Any], baseline: dict[str, Any]) -> str:
+    """Suffix for a finding of :func:`_check_filter` when the data begin earlier than the
+    baseline's: what to compare before accepting. Empty when the first season is the
+    same (then more names or fewer birth years have no such explanation)."""
+    new, old = _first_season(meta), _first_season(baseline)
+    if new is None or old is None or new >= old:
+        return ""
+    return (f". The data now begin in {new} instead of {old}: expected for a longer "
+            f"history only if counts.withheld is unchanged (see above) and the new names "
+            f"are athletes of the added seasons")
+
+
+STATE_HINT = ("replace the pipeline state by a new export from the machine that holds "
+              "these seasons (`state-export`, then the draft release) and deploy again - "
+              "README, \"Updating the site\"")
+
+
+def _range_problems(cfg: Config, meta: dict[str, Any]) -> list[str]:
+    """Is the site built from the seasons the code expects? Never deployable otherwise.
+
+    * The burn-in season is the first season of the data: it is rated and not ranked,
+      because everybody starts at the initial rating there. ``first_ranked_season`` (a
+      setting, ``elo_first_ranked_season``) must therefore lie after the data's first
+      season. If it does not, the data begin later than the setting assumes and their
+      cold-start season would be published with places.
+    * The data must begin in ``from_year``: new code on a pipeline state from before the
+      history was extended (a merge deployed before the state bundle was replaced) gives a
+      site whose counts equal the baseline's - nothing else in the guard would notice.
+
+    Both name what to do. Not checked for ``--sample`` beyond the first rule (the demo
+    data begin where its fixtures begin)."""
+    if meta.get("empty") is not False:
+        return []
+    out = []
+    first = _first_season(meta)
+    ranked = (meta.get("model") or {}).get("first_ranked_season")
+    if first is None or not isinstance(ranked, int) or isinstance(ranked, bool):
+        out.append("meta.json does not name the first season of the data or the first "
+                   "ranked season - rebuild")
+        return out
+    if ranked <= first:
+        out.append(
+            f"the first ranked season ({ranked}, `elo_first_ranked_season`) is not after "
+            f"the first season of the data ({first}): the data's first season is the "
+            f"burn-in and must not be ranked. The data begin later than the model setting "
+            f"assumes - " + (STATE_HINT if not cfg.sample else "set the season for this "
+                             "data set"))
+    if not cfg.sample and first != cfg.from_year:
+        out.append(
+            f"the data begin in {first}, but this code expects them to begin in "
+            f"{cfg.from_year} (`from_year`): the site was built from a pipeline state that "
+            f"does not hold the seasons {min(first, cfg.from_year)}-"
+            f"{max(first, cfg.from_year) - 1}. Nothing was published or recorded; "
+            + STATE_HINT)
+    return out
+
+
 def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
                   inputs: dict[str, int] | None, rep: GuardReport) -> None:
     """Does the site publish more people than the accepted one, or did the filter's
     inputs fall? (Only called with ``publish_min_age`` > 0.)"""
     new_year, old_year = _year(meta), _year(baseline)
+    # a history that reaches further back names more athletes and brings sheets that print
+    # few birth years: the same two findings as a broken age filter, so the override stays
+    # necessary - but the lines say which of the two the numbers fit
+    longer = _longer_history(meta, baseline)
     allow = {"athletes": 0, "ranked": 0}
     if new_year is not None and old_year is not None and new_year != old_year:
         got = {k: _release(baseline, k) for k in allow}
@@ -389,7 +521,7 @@ def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
             rep.changes.append(
                 f"counts.{key}: {old} -> {new} ({(new - old) / old:+.1%}; allowed rise "
                 f"{tol:.0%} plus {allow[key]} released) - more athletes are published by "
-                f"name than the age filter let through before")
+                f"name than the age filter let through before" + longer)
     shares = []
     for m in (baseline, meta):
         known, rated = _count(m, "birth_year_known"), _count(m, "rated")
@@ -402,7 +534,7 @@ def _check_filter(cfg: Config, meta: dict[str, Any], baseline: dict[str, Any],
                 + (f"{shares[1]:.1%}" if shares[1] is not None else "unknown")
                 + f" (allowed fall {cfg.guard_max_drop_birth_known:.0%} points)")
         if shares[1] is None or shares[1] < shares[0] - cfg.guard_max_drop_birth_known:
-            rep.changes.append(line + " - the age filter is losing its input")
+            rep.changes.append(line + " - the age filter is losing its input" + longer)
         else:
             rep.notes.append(line)
     old_bd = (baseline.get(INPUTS_KEY) or {}).get("portraits_with_birthday")
@@ -474,6 +606,7 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
             rep.fatal.append(
                 f"none of the {inputs['portraits']} portraits in {cfg.db_path} has a "
                 f"birthday: the age filter has lost its input")
+    rep.fatal.extend(_range_problems(cfg, meta))
     if cfg.site_noindex and not (dist / "robots.txt").is_file():
         rep.fatal.append("site_noindex is on but robots.txt is missing - rebuild")
     if rep.fatal:
@@ -499,6 +632,13 @@ def check_site(cfg: Config, dist: Path, baseline: dict[str, Any] | None,
             rep.changes.append(line)
         else:
             rep.notes.append(line)
+    new_first, old_first = _first_season(meta), _first_season(baseline)
+    if new_first is not None and old_first is not None:
+        if new_first > old_first:
+            rep.changes.append(f"first season of the data: {old_first} -> {new_first} - the "
+                               f"site loses seasons it had")
+        else:
+            rep.notes.append(f"first season of the data: {old_first} -> {new_first}")
     new_date, old_date = str(meta.get("as_of") or ""), str(baseline.get("as_of") or "")
     if old_date and new_date < old_date:
         rep.changes.append(f"data date went back: {old_date} -> {new_date}")
