@@ -32,7 +32,7 @@ Extend the data from "2011–present" to as far back as the permitted source car
 - [x] 5b. (data-engineer) ESAF 2007 sheet read by half (every second Gang of the first block lost): cause, reach over 2004–2010, fix, fixture and test, re-parse / clean / elo
 - [x] 6. (elo-modeler) Re-evaluate burn-in and parameters on the longer history; record decisions; effect on current ranking
 - [x] 7. (web-builder) Texts and rules that assume 2011; guard baseline; README / SPEC / about page
-- [ ] 7b. (web-builder) **Festival page: rating change per Gang, and a better rating view of a festival** (owner's request 2026-10-04, with a screenshot of `fests.html` showing an athlete's opened Gänge: number, result, opponent with his rating, grade — he wants the change per Gang there too, "and a feature to improve the elo view per festival"). Same branch, so it ships with the history. Design and privacy rule: see the note "Task 7b brief" below.
+- [~] 7b. (web-builder) **Festival page: rating change per Gang, and a better rating view of a festival** (owner's request 2026-10-04, with a screenshot of `fests.html` showing an athlete's opened Gänge: number, result, opponent with his rating, grade — he wants the change per Gang there too, "and a feature to improve the elo view per festival"). Same branch, so it ships with the history. Design and privacy rule: see the note "Task 7b brief" below.
 - [ ] 8. phase-reviewer
 
 ## Handoff notes
