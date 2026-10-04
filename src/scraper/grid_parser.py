@@ -40,7 +40,7 @@ _SIGN_RE = re.compile(r"^s?[+\-oO0]$")
 _SIGN_KRANZ_RE = re.compile(r"^[+\-oO0][EKk]$")          # "+E", "oK", "-k"
 _RANK_RE = re.compile(r"^[1-9]\d{0,2}\.?(?:[a-z]{1,2}\.?)?$")
 _RANK_LETTER_RE = re.compile(r"^[a-zA-Z]{1,2}\.?$")
-_STATUS_RE = re.compile(r"^(?:[ST]?\*{1,3}|[STEKk]|EK|TK)$")
+_STATUS_RE = re.compile(r"^(?:[ST]?\*{1,3}|[STEKk]|EK|TK|KK|BK|GK)$")
 _GLUED_NUMBER_RE = re.compile(r"^(\d{1,3})([A-ZÄÖÜÉÈÀ]{2,}.*)$")              # "265WETZEL"
 _GLUED_SIGN_RE = re.compile(r"^([A-ZÄÖÜÉÈÀ][A-ZÄÖÜÉÈÀ\-]+)([+o\-][EKk]?)$")   # "ROGERoK"
 _INT_RE = re.compile(r"^\d{1,3}$")
@@ -89,6 +89,23 @@ def _birth_suffix(name: str) -> str:
     Bernese sheets) -> "Roschi Ruedi (91)", the form name_details() reads."""
     m = _YEAR_SUFFIX_RE.match(name)
     return f"{m.group(1)} ({m.group(2)})" if m else name
+
+
+_CELL_STATUS = {"K", "KK", "EK", "TK", "BK", "GK", "E"}
+
+
+def _opponent(toks: Sequence[str]) -> str:
+    """Opponent name of a Gang cell. Some Bernese sheets print Kranz status and Gau code
+    after it ("Stucki Christian EK SL", "Oester Thomas K BO", "Steffen Markus 93 OA"): a
+    code after a status or a birth year, and the statuses clean_name() does not know,
+    are dropped; "93" becomes "(93)"."""
+    t = list(toks)
+    if len(t) >= 4 and re.fullmatch(r"[A-Z]{2,3}", t[-1]) and (
+            t[-2] in _CELL_STATUS or re.fullmatch(r"[7-9]\d", t[-2])):
+        t.pop()
+    while len(t) > 2 and t[-1] in ("KK", "BK", "GK"):
+        t.pop()
+    return _birth_suffix(" ".join(t))
 
 
 def _split_stars(words: Sequence[Word]) -> list[Word]:
@@ -270,7 +287,7 @@ def _entry(cell: Sequence[Word], line: int) -> Entry | None:
             and any(_is_grade(t) for t in toks[:-1]):
         toks.pop()
     if len(toks) >= 3 and _is_sign(toks[0]) and _is_grade(toks[1]):       # sign grade name
-        return Entry(_sym(toks[0]), _birth_suffix(" ".join(toks[2:])), to_float(toks[1]),
+        return Entry(_sym(toks[0]), _opponent(toks[2:]), to_float(toks[1]),
                      line, schlussgang=toks[0].startswith("s"))
     if len(toks) < 3 or not _is_grade(toks[-1]):
         return None
@@ -279,7 +296,7 @@ def _entry(cell: Sequence[Word], line: int) -> Entry | None:
         name = " ".join(toks[1:-1])
         if not re.search(r"[^\W\d_]{2}", name):
             return None
-        return Entry(_sym(toks[0]), _birth_suffix(name), grade, line,
+        return Entry(_sym(toks[0]), _opponent(toks[1:-1]), grade, line,
                      schlussgang=toks[0].startswith("s"))
     if _is_sign(toks[-2]):                                    # [ring] [start no] NAME sign grade
         body = toks[:-2]
@@ -314,6 +331,7 @@ def _header_block(cell: Sequence[Word], line: int) -> Block | None:
     body = [t for t in body if t not in ("pts", "pts.")]
     lead: list[str] = []
     lead_place: str | None = None
+    code: str | None = None             # association / Gau code found without a status letter
     while len(body) > 2 and _LEADING_STATUS_RE.match(body[0]):   # "1 a S EK Stucki Christian"
         lead.append(body[0])
         body = body[1:]
@@ -332,7 +350,11 @@ def _header_block(cell: Sequence[Word], line: int) -> Block | None:
     else:
         name_toks = body
         if lead and len(name_toks) > 2 and re.fullmatch(r"[A-Z]{2,4}", name_toks[-1]):
-            rest = [name_toks[-1]]          # "Stucki Christian Schnottwil SL"
+            code = name_toks[-1]            # "Stucki Christian Schnottwil SL"
+            name_toks = name_toks[:-1]
+        elif len(name_toks) > 3 and re.fullmatch(r"[A-Z]{2,3}", name_toks[-1]) \
+                and re.fullmatch(r"[7-9]\d", name_toks[-2]):
+            code = name_toks[-1]            # "Steffen Markus 93 OA": birth year, Gau code
             name_toks = name_toks[:-1]
         if lead and len(name_toks) > 2:     # this layout always prints the residence
             lead_place = name_toks[-1]
@@ -344,14 +366,14 @@ def _header_block(cell: Sequence[Word], line: int) -> Block | None:
         name, _, tail = name.partition(",")
         place = tail.strip() or None
     assoc: str | None = None
-    if rest and _ASSOC_RE.match(rest[-1]) or (rest and re.fullmatch(r"[A-Z]{2,4}", rest[-1])
-                                              and len(rest) > 1):
+    if rest and (_ASSOC_RE.match(rest[-1]) or re.fullmatch(r"[A-Z]{2,4}", rest[-1])):
         assoc = rest[-1]
         rest = rest[:-1]
     while rest and rest[-1] in ("S", "T"):
         status.append(rest.pop())
     if rest:
         place = " ".join(rest)
+    assoc = assoc or code
     name = _birth_suffix(title_case(name.strip()))
     if not re.search(r"[^\W\d_]{2}", name):
         return None

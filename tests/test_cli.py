@@ -23,7 +23,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 # ------------------------------------------------------------------ config
 def test_defaults() -> None:
     cfg = load_config(env={})
-    assert cfg.from_year == 2011
+    assert cfg.from_year == 2004   # Phase 10: first season with mostly complete sheets
     assert cfg.request_delay_min == 0.5 and cfg.request_delay_max == 1.0
     assert cfg.k_factors["ESAF"] == 48 and cfg.k_factors["Kantonal"] == 24
     assert cfg.k_factors["Gauverband"] == 24 and cfg.k_factors["Regional"] == 16

@@ -1,4 +1,5 @@
-"""Discovers all festivals 2011-present from schlussgang.ch (spec §4.1, Milestone 1).
+"""Discovers all festivals from ``Config.from_year`` to the present on schlussgang.ch
+(spec §4.1, Milestone 1; the API lists events back to 2001, Kranzfeste only before 2011).
 
 Source: the Drupal JSON:API behind schlussgang.ch/resultate
 (``backend-api.schlussgang.ch/jsonapi/node/event``). One query per

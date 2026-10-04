@@ -1578,11 +1578,22 @@ def parse_festival(text: str, fest_id: int, fest_date: str, fest_name: str, *,
                                interim_text=interim_text, unlisted=unlisted)
 
 
+# "Rohrer Beat2", "Zbinden Reto2": the namesake number of a hand-set sheet without space
+_GLUED_SUFFIX_RE = re.compile(r"(?<=[a-zà-ÿ])([12])(?=\s|,|$)")
+# a rank left in front of a header name by the text layouts: "12mNigg Lukas", "1 a Berger Florian"
+_LEADING_RANK_RE = re.compile(r"^\d{1,3}\s?[a-z]{1,2}\s?(?=[A-ZÄÖÜ][a-zà-ÿ])")
+
+
 def festival_from_sheet(sheet: Sheet, fest_id: int, fest_date: str, fest_name: str, *,
                         max_gang: int = 6, min_pair_rate: float = 0.5,
                         interim_text: str | None = None,
                         unlisted: bool = False) -> FestivalParse:
     """Header check -> bouts -> validation for an already read sheet."""
+    if unlisted:
+        for b in sheet.blocks:
+            b.name_raw = _GLUED_SUFFIX_RE.sub(r" \1", _LEADING_RANK_RE.sub("", b.name_raw))
+            for e in b.entries:
+                e.opponent = _GLUED_SUFFIX_RE.sub(r" \1", e.opponent)
     check, detail = verify_header(sheet.header, fest_date, fest_name, hand_set=unlisted)
     if check == "mismatch":
         res = FestivalParse(fest_id=fest_id, layout=sheet.layout, status="header_mismatch",

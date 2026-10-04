@@ -489,3 +489,61 @@ def test_two_digit_birth_year_suffix() -> None:
     young = athlete(res, "Jung Peter (91)")
     assert (young["birth_year"], young["place"], young["association"]) == ("1991", "Ort", "ML")
     assert len(res.bouts) == 1 and res.bouts[0]["flags"] == ""
+
+
+def test_birth_year_and_gau_code_without_status_letter() -> None:
+    """"12 Steffen Markus 93 OA 54.25": no S / T between name and code."""
+    sheet = parse_grid(_rows(
+        "1 Muster Hans Dorf ML 58.50",
+        "+ Jung Peter 93 10.00",
+        "12 Jung Peter 93 OA 54.25",
+        "o Muster Hans 8.50",
+    ))
+    young = sheet.blocks[1]
+    assert (young.name_raw, young.association, young.points) == ("Jung Peter (93)", "OA", 54.25)
+    res = _build(sheet, unlisted=True)
+    assert athlete(res, "Jung Peter (93)")["birth_year"] == "1993"
+    assert len([b for b in res.bouts if b["flags"] == ""]) == 1
+
+
+def test_glued_namesake_number() -> None:
+    sheet = _sheet(("1", "Muster Hans", None, [("+", "Rohrer Beat2", 10.0)]),
+                   ("2", "Rohrer Beat2 (ISV)", None, [("o", "Muster Hans", 8.5)]),
+                   ("3", "Rohrer Beat 1", None, []))
+    res = bp.festival_from_sheet(sheet, 99, "2008-06-01", "Testfest", unlisted=True)
+    assert [a["name"] for a in res.athletes] == ["Muster Hans", "Rohrer Beat 2 (ISV)",
+                                                 "Rohrer Beat 1"]
+    assert [(b["athlete_a_id"], b["athlete_b_id"], b["flags"]) for b in res.bouts] == \
+        [("99-000", "99-001", "")]
+    # sheets from 2011 on are not touched by the rule
+    plain = bp.festival_from_sheet(
+        _sheet(("1", "Rohrer Beat2", None, [])), 99, "2012-06-01", "Testfest")
+    assert plain.athletes[0]["name"] == "Rohrer Beat2"
+
+
+def test_status_and_gau_code_after_the_opponent() -> None:
+    """Mittelländisches 2010: "o Stucki Christian EK SL 8.50", "+ Steffen Markus 93 OA 10.00"."""
+    sheet = parse_grid(_rows(
+        "3 a Muster Hans KK SL 57.25 K               3 b Jung Peter 93 OA 57.25",
+        "+ Jung Peter 93 OA 10.00                    o Muster Hans KK SL 8.50",
+        "+ Probe Karl K BO 9.75                      + Zeuge Max ML 10.00",
+    ))
+    assert [(b.rank, b.name_raw, b.association) for b in sheet.blocks] == \
+        [("3a", "Muster Hans", "SL"), ("3b", "Jung Peter (93)", "OA")]
+    assert [e.opponent for e in sheet.blocks[0].entries] == ["Jung Peter (93)", "Probe Karl K"]
+    assert [e.opponent for e in sheet.blocks[1].entries] == ["Muster Hans", "Zeuge Max ML"]
+    for b in sheet.blocks:                       # the excerpt's totals are not the sums
+        b.points = None
+    res = _build(sheet, unlisted=True)
+    assert sorted(a["name"] for a in res.athletes) == \
+        ["Jung Peter (93)", "Muster Hans", "Probe Karl", "Zeuge Max"]
+    assert len([b for b in res.bouts if b["flags"] == ""]) == 1 and len(res.bouts) == 3
+
+
+def test_rank_left_in_front_of_a_name() -> None:
+    sheet = _sheet(("12m", "12mNigg Lukas *", None, [("+", "Muster Hans", 10.0)]),
+                   ("1a", "1 a Berger Florian II, S", None, []),
+                   ("2", "Betschart Silvan2, S", None, []))
+    res = bp.festival_from_sheet(sheet, 99, "2008-06-01", "Testfest", unlisted=True)
+    assert [a["name"] for a in res.athletes][:3] == ["Nigg Lukas", "Berger Florian II",
+                                                     "Betschart Silvan 2"]

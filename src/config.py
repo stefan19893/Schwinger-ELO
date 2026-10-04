@@ -62,8 +62,15 @@ class Config:
     refresh: bool = False
     offline: bool = False  # crawl from data/raw only; cache misses are reported, never fetched
 
-    # --- Crawl range -------------------------------------------------------
-    from_year: int = 2011
+    # --- Data range --------------------------------------------------------
+    # First season of the data set: `crawl` lists festivals from this year on and `clean`
+    # puts the festivals from this year on into data/processed (earlier seasons that are
+    # in the staging database stay there). 2004 since Phase 10 (was 2011): the first
+    # season whose Kranzfest sheets on schlussgang.ch are mostly complete (27-37 of 38
+    # per season 2004-2010; no Regional festivals before 2011). 2002 and 2003 are
+    # crawled and parsed too, but their sheets are extracts of the first ranks (half of
+    # the bouts are seen from one side only); 2001 has a sheet for 10 of 38 festivals.
+    from_year: int = 2004
     to_year: int = _dt.date.today().year
 
     # --- Politeness (spec §4.1) ---------------------------------------------
