@@ -33,7 +33,7 @@ Extend the data from "2011–present" to as far back as the permitted source car
 - [x] 6. (elo-modeler) Re-evaluate burn-in and parameters on the longer history; record decisions; effect on current ranking
 - [x] 7. (web-builder) Texts and rules that assume 2011; guard baseline; README / SPEC / about page
 - [x] 7b. (web-builder) **Festival page: rating change per Gang, and a better rating view of a festival** (owner's request 2026-10-04, with a screenshot of `fests.html` showing an athlete's opened Gänge: number, result, opponent with his rating, grade — he wants the change per Gang there too, "and a feature to improve the elo view per festival"). Same branch, so it ships with the history. Design and privacy rule: see the note "Task 7b brief" below.
-- [ ] 8. phase-reviewer
+- [x] 8. phase-reviewer
 
 ## Review fixes (2026-10-04, after the review; web-builder)
 The review confirmed data, identities, ratings and the privacy of the exported files; three must-fixes and two small items, decided by the main session.
@@ -43,6 +43,7 @@ The review confirmed data, identities, ratings and the privacy of the exported f
 - [x] F4. Small: STATE "current phase" line, about page "Wer ist wer?" names the "?" marker, two parser nice-to-haves recorded as open questions
 
 ## Handoff notes
+- 2026-10-06 — **Phase closed (main session).** Task 8 ticked: the review ran on 2026-10-04 and its fixes F1–F4 are done (section above). PR #12 merged by the owner (3c359d9). His first deploy ran on the old state bundle and was refused by the guard with the two F1 lines (data begin in 2011 / first ranked season 2005) — nothing published. On `main`: `all --skip-crawl` (60 s), suite 1,356 passed, `check-site` refused with the two expected findings and the documented numbers, accepted and recorded once, state bundle exported (584 MB, `~/schwingen-state/`) and the deploy path rehearsed from it in a scratch directory (guard ok without the option, build stamp `9520399918d0` as locally). Upload to the draft release and the deploy are the owner's (`gh` is not logged in on this machine).
 
 - 2026-10-04 — **Task 1 done (survey) — GO: the pre-2011 "Statistik" PDFs carry bouts in every year 2001–2010; complete sheets from about 2004/2005, extracts of the top ranks before.** Nothing built yet; scripts only in the scratch directory.
   - **Requests: 136, all to schlussgang.ch** with the project User-Agent through `HttpClient`, 2–4 s apart (jitter), no retry configured, 0 errors, everything cached in `data/raw/`: 2 robots.txt, 80 listing pages (the crawler's own query per category × year, 1995–2010 — so task 2 gets them from the cache), 54 PDFs. robots.txt re-checked 2026-10-04: `www.schlussgang.ch` `Allow: /`; `backend-api.schlussgang.ch` standard Drupal file, neither `/jsonapi/` nor `/sites/default/files/` disallowed, no Crawl-delay. **No request to esv.ch.** No schlussgang response links to esv.ch for results: the API only carries the numeric `field_event_esv_id` (110 of the 381 events), which is stored as before and not followed.
